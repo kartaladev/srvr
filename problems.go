@@ -1,16 +1,11 @@
 package srvr
 
 import (
-	"context"
 	"slices"
 
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/srvr/engine"
 )
-
-// ErrorHook is called for every error the server answers with a problem,
-// with the problem sent (nil for a note about a problem that was not sent,
-// such as a panic after the response started).
-type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
 
 // WithProblemOptions passes prblm options (mappers, enrichers, namespace,
 // types) to the problem handler that renders every error response. Later
@@ -20,48 +15,20 @@ type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
 // its own last, which records the error for the request's log record, so a
 // consumer OnError would never run. Use [WithErrorHook] instead.
 func WithProblemOptions(opts ...prblm.Option) Option {
-	return func(s *settings) { s.problemOptions = slices.Concat(s.problemOptions, opts) }
+	return func(s *engine.Settings) { s.ProblemOptions = slices.Concat(s.ProblemOptions, opts) }
 }
 
 // WithErrorHook sets a hook called for every error the server answers,
 // after srvr's own hook. A hook that panics does not affect the response.
 // fn must not be nil.
 func WithErrorHook(fn ErrorHook) Option {
-	return func(s *settings) {
+	return func(s *engine.Settings) {
 		if fn == nil {
-			s.errs = append(s.errs, configError("ErrorHook", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, engine.ConfigError("ErrorHook", "<nil>", "is nil"))
 
 			return
 		}
 
-		s.errorHook = fn
+		s.ErrorHook = fn
 	}
-}
-
-// newProblems builds the server's problem handler from the consumer's prblm
-// options followed by srvr's own (the trace_id enricher and the hook), and returns an invalid option, which
-// makes prblm.NewHandler panic, as an error wrapping ErrConfig.
-func newProblems(opts []prblm.Option, own ...prblm.Option) (h *prblm.Handler, err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			err = configError("ProblemOptions", v, "is invalid")
-		}
-	}()
-
-	return prblm.NewHandler(slices.Concat(opts, own)...), nil
-}
-
-// onError is srvr's prblm hook. It records the failure for the request's
-// access record, which the access stage writes, and calls the consumer's
-// hook, if any, containing a panic in it.
-func (s *Server) onError(ctx context.Context, err error, p *prblm.Problem) {
-	recordFailure(ctx, err, p)
-
-	if s.settings.errorHook == nil {
-		return
-	}
-
-	defer func() { _ = recover() }()
-
-	s.settings.errorHook(ctx, err, p)
 }

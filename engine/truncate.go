@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 import (
 	"log/slog"

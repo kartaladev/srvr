@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 // The log schema: every event name and attribute key srvr writes. It is a
 // public, versioned commitment (see LOGGING.md): adding a key keeps

@@ -12,25 +12,25 @@
 
 Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `Option` (`func(*engine.Settings)`), `Trace`, `ShutdownPhase`, `ErrorHook` and the sentinels are declared in `engine` and aliased in `srvr`; every `With...` stays in `srvr`. Each move is a behaviour-preserving refactoring with the core suite green at every step.
 
-- [ ] 2.1 Shared configuration model (engine-support / Scenario: Same validation on every engine, `net/http` rows); verify `go test -race ./...` in the core passes unchanged and `go test -race -run TestEngineConfig ./engine/...` passes
+- [x] 2.1 Shared configuration model (engine-support / Scenario: Same validation on every engine, `net/http` rows); verify `go test -race ./...` in the core passes unchanged and `go test -race -run TestEngineConfig ./engine/...` passes
   - RED: `TestEngineConfig` in package `engine` with the `net/http` rows driving `engine.ResolveConfig`, plus the rows of engine-support / Scenario: srvr names are the engine declarations; fails because the package does not exist
   - GREEN: move the public types into `engine` and alias them in `srvr` (design D1); `Option` becomes `func(*engine.Settings)` with exported, engine-only fields; config resolution and validation move to `engine.ResolveConfig`, which `srvr.New` calls; an opaque engine-specific option slot whose foreign entries fail construction (engine-support / Scenario: Engine-specific option placement, `net/http` row)
   - REFACTOR: Move Function and Remove Middle Man where core only forwards, then /simplify
-- [ ] 2.2 Shared lifecycle state machine (engine-support / Scenario: Lifecycle misuse on every engine, as rows run against net/http); verify `go test -race -count=20 -run TestEngineLifecycle ./engine/...` passes
+- [x] 2.2 Shared lifecycle state machine (engine-support / Scenario: Lifecycle misuse on every engine, as rows run against net/http); verify `go test -race -count=20 -run TestEngineLifecycle ./engine/...` passes
   - RED: `TestEngineLifecycle` with a fake serve/drain adapter covering every state row; fails because the state machine is internal
   - GREEN: `engine.Lifecycle` with `Serve` and `Drain` callbacks, net/http engine uses it; the core's shutdown-hook runner (`BeforeDrain`/`AfterDrain`, once per server, `Start`-failure rule) moves into it unchanged, so the core's hook rows stay green
   - Also make `Start`'s "Serve returned because the stop closed the listener" branch deterministic through the fake adapter and cover it (adopted core-server carry-over)
   - REFACTOR: Extract Class for the adapter seam, then /simplify
-- [ ] 2.3 Shared request primitives (trace context middleware core, access and triage record builders, logging pipeline) and the design D10 guards moved to `engine` without behaviour change, with failure classification reading panics through `errors.As` to `*prblm.PanicError`; verify the `core-server` suite, the log schema golden test and `go test -race ./...` pass
+- [x] 2.3 Shared request primitives (trace context middleware core, access and triage record builders, logging pipeline) and the design D10 guards moved to `engine` without behaviour change, with failure classification reading panics through `errors.As` to `*prblm.PanicError`; verify the `core-server` suite, the log schema golden test and `go test -race ./...` pass
   - RED: tests in `engine` for each moved builder copied from core tests first (fail: symbols missing)
   - GREEN: move code, core uses `engine`
   - REFACTOR: Inline Function for core wrappers left empty, then /simplify
-- [ ] 2.4 Per-request state moved to `engine.RequestState` (engine-support / Scenario: Request state after the chain, `net/http` rows; Scenario: No request state outside a request); verify `go test -race -run 'TestRequestState|TestStateFrom' ./engine/...` passes and the core suite stays green
+- [x] 2.4 Per-request state moved to `engine.RequestState` (engine-support / Scenario: Request state after the chain, `net/http` rows; Scenario: No request state outside a request); verify `go test -race -run 'TestRequestState|TestStateFrom' ./engine/...` passes and the core suite stays green
   - RED: `TestStateFrom` with the background, nil and request-context rows, and `TestRequestState` with the net/http rows (including `GET /nope` failed `true`); fails because `engine.RequestState` does not exist
   - GREEN: move core D5's holder to `engine.RequestState` with route, matched, status, failure and trace context; core stages use `engine.StateFrom`
   - REFACTOR: Replace Temp with Query where stages re-derive values the state holds, then /simplify
-- [ ] 2.5 Core dependencies unchanged and API marked (engine-support / Scenario: Core dependencies unchanged; Requirement: The engine-support API is marked as such); verify `GOWORK=off go list -m all` lists only prblm as third party and `go doc ./engine` shows the engine-implementations warning
-- [ ] 2.6 Verify slice end to end: `go test -race ./...` in the core with `GOWORK=off` (full core suite, golden log test and problem tests) green; confirm moved builders, the request state and the state machine are covered in `go tool cover -func`; `go vet ./...` and `golangci-lint run ./...` clean with `GOWORK=off`; gopls diagnostics on changed files and find references on every moved symbol; run /simplify on the slice and commit `refactor(core): extract engine support package`
+- [x] 2.5 Core dependencies unchanged and API marked (engine-support / Scenario: Core dependencies unchanged; Requirement: The engine-support API is marked as such); verify `GOWORK=off go list -m all` lists only prblm as third party and `go doc ./engine` shows the engine-implementations warning
+- [x] 2.6 Verify slice end to end: `go test -race ./...` in the core with `GOWORK=off` (full core suite, golden log test and problem tests) green; confirm moved builders, the request state and the state machine are covered in `go tool cover -func`; `go vet ./...` and `golangci-lint run ./...` clean with `GOWORK=off`; gopls diagnostics on changed files and find references on every moved symbol; run /simplify on the slice and commit `refactor(core): extract engine support package`
 
 ## 3. Slice: gin engine end to end
 

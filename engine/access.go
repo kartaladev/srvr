@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 import (
 	"bufio"
@@ -14,13 +14,22 @@ import (
 	"github.com/kartaladev/prblm"
 )
 
-// failure is why a request failed: the error srvr's prblm hook received
-// (a *prblm.PanicError for a panic), the problem sent and whether the
-// response had already started when the error arrived.
+// failure is why a request failed: the error srvr's prblm hook received,
+// the panic it reports (nil for a returned error), the problem sent and
+// whether the response had already started when the error arrived.
 type failure struct {
 	err       error
+	panic     *prblm.PanicError
 	problem   *prblm.Problem
 	committed bool
+}
+
+// newFailure returns the failure of err, looking up the panic it reports
+// once, so later readers do not walk the chain again.
+func newFailure(err error, p *prblm.Problem, committed bool) *failure {
+	pe, _ := panicOf(err)
+
+	return &failure{err: err, panic: pe, problem: p, committed: committed}
 }
 
 // renderingNotes are the prblm notes about a mistake in rendering, not the
@@ -53,17 +62,17 @@ func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 	}
 
 	committed := req.rec != nil && req.rec.wroteHeader
-	req.failure = &failure{err: err, problem: p, committed: committed}
+	req.failure = newFailure(err, p, committed)
 }
 
-// logAccess returns the access stage: it records the response and writes
+// LogAccess returns the access stage: it records the response and writes
 // one access record per request when the response finishes.
-func (s *Server) logAccess(next http.Handler) http.Handler {
+func (c *Core) LogAccess(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &responseRecorder{ResponseWriter: w}
 
-		req := requestFrom(r.Context()) // set by startTrace, the outer stage
+		req := requestFrom(r.Context()) // set by StartTrace, the outer stage
 		req.rec = rec
 
 		defer func() {
@@ -74,19 +83,19 @@ func (s *Server) logAccess(next http.Handler) http.Handler {
 				// else reaching here is still logged, as an abort.
 				req.aborted = true
 
-				s.writeAccess(r, req, rec, time.Since(start))
+				c.writeAccess(r, req, rec, time.Since(start))
 				panic(v)
 			}
 		}()
 
 		next.ServeHTTP(rec, r)
 
-		s.writeAccess(r, req, rec, time.Since(start))
+		c.writeAccess(r, req, rec, time.Since(start))
 	})
 }
 
 // writeAccess writes the access record of a finished request.
-func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorder, d time.Duration) {
+func (c *Core) writeAccess(r *http.Request, req *RequestState, rec *responseRecorder, d time.Duration) {
 	status := rec.statusCode()
 	aborted := req.aborted
 	fail := req.failure
@@ -95,15 +104,15 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 
 	// Failed records are the triage record: suppression never applies.
 	ctx := r.Context()
-	if (msg == eventRequestCompleted && s.settings.access.suppressed(r.URL.Path, status)) || !s.log.Enabled(ctx, level) {
+	if (msg == eventRequestCompleted && c.settings.Access.suppressed(r.URL.Path, status)) || !c.log.Enabled(ctx, level) {
 		return
 	}
 
 	record := newOwnRecord(level, msg)
 	record.AddAttrs(slog.String(keyMethod, r.Method))
 
-	if req.route != "" {
-		record.AddAttrs(slog.String(keyRoute, req.route))
+	if req.Route != "" {
+		record.AddAttrs(slog.String(keyRoute, req.Route))
 	}
 
 	if !aborted || rec.wroteHeader {
@@ -119,17 +128,17 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 		record.AddAttrs(slog.String(keyUserAgent, ua))
 	}
 
-	s.addOptIns(&record, r)
+	c.addOptIns(&record, r)
 
 	switch {
 	case aborted:
-		record.AddAttrs(s.abortedAttrs()...)
+		record.AddAttrs(c.abortedAttrs()...)
 	case fail != nil:
 		addFailure(&record, fail)
-		record.AddAttrs(s.triageAttrs(r.Method, req, fail)...)
+		record.AddAttrs(c.triageAttrs(r.Method, req, fail)...)
 	}
 
-	s.log.handle(ctx, record, true)
+	c.log.handle(ctx, record, true)
 }
 
 // addFailure adds what the client saw: the problem sent, or that the
@@ -168,7 +177,7 @@ func outcome(status int, aborted bool, fail *failure) (string, slog.Level) {
 // status sent and of the problem the error resolved to, which a response
 // that had already started did not get.
 func (f *failure) level(status int) slog.Level {
-	if _, isPanic := f.err.(*prblm.PanicError); isPanic { //nolint:errorlint // srvr's hook receives prblm's own value.
+	if f.panic != nil {
 		return slog.LevelError
 	}
 
@@ -265,17 +274,17 @@ func (w *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (w *responseRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // addOptIns adds the attributes the access log configuration opts into.
-func (s *Server) addOptIns(record *slog.Record, r *http.Request) {
-	c := &s.settings.access
-	if c.IncludePath {
+func (c *Core) addOptIns(record *slog.Record, r *http.Request) {
+	opt := &c.settings.Access
+	if opt.IncludePath {
 		record.AddAttrs(slog.String(keyURLPath, r.URL.Path))
 	}
 
-	if c.IncludeQuery && r.URL.RawQuery != "" {
+	if opt.IncludeQuery && r.URL.RawQuery != "" {
 		record.AddAttrs(slog.String(keyURLQuery, r.URL.RawQuery))
 	}
 
-	if c.IncludeClientAddress {
+	if opt.IncludeClientAddress {
 		record.AddAttrs(slog.String(keyClientAddress, clientAddress(r.RemoteAddr)))
 	}
 }

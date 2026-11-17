@@ -43,12 +43,12 @@ func TestOptionPrecedence(t *testing.T) {
 	}
 }
 
-func listenAddr(s *Server) any { return s.cfg.Addr }
+func listenAddr(s *Server) any { return s.core.Config().Addr }
 
-func ignoresIncoming(s *Server) any { return s.settings.trace.IgnoreIncoming }
+func ignoresIncoming(s *Server) any { return s.core.Settings().Trace.IgnoreIncoming }
 
-func logLevel(s *Server) any { return s.settings.log.Level }
+func logLevel(s *Server) any { return s.core.Settings().Log.Level }
 
-func skipPaths(s *Server) any { return len(s.settings.access.SkipPaths) }
+func skipPaths(s *Server) any { return len(s.core.Settings().Access.SkipPaths) }
 
-func serviceName(s *Server) any { return s.settings.service.Name }
+func serviceName(s *Server) any { return s.core.Settings().Service.Name }

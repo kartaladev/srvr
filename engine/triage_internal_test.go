@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 import (
 	"errors"
@@ -57,12 +57,12 @@ func FuzzErrorChain(f *testing.F) {
 func TestUnresolvable(t *testing.T) {
 	t.Parallel()
 
-	u := guardChain(selfError{})
+	u := GuardChain(selfError{})
 	if u.Error() != "srvr: error chain cannot be resolved" || errors.Unwrap(u) != nil {
 		t.Fatalf("guardChain = %v", u)
 	}
-	if guardChain(nil) != nil {
-		t.Fatal("guardChain(nil) != nil")
+	if GuardChain(nil) != nil {
+		t.Fatal("GuardChain(nil) != nil")
 	}
 }
 

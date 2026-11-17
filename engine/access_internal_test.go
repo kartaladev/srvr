@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 import (
 	"context"
@@ -43,8 +43,8 @@ func TestRecordFailure(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := &request{}
-			ctx := context.WithValue(context.Background(), requestKey{}, req)
+			req := &RequestState{}
+			ctx := context.WithValue(context.Background(), stateKey{}, req)
 			for _, r := range tt.reports {
 				recordFailure(ctx, r.err, r.p)
 			}
@@ -93,7 +93,7 @@ func TestFuncName(t *testing.T) {
 		fn   any
 		want string
 	}{
-		{TestFuncName, "github.com/kartaladev/srvr.TestFuncName"},
+		{TestFuncName, "github.com/kartaladev/srvr/engine.TestFuncName"},
 		{nilFunc, ""},
 		{"not a func", ""},
 	} {

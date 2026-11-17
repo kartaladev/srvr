@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/kartaladev/srvr/engine"
 )
 
 // HandlerFunc handles a request and reports failure by returning an error,
@@ -31,7 +33,7 @@ type route struct {
 	// owner is the Go type of the configurer that registered the route.
 	owner string
 	// location is the handler's code location, resolved at registration.
-	location location
+	location engine.Location
 }
 
 // key is the ServeMux pattern of the route.
@@ -111,7 +113,7 @@ func (g *Group) Handle(method, path string, h HandlerFunc) {
 		hh = g.b.wrap(h)
 	}
 
-	g.add(method, path, hh, funcLocation(h))
+	g.add(method, path, hh, engine.FuncLocation(h))
 }
 
 // Mount routes every method for path to h, a plain [http.Handler] such as
@@ -121,9 +123,9 @@ func (g *Group) Handle(method, path string, h HandlerFunc) {
 // files) serves /static/a.txt from a.txt. Its errors are its own: a status
 // it writes is sent as is.
 func (g *Group) Mount(path string, h http.Handler) {
-	var loc location
-	if !isNil(h) {
-		loc = handlerLocation(h)
+	var loc engine.Location
+	if !engine.IsNil(h) {
+		loc = engine.HandlerLocation(h)
 		if n := segments(g.prefix); n > 0 {
 			h = stripSegments(n, h)
 		}
@@ -171,7 +173,7 @@ func cutSegments(p string, n int) string {
 }
 
 // add records a route for method ("" for every method) and path.
-func (g *Group) add(method, path string, h http.Handler, loc location) {
+func (g *Group) add(method, path string, h http.Handler, loc engine.Location) {
 	pattern, err := joinPattern(g.prefix, path)
 	if err != nil {
 		g.b.errs = append(g.b.errs, err)
@@ -180,7 +182,7 @@ func (g *Group) add(method, path string, h http.Handler, loc location) {
 	}
 
 	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
-	if isNil(h) {
+	if engine.IsNil(h) {
 		g.b.errs = append(g.b.errs, routeError("%q (%s): handler is nil", rt.key(), rt.owner))
 
 		return
@@ -311,11 +313,11 @@ func chain(h http.Handler, middleware []Middleware) (http.Handler, error) {
 func applyMiddleware(mw Middleware, h http.Handler) (wrapped http.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			wrapped, err = nil, errors.New("panicked: "+valueText(v))
+			wrapped, err = nil, errors.New("panicked: "+engine.ValueText(v))
 		}
 	}()
 
-	if wrapped = mw(h); isNil(wrapped) {
+	if wrapped = mw(h); engine.IsNil(wrapped) {
 		return nil, errors.New("returned a nil handler")
 	}
 
@@ -329,7 +331,7 @@ func applyMiddleware(mw Middleware, h http.Handler) (wrapped http.Handler, err e
 func safeConfigure(c RouteConfigurer[*Group], g *Group) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = routeError("configurer %T panicked: %s", c, valueText(v))
+			err = routeError("configurer %T panicked: %s", c, engine.ValueText(v))
 		}
 	}()
 
@@ -344,8 +346,8 @@ func withRoute(rt route, h http.Handler) http.Handler {
 	pattern, loc := rt.pattern, rt.location
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if req := requestFrom(r.Context()); req != nil {
-			req.route, req.location = pattern, loc
+		if req, ok := engine.StateFrom(r.Context()); ok {
+			req.Route, req.Location = pattern, loc
 		}
 
 		h.ServeHTTP(w, r)

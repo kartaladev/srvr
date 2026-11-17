@@ -29,9 +29,9 @@ func (s *Server) answerUnmatched(mux *http.ServeMux) http.Handler {
 
 		switch rec.status {
 		case http.StatusNotFound:
-			s.problems.Write(w, r, prblm.ErrNotFound)
+			s.core.Problems().Write(w, r, prblm.ErrNotFound)
 		case http.StatusMethodNotAllowed:
-			s.problems.Write(w, r, prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", rec.header.Get("Allow"))))
+			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", rec.header.Get("Allow"))))
 		default:
 			rec.replay(w)
 		}

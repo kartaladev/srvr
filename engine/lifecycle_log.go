@@ -1,4 +1,4 @@
-package srvr
+package engine
 
 import (
 	"context"
@@ -12,15 +12,15 @@ import (
 
 // logEvent writes one of srvr's own records, outside any request:
 // schema version, the event's attributes, then the service attributes.
-func (s *Server) logEvent(ctx context.Context, level slog.Level, event string, attrs ...slog.Attr) {
-	if !s.log.Enabled(ctx, level) {
+func (c *Core) logEvent(ctx context.Context, level slog.Level, event string, attrs ...slog.Attr) {
+	if !c.log.Enabled(ctx, level) {
 		return
 	}
 
 	r := newOwnRecord(level, event)
 	r.AddAttrs(attrs...)
-	r.AddAttrs(s.serviceAttrs...)
-	s.log.handle(ctx, r, true)
+	r.AddAttrs(c.serviceAttrs...)
+	c.log.handle(ctx, r, true)
 }
 
 // newOwnRecord starts one of srvr's own records: no source (PC 0) and the
@@ -36,30 +36,31 @@ func newOwnRecord(level slog.Level, event string) slog.Record {
 func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
 // funcName returns the qualified name of fn, or "" when unknown.
-func funcName(fn any) string { return funcLocation(fn).function }
+func funcName(fn any) string { return FuncLocation(fn).function }
 
-// location is a function's code location.
-type location struct {
+// Location is a function's code location, for code.function.name,
+// code.file.path and code.line.number.
+type Location struct {
 	function string
 	file     string
 	line     int
 }
 
-// funcLocation returns the location of fn. A method value resolves to its
+// FuncLocation returns the Location of fn. A method value resolves to its
 // "-fm" wrapper, whose suffix is removed; an unknown PC yields the zero
-// location, never an invented one.
-func funcLocation(fn any) location {
+// Location, never an invented one.
+func FuncLocation(fn any) Location {
 	v := reflect.ValueOf(fn)
 	if v.Kind() != reflect.Func || v.IsNil() {
-		return location{}
+		return Location{}
 	}
 
 	f := runtime.FuncForPC(v.Pointer())
 	if f == nil {
-		return location{}
+		return Location{}
 	}
 
-	loc := location{function: strings.TrimSuffix(f.Name(), "-fm")}
+	loc := Location{function: strings.TrimSuffix(f.Name(), "-fm")}
 
 	// A method value's wrapper is generated code: its file and line would
 	// point nowhere, so they are omitted rather than invented.
@@ -70,19 +71,19 @@ func funcLocation(fn any) location {
 	return loc
 }
 
-// handlerLocation returns the location of a plain handler: its type's
+// HandlerLocation returns the Location of a plain handler: its type's
 // ServeHTTP method, or the function of an http.HandlerFunc.
-func handlerLocation(h http.Handler) location {
+func HandlerLocation(h http.Handler) Location {
 	if hf, ok := h.(http.HandlerFunc); ok {
-		return funcLocation(hf)
+		return FuncLocation(hf)
 	}
 
-	var loc location
+	var loc Location
 	if m, ok := reflect.TypeOf(h).MethodByName("ServeHTTP"); ok {
-		loc = funcLocation(m.Func.Interface())
+		loc = FuncLocation(m.Func.Interface())
 	}
 
-	loc.function = typeName(h) + ".ServeHTTP"
+	loc.function = TypeName(h) + ".ServeHTTP"
 
 	return loc
 }
