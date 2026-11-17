@@ -2,11 +2,11 @@
 
 ## 1. Consolidation: refresh plan against merged changes
 
-- [ ] 1.1 Sync with the main branch and list every change merged or archived since this change was planned; verify they are named in the completion note (first change: expect none, and confirm the repository is initialised with a main branch)
-- [ ] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `core-server` or `unassigned` (adopt, defer or close); verify none is left undecided (first change: expect none)
-- [ ] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs, the released prblm version and Go toolchain (re-check prblm's `OnError`, `Wrap`, `Recover`, `RequestFrom` signatures with gopls); verify `openspec validate core-server --strict` passes
-- [ ] 1.4 Record the consolidation outcome at the top of `openspec/changes/core-server/notes.md`; verify the file lists what was refreshed or states none was needed
-- [ ] 1.5 Commit the consolidation as `docs(openspec): consolidate core-server against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.1 Sync with the main branch and list every change merged or archived since this change was planned; verify they are named in the completion note (first change: expect none, and confirm the repository is initialised with a main branch)
+- [x] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `core-server` or `unassigned` (adopt, defer or close); verify none is left undecided (first change: expect none)
+- [x] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs, the released prblm version and Go toolchain (re-check prblm's `OnError`, `Wrap`, `Recover`, `RequestFrom` signatures with gopls); verify `openspec validate core-server --strict` passes
+- [x] 1.4 Record the consolidation outcome at the top of `openspec/changes/core-server/notes.md`; verify the file lists what was refreshed or states none was needed
+- [x] 1.5 Commit the consolidation as `docs(openspec): consolidate core-server against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: one route served with problem errors
 

@@ -2,6 +2,20 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Consolidation 2026-11-17 (task group 1)
+- **Status:** closed: consolidation done
+- **Target:** core-server
+- **Context:** 1.1: `main` is the only branch (tracking `origin/main`, one commit `6eebc25`); no change has been merged or archived (`openspec/changes/archive` is empty, `openspec/specs` is empty), as expected for the first change. 1.2: open carry-overs addressed to `core-server` or `unassigned` - "Ask prblm for a composable OnError and an exported status-only sentinel" (unassigned) is deferred, kept open, with task 5.5 attaching its failing test; the entries other changes address to `core-server` (otel-observability "WithShutdownHook shared with security shutdown hooks", "error.type innermost Go type" (logs part), "Correlation keys may nest under WithGroup"; triage-debug-buffer entries) are already `adopted` in this change's artifacts, nothing undecided. 1.3: re-checked against the released prblm `v0.1.0` (the latest version, `go list -m -versions`) and Go `1.27.4`: `NewHandler(opts ...Option) *Handler` (panics on invalid options), `OnError(func(ctx, err, *Problem)) Option` (single slot), `(*Handler).Wrap(func(w, r) error) http.Handler`, `(*Handler).Recover(http.Handler) http.Handler` (re-panics `http.ErrAbortHandler`, reports with a nil problem when the response started), `RequestFrom(ctx) (Request, bool)`, `PanicError{Value, Stack}`, the built-in `*http.MaxBytesError` -> 413 mapper and `context.DeadlineExceeded` -> 504 all match design D4/D5/D8; `golangci-lint` 2.15.0 and `gopls` are installed. `openspec validate core-server --strict` passes. No artifact needed a change.
+- **Evidence:** `git branch -a` (`* main`, `remotes/origin/main`); prblm source `~/go/pkg/mod/github.com/kartaladev/prblm@v0.1.0` (`handler.go:63,411,473`, `options.go:62`, `scope.go:64`, `builtins.go:27`); `openspec validate core-server --strict` -> `Change 'core-server' is valid`.
+- **Suggested action:** none; artifacts unchanged. One new open follow-up is recorded below ("prblm type discovery is not served by srvr").
+
+### prblm type discovery is not served by srvr
+- **Status:** open
+- **Target:** unassigned
+- **Context:** prblm v0.1.0 serves documentation for types registered with `WithTypes` + `WithNamespace` through `Handler.Discovery()` mounted at `Handler.DiscoveryPath()`; on net/http nothing mounts it automatically. srvr accepts `WithProblemOptions(prblm.WithTypes(...))` (error-responses "Consumers extend error rendering") but no spec says whether srvr mounts discovery, so type URLs in problems would lead to srvr's own 404 problem. srvr's 404/405 interception also never lets the consumer mount discovery under a route without registering it as a route.
+- **Evidence:** unverified: specification gap, no runtime defect yet; prblm `handler.go:640-690` (`DiscoveryPath`, `Discovery` godoc shows the manual `mux.Handle` mount).
+- **Suggested action:** Owner decides: srvr mounts `Discovery()` at `DiscoveryPath()` when non-empty (engine-neutral, every engine), or documents that consumers `Mount` it themselves; add a spec scenario either way.
+
 
 ### Planning audit 2026-11-17 decisions
 - **Status:** closed: applied during planning
