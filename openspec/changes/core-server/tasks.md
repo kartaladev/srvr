@@ -77,36 +77,36 @@
 
 ## 4. Slice: complete routing on the net/http group
 
-- [ ] 4.1 Prefix and path joining (route-registration / Scenario: Joining prefix and path, all rows); verify `go test -race -run TestJoin` passes
+- [x] 4.1 Prefix and path joining (route-registration / Scenario: Joining prefix and path, all rows); verify `go test -race -run TestJoin` passes
   - RED: table of prefix/path/request rows through a real mux; fails on duplicate slashes and empty path
   - GREEN: explicit join rules preserving trailing slash and wildcards
   - REFACTOR: Extract Function `joinPattern`, then /simplify
-- [ ] 4.2 Invalid paths fail start (route-registration / Scenario: Invalid paths, all rows); verify `go test -race -run TestInvalidPaths` passes
+- [x] 4.2 Invalid paths fail start (route-registration / Scenario: Invalid paths, all rows); verify `go test -race -run TestInvalidPaths` passes
   - RED: table; fails because ServeMux panics escape or relative paths are accepted
   - GREEN: validation before registration, ServeMux registration under `recover` -> `ErrRouteConfig`
   - REFACTOR: Replace Error Code with Exception style typed `RouteError`, then /simplify
-- [ ] 4.3 Conflicting routes name both sides (route-registration / Scenario: Conflicting routes, conflict and no-conflict rows; server-lifecycle / Scenario: Hooks on every stop path, the route-conflict row); verify `go test -race -run TestConflicts` passes
+- [x] 4.3 Conflicting routes name both sides (route-registration / Scenario: Conflicting routes, conflict and no-conflict rows; server-lifecycle / Scenario: Hooks on every stop path, the route-conflict row); verify `go test -race -run TestConflicts` passes
   - RED: table, plus the conflict row of `TestStart_Fails`; fails because the error does not name configurers
   - GREEN: registry of `(pattern, configurer type)`, conflict error naming both
   - REFACTOR: Move Function registry into its own type, then /simplify
-- [ ] 4.4 Middleware order and scope (route-registration / Scenario: Middleware order and scope, all rows); verify `go test -race -run TestMiddlewareOrder` passes
+- [x] 4.4 Middleware order and scope (route-registration / Scenario: Middleware order and scope, all rows); verify `go test -race -run TestMiddlewareOrder` passes
   - RED: table recording middleware calls; fails on order and sub-group inheritance
   - GREEN: snapshot middleware per route, copy-on-create sub-groups
   - REFACTOR: Replace Loop with Pipeline for chain composition, then /simplify
-- [ ] 4.5 Faulty middleware (route-registration / Scenario: Faulty middleware, all rows); verify `go test -race -run TestFaultyMiddleware` passes
+- [x] 4.5 Faulty middleware (route-registration / Scenario: Faulty middleware, all rows); verify `go test -race -run TestFaultyMiddleware` passes
   - RED: table with nil middleware, nil-returning middleware, panicking and short-circuiting middleware; fails on nil handling
   - GREEN: configure-time nil checks; middleware runs inside recovery
   - REFACTOR: Introduce Assertion helpers for nil checks, then /simplify
-- [ ] 4.6 Mount plain handlers (route-registration / Scenario: Mounted handler, all rows); verify `go test -race -run TestMount` passes
+- [x] 4.6 Mount plain handlers (route-registration / Scenario: Mounted handler, all rows); verify `go test -race -run TestMount` passes
   - RED: table with `http.FileServerFS`, panicking handler and nil; fails because `Mount` does not exist
   - GREEN: `Mount` registering a method-less pattern with group middleware and the group prefix stripped (`http.FileServerFS` returns 404 for `/static/a.txt` without it)
   - REFACTOR: Remove duplication with `Handle`, then /simplify
-- [ ] 4.7 Configurer panics name the configurer (route-registration / Scenario: Configure panics, all rows; server-lifecycle / Scenario: Hooks on every stop path, the configure-panic row); verify `go test -race -run TestConfigurePanics` passes
+- [x] 4.7 Configurer panics name the configurer (route-registration / Scenario: Configure panics, all rows; server-lifecycle / Scenario: Hooks on every stop path, the configure-panic row); verify `go test -race -run TestConfigurePanics` passes
   - RED: table, plus the configurer-panic row of `TestStart_Fails`; fails because panics escape `Start`
   - GREEN: per-configurer recover with `%T` and panic value, no bind
   - REFACTOR: Extract Function for safe invocation, then /simplify
-- [ ] 4.8 Godoc for joining rules and middleware scope with an `Example` showing groups and middleware; verify `go test -run Example` passes
-- [ ] 4.9 Verify slice end to end with a multi-configurer app, confirm join, conflict and recovery branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): add route groups, middleware and registration checks`
+- [x] 4.8 Godoc for joining rules and middleware scope with an `Example` showing groups and middleware; verify `go test -run Example` passes
+- [x] 4.9 Verify slice end to end with a multi-configurer app, confirm join, conflict and recovery branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): add route groups, middleware and registration checks`
 
 ## 5. Slice: unmatched routes, panics and error extension
 

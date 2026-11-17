@@ -209,3 +209,36 @@ func listen(t *testing.T) net.Listener {
 
 	return ln
 }
+
+// on returns a configurer registering GET path under a group with prefix
+// (the root group when prefix is empty).
+func on(prefix, path string, h srvr.HandlerFunc) configFunc {
+	return func(g *srvr.Group) {
+		if prefix != "" {
+			g = g.Group(prefix)
+		}
+		g.GET(path, h)
+	}
+}
+
+func status(code int) srvr.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) error {
+		w.WriteHeader(code)
+
+		return nil
+	}
+}
+
+// okRoute registers GET path answering 200.
+func okRoute(path string) configFunc { return on("", path, status(http.StatusOK)) }
+
+// PanicAPI panics with "boom" in Configure; NilDerefAPI dereferences a nil
+// pointer.
+type (
+	PanicAPI    struct{}
+	NilDerefAPI struct{ db *struct{ name string } }
+)
+
+func (*PanicAPI) Configure(*srvr.Group) { panic("boom") }
+
+func (c NilDerefAPI) Configure(g *srvr.Group) { g.GET("/"+c.db.name, status(http.StatusOK)) }

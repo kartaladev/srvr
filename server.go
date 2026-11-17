@@ -126,7 +126,10 @@ func (s *Server) Start(ctx context.Context) error {
 		return s.fail(ctx, err)
 	}
 
-	handler := s.configure(configurers)
+	handler, err := s.configure(configurers)
+	if err != nil {
+		return s.fail(ctx, err)
+	}
 
 	ln, err := s.listen(ctx)
 	if err != nil {
@@ -211,20 +214,33 @@ func (s *Server) finish(hookErr, drainErr error) {
 
 // configure runs the configurers and returns the handler serving their
 // routes.
-func (s *Server) configure(configurers []RouteConfigurer[*Group]) http.Handler {
-	var routes []route
-	g := &Group{routes: &routes}
+func (s *Server) configure(configurers []RouteConfigurer[*Group]) (http.Handler, error) {
+	b := &builder{wrap: s.problems.Wrap}
+	g := &Group{b: b}
 
 	for _, c := range configurers {
-		c.Configure(g)
+		b.owner = fmt.Sprintf("%T", c)
+		if err := safeConfigure(c, g); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(b.errs) > 0 {
+		return nil, errors.Join(b.errs...)
 	}
 
 	mux := http.NewServeMux()
-	for _, rt := range routes {
-		mux.Handle(rt.method+" "+rt.pattern, s.problems.Wrap(rt.handler))
+	if err := installRoutes(mux, b.routes); err != nil {
+		return nil, err
 	}
 
-	return limitBody(s.cfg.MaxRequestBodyBytes, mux)
+	return s.pipeline(mux), nil
+}
+
+// pipeline wraps the router in the per-request stages, outermost first:
+// body limit, panic recovery, router.
+func (s *Server) pipeline(router http.Handler) http.Handler {
+	return limitBody(s.cfg.MaxRequestBodyBytes, s.problems.Recover(router))
 }
 
 // listen returns the configured listener or binds the configured address.

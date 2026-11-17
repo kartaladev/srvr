@@ -40,6 +40,29 @@ func TestStart_Fails(t *testing.T) {
 			},
 		},
 		{
+			condition: "a route configurer panics",
+			setup: func(t *testing.T) (*srvr.Server, context.Context) {
+				t.Helper()
+				srv := newServer(t)
+				mustNil(t, srv.Register(&PanicAPI{}))
+
+				return srv, context.Background()
+			},
+			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
+		},
+		{
+			condition: "two routes register the same pattern",
+			setup: func(t *testing.T) (*srvr.Server, context.Context) {
+				t.Helper()
+				srv := newServer(t)
+				mustNil(t, srv.Register(okRoute("/dup")))
+				mustNil(t, srv.Register(okRoute("/dup")))
+
+				return srv, context.Background()
+			},
+			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
+		},
+		{
 			condition: "the Start context is already cancelled",
 			setup: func(t *testing.T) (*srvr.Server, context.Context) {
 				t.Helper()

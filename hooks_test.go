@@ -2,6 +2,7 @@ package srvr_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"slices"
@@ -202,6 +203,29 @@ func TestShutdownHooks(t *testing.T) {
 				}
 				if err := srv.Start(context.Background()); err == nil {
 					t.Fatal("Start = nil, want a bind error")
+				}
+			},
+			before: 0, after: 1,
+		},
+		{
+			name: "has a route configurer that panics",
+			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
+				t.Helper()
+				mustNil(t, srv.Register(&PanicAPI{}))
+				if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrRouteConfig) {
+					t.Fatalf("Start = %v, want ErrRouteConfig", err)
+				}
+			},
+			before: 0, after: 1,
+		},
+		{
+			name: "has two routes with the same pattern",
+			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
+				t.Helper()
+				mustNil(t, srv.Register(okRoute("/dup")))
+				mustNil(t, srv.Register(okRoute("/dup")))
+				if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrRouteConfig) {
+					t.Fatalf("Start = %v, want ErrRouteConfig", err)
 				}
 			},
 			before: 0, after: 1,

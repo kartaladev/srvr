@@ -62,3 +62,60 @@ func Example() {
 	// /missing 404 application/problem+json
 	// Start returned <nil>
 }
+
+// API shows groups, prefixes and middleware.
+type API struct{}
+
+// Configure adds the routes of API under /api/v1.
+func (API) Configure(g *srvr.Group) {
+	api := g.Group("/api", header("X-API", "1"))
+	v1 := api.Group("/v1")
+	v1.Use(header("X-Version", "v1")) // only routes registered from here on
+
+	v1.GET("/users/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		_, err := fmt.Fprintf(w, "user %s", r.PathValue("id"))
+
+		return err
+	})
+}
+
+// header returns middleware setting a response header.
+func header(name, value string) srvr.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set(name, value)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func ExampleGroup() {
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := srv.Register(API{}); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = srv.Start(ctx) }()
+	<-srv.Ready()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/api/v1/users/42", nil)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer res.Body.Close()
+
+	body, _ := io.ReadAll(res.Body)
+	fmt.Println(res.StatusCode, string(body), res.Header.Get("X-API"), res.Header.Get("X-Version"))
+
+	// Output:
+	// 200 user 42 1 v1
+}

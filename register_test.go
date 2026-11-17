@@ -24,16 +24,6 @@ func (c *countingConfigurer) Configure(*srvr.Group) {
 	c.calls++
 }
 
-func okRoute(path string) configFunc {
-	return func(g *srvr.Group) {
-		g.GET(path, func(w http.ResponseWriter, _ *http.Request) error {
-			w.WriteHeader(http.StatusOK)
-
-			return nil
-		})
-	}
-}
-
 // TestRegister covers route-registration / Scenario: Registration outcome.
 func TestRegister(t *testing.T) {
 	t.Parallel()
