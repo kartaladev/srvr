@@ -189,3 +189,24 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** The fiber access stage measured the body with `c.Response().Body()`, which in fasthttp v1.78.0 reads a body stream whole into memory before the response is written: every `SendStream`/`SendFile` response was buffered, and an endless stream (server-sent events) never reached the client. Found by the /simplify efficiency review. A streamed body now reports its declared `Content-Length` (0 when unknown), never read by srvr.
 - **Evidence:** `fibersrvr/stream_test.go` `TestFiberStreamNotBuffered`, `GOWORK=off go test -count=1 -run TestFiberStreamNotBuffered ./...` in `fibersrvr` before the fix: `--- FAIL ... no response while the stream is open: ... context deadline exceeded`; passes after.
 - **Suggested action:** none; `http.response.body.size` of a streamed fiber response is its declared length, a difference from net/http's bytes written (to pin with task 5.4's exception rows if parity needs it).
+
+### Public engine package stability before v1
+- **Status:** open
+- **Target:** unassigned
+- **Context:** `github.com/kartaladev/srvr/engine` is public because the engine modules are separate Go modules; its godoc marks it as for srvr's own engines and unstable before v1. It now holds the shared types srvr aliases (`Config`, `Option`, `Settings`, sentinels), `Core`, `Lifecycle[C]`, `RequestState`, `BeginRequest`/`WriteAccess`/`AccessInfo`, `RecordRejection`, `Warn` with `WarningCode`, `RouteError`, `Configure`, `ForEngine`/`EngineOptions`, `FuncLocation`/`FuncPointer`, `GuardChain`, `ValueText`. Every symbol is a compatibility decision once v1 is tagged.
+- **Evidence:** unverified: API review item, not a defect.
+- **Suggested action:** before v1, review the surface (unexport what only one engine needs, or move it under `internal/` with the engine modules pinned to matching core versions) and decide whether `Settings`' exported fields stay.
+
+### Metrics and tracing hooks needed in both engines
+- **Status:** open
+- **Target:** otel-observability
+- **Context:** The observer stage (design pipeline: trace, access, observer, recovery) must sit at the same point on every engine: net/http between `LogAccess` and the body limit, gin between `requestStage` and `ginprblm.Middleware` (or around the gin engine as an `http.Handler` like the access stage), fiber inside `fibersrvr`'s `requestStage` after the chain returns and the error was rendered (fiber's status is only final there, design D4). Fiber's request context is `c.Context()` (D5); `RequestState.Status()` is not live on fiber during the request (see "RequestState.Status is not live on fiber").
+- **Evidence:** unverified: planning carry-over from task 5.5.
+- **Suggested action:** add the observer as an `engine` stage hook that each engine calls at those points, with a parity row per engine.
+
+### scrty middleware placement per engine
+- **Status:** open
+- **Target:** scrty-integration
+- **Context:** scrty's chain must run outside the router and after srvr's trace and access stages. net/http: wrap the router inside `Server.stages`. gin: srvr's stages wrap the gin engine as an `http.Handler` (`ginsrvr/server.go` `handler`), so the httpsec chain can go between `LimitBody` and the engine, or ginsec as the first consumer-independent global middleware after `requestStage`. fiber: fibersec after `requestStage` and `fiberprblm.Recovery()` in `app.Use`, before routes; fasthttp rejections (408, 413, 431) never reach it. Route listings for scrty's collision check come from task group 6.
+- **Evidence:** unverified: planning carry-over from task 5.5.
+- **Suggested action:** expose one insertion point per engine (an `engine`-level middleware slot) rather than per-engine options, with parity rows.

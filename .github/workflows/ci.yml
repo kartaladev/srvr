@@ -70,3 +70,20 @@ jobs:
           working-directory: fibersrvr
       - name: test
         run: go test -race ./...
+
+  paritytest:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: internal/paritytest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: internal/paritytest/go.mod
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race ./...

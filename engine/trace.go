@@ -87,6 +87,15 @@ func (r *RequestState) Panicked() bool { return r.failure != nil && r.failure.pa
 // ginprblm for a status-only abort.
 func (r *RequestState) ClearFailure() { r.failure = nil }
 
+// MarkCommitted records that the request's failure arrived after its
+// response had started, for an engine without a response recorder (fiber
+// keeps a body stream that started before the error).
+func (r *RequestState) MarkCommitted() {
+	if r.failure != nil {
+		r.failure.committed = true
+	}
+}
+
 // StateFrom returns the request state of ctx, and false outside srvr's
 // pipeline, including for a nil ctx.
 func StateFrom(ctx context.Context) (*RequestState, bool) {

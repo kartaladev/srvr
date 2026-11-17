@@ -2,8 +2,10 @@ package fibersrvr_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,5 +65,25 @@ func TestFiberStreamNotBuffered(t *testing.T) {
 	buf := make([]byte, 11)
 	if _, err := io.ReadFull(res.Body, buf); err != nil || string(buf) != "data: one\n\n" {
 		t.Fatalf("first chunk %q, %v", buf, err)
+	}
+}
+
+// TestFiberStreamThenError: an error after a body stream started keeps
+// the stream, and the failed record says the response had started.
+func TestFiberStreamThenError(t *testing.T) {
+	t.Parallel()
+
+	srv, logs := newServer(t)
+	res := serve(t, srv, routes(func(r fiber.Router) {
+		r.Get("/s", func(c fiber.Ctx) error {
+			_ = c.SendStream(strings.NewReader("streamed"))
+
+			return errors.New("late")
+		})
+	}), http.MethodGet, "/s", nil, nil)
+
+	recs := logs.access(t)
+	if res.body != "streamed" || len(recs) != 1 || recs[0]["srvr.response.committed"] != true {
+		t.Fatalf("response %q, records %v", res.body, recs)
 	}
 }

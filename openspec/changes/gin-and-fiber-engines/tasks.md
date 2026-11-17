@@ -150,22 +150,22 @@ Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `O
 
 ## 5. Slice: cross-engine parity
 
-- [ ] 5.1 Module setup (first task of the slice): create test-only module `internal/paritytest` in `go.work`, never released; verify `go test ./...` runs in it with all three engines
-- [ ] 5.2 Problem parity (engine-parity / Scenario: Problem parity, all rows); verify `go test -race -run TestParity_Problem` passes
+- [x] 5.1 Module setup (first task of the slice): create test-only module `internal/paritytest` in `go.work`, never released; verify `go test ./...` runs in it with all three engines
+- [x] 5.2 Problem parity (engine-parity / Scenario: Problem parity, all rows); verify `go test -race -run TestParity_Problem` passes
   - RED: one table, rows per engine, comparing decoded JSON exactly; fails on any drift found
   - GREEN: fix drift in the offending engine (each fix proven by its failing row)
   - REFACTOR: /simplify
-- [ ] 5.3 Log parity (engine-parity / Scenario: Log parity, all rows including unmatched `GET /nope`, `DELETE /items/7` and the net/http and gin `http.ErrAbortHandler` rows); verify `go test -race -run TestParity_Log` passes
+- [x] 5.3 Log parity (engine-parity / Scenario: Log parity, all rows including unmatched `GET /nope`, `DELETE /items/7` and the net/http and gin `http.ErrAbortHandler` rows); verify `go test -race -run TestParity_Log` passes
   - RED: table comparing `msg`, `level`, `http.route` and exact key sets against net/http; fails on drift
   - GREEN: fix drift in the shared builders or the engine feeding them
   - REFACTOR: /simplify
-- [ ] 5.4 Pin documented exceptions (engine-parity / Scenario: Documented differences, all rows including gin `Allow` without `HEAD`, fiber `FOO`, fiber `http.ErrAbortHandler`, fiber `413` without route, fiber header cap, fiber header timeout and gin cyclic chain passed to `c.Error`); verify `go test -race -run TestParity_Exceptions` passes and each exception appears in that engine's godoc
+- [x] 5.4 Pin documented exceptions (engine-parity / Scenario: Documented differences, all rows including gin `Allow` without `HEAD`, fiber `FOO`, fiber `http.ErrAbortHandler`, fiber `413` without route, fiber header cap, fiber header timeout and gin cyclic chain passed to `c.Error`); verify `go test -race -run TestParity_Exceptions` passes and each exception appears in that engine's godoc
   - RED: one test per row asserting the engine's actual behaviour; fails where the behaviour differs from the documented one
   - The gin cyclic-chain row asserts that `c.Error` has not returned after a bounded wait; the spinning goroutine cannot be stopped, so the test runs it once, uses no `t.Parallel` and says so in a comment
   - GREEN: correct either the documentation or the engine, recording the decision
   - REFACTOR: /simplify
-- [ ] 5.5 Write `notes.md` carry-overs: public `engine` package stability before v1 (Target: `unassigned`), metrics/tracing hooks needed in both engines (Target: `otel-observability`), scrty middleware placement per engine (Target: `scrty-integration`); verify entries exist with targets
-- [ ] 5.6 Verify slice end to end: from each module's directory (core, `ginsrvr`, `fibersrvr`, `internal/paritytest`) `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` clean, with `GOWORK=off` for the released modules; `go test -coverprofile=c.out ./... && go tool cover -func=c.out` in `internal/paritytest` and each engine module confirms the parity-exercised pipeline branches are covered; gopls diagnostics; run /simplify on the slice and commit `test(parity): guard identical problems and logs across engines`
+- [x] 5.5 Write `notes.md` carry-overs: public `engine` package stability before v1 (Target: `unassigned`), metrics/tracing hooks needed in both engines (Target: `otel-observability`), scrty middleware placement per engine (Target: `scrty-integration`); verify entries exist with targets
+- [x] 5.6 Verify slice end to end: from each module's directory (core, `ginsrvr`, `fibersrvr`, `internal/paritytest`) `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` clean, with `GOWORK=off` for the released modules; `go test -coverprofile=c.out ./... && go tool cover -func=c.out` in `internal/paritytest` and each engine module confirms the parity-exercised pipeline branches are covered; gopls diagnostics; run /simplify on the slice and commit `test(parity): guard identical problems and logs across engines`
 
 ## 6. Slice: registered routes listed and checked on every engine
 

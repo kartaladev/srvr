@@ -36,6 +36,9 @@
 //     a 405 problem, and Allow never lists HEAD.
 //   - A handler that writes a success body and later calls c.Error keeps
 //     its response; the failed record has srvr.response.committed true.
+//   - When the client has disconnected and the handler reports the
+//     context's cancellation, nothing is written (net/http writes the
+//     problem to the closed connection).
 //   - Do not pass an error whose Unwrap chain is cyclic (an error that
 //     unwraps to itself) to c.Error: gin's c.Error calls errors.As on it
 //     before srvr sees it and never returns, so the request never

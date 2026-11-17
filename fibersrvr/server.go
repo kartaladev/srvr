@@ -308,14 +308,21 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 
 	ctx = s.core.BeginRequest(ctx, traceparent(c))
 	c.SetContext(ctx)
+	state, _ := engine.StateFrom(ctx) // never nil: BeginRequest made it
 
 	if rejected >= http.StatusBadRequest {
 		s.core.RecordRejection(ctx, rejected)
 	} else if err := c.Next(); err != nil {
 		_ = s.renderError(c, err)
+
+		// fiberprblm keeps a body stream that already started; the client
+		// got that, not the problem.
+		if c.Response().IsBodyStream() {
+			state.MarkCommitted()
+		}
 	}
 
-	if state, ok := engine.StateFrom(ctx); ok && c.Matched() {
+	if c.Matched() {
 		route := c.Route()
 		state.Route = route.Path // the app's registered string, never a pooled buffer
 		if n := len(route.Handlers); n > 0 {

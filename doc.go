@@ -15,4 +15,11 @@
 // options or with the tagged config structs [Config], [LogConfig],
 // [AccessLogConfig], [ServiceConfig] and [TraceConfig], which any loader
 // can fill; srvr reads no environment variables or files itself.
+//
+// The same configuration runs on the Gin and Fiber v3 engines through the
+// modules github.com/kartaladev/srvr/ginsrvr and
+// github.com/kartaladev/srvr/fibersrvr, which document where those engines
+// differ. On net/http, when a client disconnects before a handler's error
+// is rendered, the problem is still written to the closed connection and
+// dropped; the failed record counts its bytes.
 package srvr
