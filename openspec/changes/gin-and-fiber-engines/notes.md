@@ -9,6 +9,20 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** S2 did not reproduce: a probe in `fibersrvr` (`fiber.New().ShutdownWithContext(context.Background())`, `GOWORK=off go test -run TestZZProbe -v .`) logged `<nil>` and `errors.Is(err, fiber.ErrNotRunning)` `false`, also after serving and on a second call; fiber v3.7.0 `app.go:1436-1438` returns `ErrNotRunning` only when `app.server` is nil, which `fiber.New` never leaves. D3's wording stays, clarified, and task 7.6 pins it. W3 probe: fiber v3.7.0 does not fire `OnRoute` for a mount (`router.go:1516-1519`, `if !route.mount`), so the mount must be found in `app.Stack()`.
 - **Suggested action:** apply group 7.
 
+### Fiber mount internals not fail-safe after a consumer's fiber upgrade
+- **Status:** open: planned as task group 8
+- **Target:** gin-and-fiber-engines
+- **Context:** The sub-app walk (design D8) reads `Route.group`, `Group.app` and `App.stack` by reflection; `TestMountFields` pins them only in srvr's CI. After a consumer's fiber upgrade a renamed field silently dropped mounted routes from the listing and the duplicate check (D8 accepted "degrade to listing nothing"), and a retyped field panicked in `Start`, because only `engine.Configure` recovers. Owner decision 2026-11-18 (rule 7): fail `Start` with `srvr.ErrRouteConfig` naming the field and fiber version.
+- **Evidence:** scratch tests in the `fibersrvr` internal package: `TestZZWalkRenamedStackIsVisible` (walk over a struct with `trees [][]*fiber.Route`) listed nothing with no way to report it; `TestZZWalkRetypedStackDoesNotPanic` (struct with `stack []*fiber.Route`) panicked with `reflect: call of reflect.Value.Len on ptr to non-array Value`.
+- **Suggested action:** task group 8; engine-support "Fiber mount internals unreadable".
+
+### A fiber sub-app shared between servers races in fiber
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Mounting one sub-app in two servers that configure concurrently makes fiber write the sub-app's mount path without synchronisation (fiber v3.7.0 `mount.go:195`, `mountFields.mountPath`), which `-race` reports. This is fiber's own data race; srvr cannot fix it without copying the sub-app. `fibersrvr` godoc says a sub-app must not be shared between servers that configure concurrently (task 8.3).
+- **Evidence:** a scratch race test in `fibersrvr` (two servers mounting the same `fiber.New()` sub-app and starting concurrently) reported `WARNING: DATA RACE` at `mount.go:195`; the test was dropped because the race is upstream and cannot pass under `-race`.
+- **Suggested action:** report upstream (fiber: synchronise or document mount path assignment on a shared sub-app); revisit if fiber fixes it.
+
 ### A fiber sub-app's own merged duplicate is not reported
 - **Status:** open
 - **Target:** unassigned

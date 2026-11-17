@@ -204,6 +204,20 @@ Findings and owner decisions of the verification pass on `32e2566`: see notes.md
 - [x] 7.6 Pin design D3's never-served shutdown fact: `fiber.New().ShutdownWithContext(ctx)` returns `nil`; verify `go test -race -run TestFiberShutdownNeverServed` passes in `fibersrvr`
 - [x] 7.7 Verify slice end to end: from the core, `ginsrvr`, `fibersrvr` (with `GOWORK=off`) and `internal/paritytest`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and coverage of the new branches (`SetDefaultLogger`, duplicate key, mount walk) in `go tool cover -func`; gopls diagnostics on changed files; no stray `.test` processes; write follow-ups to `notes.md`; run /simplify and commit as `fix(...)` (at most two commits: the fiber route listing, and the rest)
 
+## 8. Slice: fiber mount internals fail safely
+
+A consumer's fiber upgrade that renames or retypes `Route.group`, `Group.app` or `App.stack` silently dropped mounted routes or panicked in `Start` (design D8 decision 2026-11-18; notes.md "Fiber mount internals not fail-safe after a consumer's fiber upgrade"). Each behaviour runs RED (run the test and confirm it fails for the stated reason), GREEN, REFACTOR.
+
+- [ ] 8.1 Walk reports unreadable internals (engine-support / Scenario: Fiber mount internals unreadable, renamed and retyped rows at the walk); verify `go test -race -run TestWalkUnreadable` passes in `fibersrvr`
+  - RED: internal table calling the walk on stand-in app types with a renamed stack (`trees [][]*fiber.Route`), a retyped stack (`stack []*fiber.Route`) and a method stack holding non-pointers; fails because the walk lists nothing with no way to report it, and the retyped row panics
+  - GREEN: the walk returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version; it checks the kind of every value it reads, and `addMounted` runs it under recover, turning a panic into the same error
+- [ ] 8.2 Field check before the walk (engine-support / Scenario: Fiber mount internals unreadable, all rows); verify `go test -race -run 'TestMountFieldCheck|TestMountFields'` passes in `fibersrvr`
+  - RED: internal table over `addMounted` with stand-in field lists (renamed, retyped, as pinned) and with and without a recorded mount; fails because no check exists
+  - GREEN: with at least one mount, check the three fields' names and types once with `reflect.TypeFor`; on a mismatch return `srvr.ErrRouteConfig` naming the field and the fiber version from `runtime/debug.ReadBuildInfo` (`unknown` otherwise); with no mounts, no check; `configure` returns the error so `Start` fails
+  - REFACTOR: `TestMountFields` checks the same field list the runtime check uses (Remove Duplicate Code); then /simplify
+- [ ] 8.3 `fibersrvr` godoc: a sub-app must not be shared between servers that configure concurrently (fiber's own race, notes.md "A fiber sub-app shared between servers races in fiber")
+- [ ] 8.4 Verify the slice: from `fibersrvr` with `GOWORK=off`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and coverage of the new branches; no stray `.test` processes; close the notes.md entry; run /simplify and commit `fix(fibersrvr): fail Start when fiber's mount internals are unreadable`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.
