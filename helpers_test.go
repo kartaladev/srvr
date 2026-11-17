@@ -56,6 +56,9 @@ func startServer(t *testing.T, srv *srvr.Server) string {
 	go func() { done <- srv.Start(ctx) }()
 
 	t.Cleanup(func() {
+		// Idle client connections, including ones the transport dialed
+		// speculatively and never used, would hold the drain for up to 5s.
+		http.DefaultClient.CloseIdleConnections()
 		cancel()
 		select {
 		case err := <-done:

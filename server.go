@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -31,6 +32,9 @@ type Server struct {
 	cfg Config
 	// problems renders every error response.
 	problems *prblm.Handler
+	// correlation is the log handler srvr writes its records through and
+	// request loggers are bound from.
+	correlation *correlation
 	// ready is closed once the listener is bound.
 	ready chan struct{}
 
@@ -66,7 +70,12 @@ func New(opts ...Option) (*Server, error) {
 		stopped:  make(chan struct{}),
 	}
 
-	srv.problems, err = newProblems(s.problemOptions, prblm.OnError(srv.onError))
+	srv.correlation = newCorrelation(&srv.settings)
+	if s.setDefaultLogger {
+		slog.SetDefault(slog.New(srv.correlation))
+	}
+
+	srv.problems, err = newProblems(s.problemOptions, prblm.WithEnrichers(traceIDEnricher), prblm.OnError(srv.onError))
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +253,10 @@ func (s *Server) configure(configurers []RouteConfigurer[*Group]) (http.Handler,
 }
 
 // pipeline wraps the router in the per-request stages, outermost first:
-// body limit, panic recovery, unmatched-route answers, router.
+// trace context, access log, body limit, panic recovery, unmatched-route
+// answers, router.
 func (s *Server) pipeline(mux *http.ServeMux) http.Handler {
-	return limitBody(s.cfg.MaxRequestBodyBytes, s.problems.Recover(s.answerUnmatched(mux)))
+	return s.startTrace(s.logAccess(limitBody(s.cfg.MaxRequestBodyBytes, s.problems.Recover(s.answerUnmatched(mux)))))
 }
 
 // listen returns the configured listener or binds the configured address.

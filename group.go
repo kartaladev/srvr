@@ -240,6 +240,8 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 			return routeError("%q (%s): %w", rt.key(), rt.owner, err)
 		}
 
+		h = withRoute(rt.pattern, h)
+
 		v := tryHandle(mux, rt.key(), h)
 		if v == nil {
 			continue
@@ -306,4 +308,16 @@ func safeConfigure(c RouteConfigurer[*Group], g *Group) (err error) {
 	c.Configure(g)
 
 	return nil
+}
+
+// withRoute returns h recording pattern, the route's path pattern, as the
+// request's http.route before the route's middleware runs.
+func withRoute(pattern string, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if req := requestFrom(r.Context()); req != nil {
+			req.route = pattern
+		}
+
+		h.ServeHTTP(w, r)
+	})
 }

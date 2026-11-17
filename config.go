@@ -3,6 +3,7 @@ package srvr
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"slices"
 	"strconv"
@@ -47,10 +48,13 @@ type Config struct {
 type settings struct {
 	Config
 
-	listener       net.Listener
-	hooks          []hook
-	problemOptions []prblm.Option
-	errorHook      ErrorHook
+	listener         net.Listener
+	hooks            []hook
+	trace            TraceConfig
+	logOutput        io.Writer
+	setDefaultLogger bool
+	problemOptions   []prblm.Option
+	errorHook        ErrorHook
 	// errs collects mistakes options detect while they are applied.
 	errs []error
 }

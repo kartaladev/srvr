@@ -45,3 +45,20 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("Start = %v", err)
 	}
 }
+
+// TestEndToEnd_TraceCorrelation: the problem's trace_id equals the access
+// record's, so one id links what the client saw to the log.
+func TestEndToEnd_TraceCorrelation(t *testing.T) {
+	t.Parallel()
+
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/x", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") })
+	})
+	res := do(t, http.MethodGet, base+"/x", nil, map[string]string{"traceparent": incoming})
+
+	id, _ := res.problem.Ext("trace_id")
+	rec := out.waitRecord(t, "http.request.failed")
+	if id != incomingTrace || rec["trace_id"] != id {
+		t.Fatalf("problem trace_id %v, record trace_id %v, want both %s", id, rec["trace_id"], incomingTrace)
+	}
+}

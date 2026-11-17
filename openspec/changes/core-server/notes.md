@@ -58,3 +58,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `WithErrorHook`'s hook runs under `recover` in srvr's prblm `OnError` (design D4), and the panic is discarded, so a broken consumer hook never shows up in triage. No spec row asks for a record of it.
 - **Evidence:** unverified as a defect: behaviour per D4 (`problems.go` `onError`); raised by the slice 5 /simplify altitude review.
 - **Suggested action:** When per-request state and logging land (slices 6-7), write a `WARN` `srvr.problem.note` record for a panicking consumer hook, or record the decision not to.
+
+### Correlation group replay cost (task 6.9)
+- **Status:** closed: measured, within budget
+- **Target:** core-server
+- **Context:** Design D7 replays a logger's `WithAttrs`/`WithGroup` steps per record after adding `trace_id`/`span_id`; the task asked for per-trace caching if grouped records cost more than twice ungrouped ones.
+- **Evidence:** `correlation_bench_test.go` `BenchmarkCorrelation` (`go test -run '^$' -bench BenchmarkCorrelation -benchmem .`, Go 1.27.4, Apple M-series, 14 cores): ungrouped 649.6 ns/op, 400 B/op, 7 allocs/op; grouped (`With("table","users").WithGroup("db")`) 848.4 ns/op, 880 B/op, 13 allocs/op - 1.31x the time, 2.2x the bytes.
+- **Suggested action:** none; time stays under 2x, so per-trace caching is not needed. Re-measure if a later change adds steps to the hot path.

@@ -18,6 +18,7 @@ func TestOptionPrecedence(t *testing.T) {
 		{"WithConfig then WithAddr", []Option{WithConfig(Config{Addr: ":9090"}), WithAddr(":7070")}, listenAddr, ":7070"},
 		{"WithAddr then WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{Addr: ":9090"})}, listenAddr, ":9090"},
 		{"WithAddr then empty WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{})}, listenAddr, ":8080"},
+		{"WithTraceConfig ignores incoming", []Option{WithTraceConfig(TraceConfig{IgnoreIncoming: true})}, ignoresIncoming, true},
 	}
 
 	for _, tt := range tests {
@@ -37,3 +38,5 @@ func TestOptionPrecedence(t *testing.T) {
 }
 
 func listenAddr(s *Server) any { return s.cfg.Addr }
+
+func ignoresIncoming(s *Server) any { return s.settings.trace.IgnoreIncoming }

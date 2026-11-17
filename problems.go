@@ -40,21 +40,24 @@ func WithErrorHook(fn ErrorHook) Option {
 }
 
 // newProblems builds the server's problem handler from the consumer's prblm
-// options followed by srvr's own hook, and returns an invalid option, which
+// options followed by srvr's own (the trace_id enricher and the hook), and returns an invalid option, which
 // makes prblm.NewHandler panic, as an error wrapping ErrConfig.
-func newProblems(opts []prblm.Option, hook prblm.Option) (h *prblm.Handler, err error) {
+func newProblems(opts []prblm.Option, own ...prblm.Option) (h *prblm.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = configError("ProblemOptions", fmt.Sprint(v), "is invalid")
 		}
 	}()
 
-	return prblm.NewHandler(append(slices.Clone(opts), hook)...), nil
+	return prblm.NewHandler(slices.Concat(opts, own)...), nil
 }
 
-// onError is srvr's prblm hook. It calls the consumer's hook, if any,
-// containing a panic in it.
+// onError is srvr's prblm hook. It records the failure for the request's
+// access record, which the access stage writes, and calls the consumer's
+// hook, if any, containing a panic in it.
 func (s *Server) onError(ctx context.Context, err error, p *prblm.Problem) {
+	recordFailure(ctx, err, p)
+
 	if s.settings.errorHook == nil {
 		return
 	}

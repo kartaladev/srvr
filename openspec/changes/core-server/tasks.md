@@ -131,45 +131,45 @@
 
 ## 6. Slice: trace context and access log
 
-- [ ] 6.1 Continue a valid traceparent (trace-context / Scenario: Valid traceparent, all rows); verify `go test -race -run TestTraceparent_Valid` passes
+- [x] 6.1 Continue a valid traceparent (trace-context / Scenario: Valid traceparent, all rows); verify `go test -race -run TestTraceparent_Valid` passes
   - RED: table; fails because no parser exists
   - GREEN: internal W3C level 1 parser and span id generation
   - REFACTOR: Replace Magic Literal for field lengths, then /simplify
-- [ ] 6.2 Start a new trace for absent or invalid input (trace-context / Scenario: New trace, both Examples tables); verify `go test -race -run TestTraceparent_New` passes, plus a `FuzzTraceparent` fuzz target running 30s without crash
+- [x] 6.2 Start a new trace for absent or invalid input (trace-context / Scenario: New trace, both Examples tables); verify `go test -race -run TestTraceparent_New` passes, plus a `FuzzTraceparent` fuzz target running 30s without crash
   - RED: table with every malformed and invalid row and duplicate headers; fails on acceptance of uppercase and zero ids
   - GREEN: strict validation, single-header check, length cap
   - REFACTOR: Decompose Conditional into named validators, then /simplify
-- [ ] 6.3 Ignore incoming context opt-in (trace-context / Scenario: Ignoring incoming context, all rows); verify `go test -race -run TestTrace_Ignore` passes
+- [x] 6.3 Ignore incoming context opt-in (trace-context / Scenario: Ignoring incoming context, all rows); verify `go test -race -run TestTrace_Ignore` passes
   - RED: table with option and config rows; fails because the option does not exist
   - GREEN: `WithIgnoreIncomingTraceContext`, `TraceConfig.IgnoreIncoming`, `WithTraceConfig`; add the `WithTraceConfig` row of `TestOptionPrecedence`
   - REFACTOR: Parameterize Function, then /simplify
-- [ ] 6.4 Trace accessor (trace-context / Scenario: Reading the trace context, all rows including nil context); verify `go test -race -run TestTraceFromContext` passes
+- [x] 6.4 Trace accessor (trace-context / Scenario: Reading the trace context, all rows including nil context); verify `go test -race -run TestTraceFromContext` passes
   - RED: table; fails because accessor does not exist
   - GREEN: unexported context key, `TraceFromContext`
   - REFACTOR: none expected; /simplify
-- [ ] 6.5 Unique ids under concurrency (trace-context / Scenario: Concurrent generation); verify `go test -race -run TestTrace_Unique` passes
+- [x] 6.5 Unique ids under concurrency (trace-context / Scenario: Concurrent generation); verify `go test -race -run TestTrace_Unique` passes
   - RED: 1000 concurrent requests collecting ids; fails if a shared buffer is reused
   - GREEN: `crypto/rand` per id
   - REFACTOR: /simplify
-- [ ] 6.6 Problems carry `trace_id` (error-responses / Scenario: Trace id in the problem, all rows); verify `go test -race -run TestProblemTraceID` passes
+- [x] 6.6 Problems carry `trace_id` (error-responses / Scenario: Trace id in the problem, all rows); verify `go test -race -run TestProblemTraceID` passes
   - RED: table; fails because no enricher exists
   - GREEN: srvr enricher setting `trace_id`
   - REFACTOR: /simplify
-- [ ] 6.7 Default JSON stdout logger (structured-logging / Scenario: Default output); verify `go test -race -run TestDefaultOutput` passes
+- [x] 6.7 Default JSON stdout logger (structured-logging / Scenario: Default output); verify `go test -race -run TestDefaultOutput` passes
   - RED: capture stdout via an injectable writer defaulting to `os.Stdout`; fails because nothing is logged
   - GREEN: base JSON handler at INFO, correlation wrapper
   - REFACTOR: Extract Function for handler resolution, then /simplify
-- [ ] 6.8 Correlation keys and request logger (structured-logging / Scenario: Correlation keys, all rows; Scenario: Grouped loggers, all rows); verify `go test -race -run 'TestCorrelation|TestCorrelation_Groups'` passes
+- [x] 6.8 Correlation keys and request logger (structured-logging / Scenario: Correlation keys, all rows; Scenario: Grouped loggers, all rows); verify `go test -race -run 'TestCorrelation|TestCorrelation_Groups'` passes
   - RED: tables, including `WithGroup("db")`, nested groups, `With` before and after `WithGroup`, `WithGroup("")` and `slog.Default()` after `WithSetDefaultLogger()`; the group rows fail with a naive `Record.AddAttrs` correlation (`{"db":{"trace_id":..}}`, as probe `probes/xgroup` showed)
   - GREEN: srvr handler recording `WithGroup`/`WithAttrs` steps and replaying them after `base.WithAttrs(trace_id, span_id)`, fast path without steps, `LoggerFromContext`, `WithSetDefaultLogger` opt-in
   - REFACTOR: Replace Primitive with Object for the step list, then /simplify
-- [ ] 6.9 Measure the group-replay cost; verify `go test -run '^$' -bench BenchmarkCorrelation -benchmem` reports grouped and ungrouped records and the numbers are recorded in `notes.md` (an open carry-over targeting `core-server` with per-trace caching as the suggested action if grouped records cost more than twice ungrouped ones)
-- [ ] 6.10 One access record per request (structured-logging / Scenario: Access record content; Scenario: Unmatched requests, with `msg` `http.request.failed` at `WARN` and the `problem` group for 404 and 405); verify `go test -race -run TestAccessRecord` passes
+- [x] 6.9 Measure the group-replay cost; verify `go test -run '^$' -bench BenchmarkCorrelation -benchmem` reports grouped and ungrouped records and the numbers are recorded in `notes.md` (an open carry-over targeting `core-server` with per-trace caching as the suggested action if grouped records cost more than twice ungrouped ones)
+- [x] 6.10 One access record per request (structured-logging / Scenario: Access record content; Scenario: Unmatched requests, with `msg` `http.request.failed` at `WARN` and the `problem` group for 404 and 405); verify `go test -race -run TestAccessRecord` passes
   - RED: tables for every behaviour and unmatched row, plus the access-record assertions deferred from 5.3 (`srvr.response.committed`) and 5.4 (panicking hook); fails because no access middleware exists
   - GREEN: access middleware with status/bytes/duration recording, `http.route` from the pattern the mux matched (read through a per-request holder, since `r.Pattern` is set only on the request value the mux receives), without method and omitted when unmatched, failure taken from the per-request state that srvr's `OnError` and the unmatched interception fill, event and level selection
   - REFACTOR: Extract Function for level selection, then /simplify
-- [ ] 6.11 Centralise log keys in one internal file with a golden-record test pinning the keys of every event srvr writes and `srvr.log.schema` `1` on each (structured-logging / Scenario: Schema version attribute, rows available in this slice; the lifecycle rows are added in 7.10); verify `go test -run TestLogSchemaGolden` passes and fails when a key is renamed without bumping the version
-- [ ] 6.12 Verify slice end to end (request with traceparent -> problem `trace_id` equals access record `trace_id`), confirm parser, generator, correlation replay and access branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): add W3C trace context and JSON access log`
+- [x] 6.11 Centralise log keys in one internal file with a golden-record test pinning the keys of every event srvr writes and `srvr.log.schema` `1` on each (structured-logging / Scenario: Schema version attribute, rows available in this slice; the lifecycle rows are added in 7.10); verify `go test -run TestLogSchemaGolden` passes and fails when a key is renamed without bumping the version
+- [x] 6.12 Verify slice end to end (request with traceparent -> problem `trace_id` equals access record `trace_id`), confirm parser, generator, correlation replay and access branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): add W3C trace context and JSON access log`
 
 ## 7. Slice: logging configuration and safety
 
