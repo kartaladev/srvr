@@ -35,6 +35,28 @@ Every engine module SHALL accept the core's option functions, including the conf
 | `gin` | `WithConfig(Config{ShutdownTimeout: -1s})` | an error wrapping `srvr.ErrConfig` naming `ShutdownTimeout` |
 | `fiber` | `WithListener(nil)` | an error wrapping `srvr.ErrConfig` naming `Listener` |
 
+### Requirement: A failed construction changes no process-wide state
+Every engine SHALL apply `srvr.WithSetDefaultLogger` (`slog.SetDefault`) only as the last step of a construction that succeeds; a construction that returns an error SHALL leave `slog.Default()` unchanged, whichever check fails (core validation, an option of another engine, or an engine hook that is nil or panics).
+
+#### Scenario: Default logger after construction
+- **Given** the process default logger recorded before construction
+- **When** engine `<engine>` is constructed with `WithSetDefaultLogger()`, `WithLogHandler(slog.NewJSONHandler(buf, nil))` and `<config>`
+- **Then** construction returns `<result>`
+- **And** a record written through `slog.Default()` afterwards `<default>`
+
+##### Examples:
+| engine | config | result | default |
+|--------|--------|--------|---------|
+| `net/http` | (nothing else) | a server | reaches `buf` |
+| `gin` | (nothing else) | a server | reaches `buf` |
+| `fiber` | (nothing else) | a server | reaches `buf` |
+| `net/http` | `WithProblemOptions(prblm.WithNamespace("not a uri"))` | an error wrapping `srvr.ErrConfig` naming `ProblemOptions` | goes to the recorded default, not `buf` |
+| `net/http` | an option of another engine (`ginsrvr.WithEngine(hook)`) | an error wrapping `srvr.ErrConfig` naming that option | goes to the recorded default, not `buf` |
+| `gin` | `ginsrvr.WithEngine(nil)` | an error wrapping `srvr.ErrConfig` naming `WithEngine` | goes to the recorded default, not `buf` |
+| `gin` | a `ginsrvr.WithEngine` hook that panics with `boom` | an error wrapping `srvr.ErrConfig` containing `boom` | goes to the recorded default, not `buf` |
+| `fiber` | `fibersrvr.WithFiberConfig(nil)` | an error wrapping `srvr.ErrConfig` naming `WithFiberConfig` | goes to the recorded default, not `buf` |
+| `fiber` | a `fibersrvr.WithFiberConfig` hook that panics with `boom` | an error wrapping `srvr.ErrConfig` containing `boom` | goes to the recorded default, not `buf` |
+
 ### Requirement: Engine-specific options share the option list
 Engine-specific options (`ginsrvr.WithEngine`, `fibersrvr.WithFiberConfig`) SHALL be `srvr.Option` values passed in the same list as the core options and read only by the engine they belong to; one given to any other engine SHALL fail construction with `srvr.ErrConfig` naming the option.
 
@@ -253,3 +275,21 @@ After the configure phase and before binding, every engine SHALL build `engine.R
 | `net/http` | a first check that deletes every entry from its input, then a second check that records its input | the second check receives the full listing and the server becomes ready |
 | `gin` | blocks until its context is done, with a `Start` context whose deadline is `50ms` | `Start` returns an error matching `context.DeadlineExceeded`, `Ready()` is never closed and `AfterDrain` hooks run once |
 | `fiber` | ignores its context and blocks forever, with a `Start` context whose deadline is `50ms` | `Start` returns an error matching `context.DeadlineExceeded` at the deadline; the check's goroutine is abandoned |
+
+### Requirement: Mounted fiber sub-app routes are listed
+The fiber engine SHALL list the routes of a sub-app mounted with `Use(prefix, subApp)`, at any depth, with their full mounted path, attributed to the configurer that mounted the sub-app, excluding the sub-app's middleware and implicit routes.
+
+#### Scenario: Sub-app route listing
+- **Given** a fiber server with configurer `*main.UserRoutes` that `<mounts>`
+- **When** the server starts with a route check that records its input
+- **Then** the check receives exactly `<listed>`
+
+##### Examples:
+| mounts | listed |
+|--------|--------|
+| sub-app `sub` with `Get("/users")`, mounted with `router.Use("/api", sub)` | `{GET /api/users *main.UserRoutes}` |
+| sub-app `sub` with `Get("/users")`, mounted with `router.Use("/api", sub)`, then `sub.Post("/users")` | `{GET /api/users *main.UserRoutes}`, `{POST /api/users *main.UserRoutes}` |
+| sub-app `inner` with `Get("/x")` mounted on sub-app `outer` with `outer.Use("/v2", inner)`, and `outer` mounted with `router.Use("/api", outer)` | `{GET /api/v2/x *main.UserRoutes}` |
+| sub-app `sub` with `sub.Use(audit)` and `Get("/users")`, mounted with `router.Use("/api", sub)` | `{GET /api/users *main.UserRoutes}` |
+| sub-app `sub` with `Get("/users")`, mounted with `router.Use("/", sub)` | `{GET /users *main.UserRoutes}` |
+| sub-app `sub` with `Get("/users")`, mounted with `router.Group("/v1").Use("/api", sub)` | `{GET /v1/api/users *main.UserRoutes}` |

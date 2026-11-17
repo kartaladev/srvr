@@ -71,6 +71,7 @@ Where an engine cannot match, the difference SHALL be listed here, documented in
 | `gin` | a handler writes a success body and later calls `c.Error` | the success response is kept; the record has `srvr.response.committed` `true` |
 | `fiber` | a handler sets a buffered body and then returns an error | the body is replaced by the problem (Fiber buffers responses); `srvr.response.committed` is `false` |
 | `fiber` | a streaming body has started and an error follows | the stream is kept; the record has `srvr.response.committed` `true` |
+| `fiber` | a handler returns `c.SendStream(bytes.NewReader([]byte("hello")))`, a stream without a declared length | the client gets `hello`; `http.response.body.size` is `0` (fiber logs a stream's declared `Content-Length`, and this stream has none; net/http and gin log the bytes written) |
 | `net/http` | a client disconnects before the error is rendered | the problem write is attempted and dropped |
 | `gin` | a client disconnects before the error is rendered | nothing is written |
 | `fiber` | a client disconnects mid-request | the handler is not notified (fasthttp does not detect it) |

@@ -2,6 +2,13 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Verification fixes 2026-11-18 (task group 7)
+- **Status:** open: planned in task group 7
+- **Target:** gin-and-fiber-engines
+- **Context:** The verification pass on `32e2566` found: W1 a failed construction still replaces `slog.Default()` (`engine.ResolveConfig` calls `slog.SetDefault` before later checks can fail); W2 fiber duplicates differing only by a trailing slash or letter case pass `Start` (owner: normalise like fiber, respecting `CaseSensitive`/`StrictRouting`); W3 routes of a mounted fiber sub-app are served but missing from the listing and the duplicate check (owner: list them); W4 a streamed fiber body logs its declared length (keep, document); S1 the gin cyclic `c.Error` parity subtest runs with `t.Parallel()` against task 5.4; S2 design D3 says `ShutdownWithContext` on a never-served app returns `nil`, claimed to return `fiber.ErrNotRunning`. Refreshed: engine-support new requirements "A failed construction changes no process-wide state" and "Mounted fiber sub-app routes are listed"; fiber-engine new requirement "Fiber duplicate routes are compared as fiber matches them" (the registration requirement points to it); engine-parity streamed body-size row; design D1, D3, D4, D8 (sub-app approach and the alternatives rejected), Defaults, Hot Paths, Risks; tasks group 7. `openspec validate gin-and-fiber-engines --strict` passes.
+- **Evidence:** S2 did not reproduce: a probe in `fibersrvr` (`fiber.New().ShutdownWithContext(context.Background())`, `GOWORK=off go test -run TestZZProbe -v .`) logged `<nil>` and `errors.Is(err, fiber.ErrNotRunning)` `false`, also after serving and on a second call; fiber v3.7.0 `app.go:1436-1438` returns `ErrNotRunning` only when `app.server` is nil, which `fiber.New` never leaves. D3's wording stays, clarified, and task 7.6 pins it. W3 probe: fiber v3.7.0 does not fire `OnRoute` for a mount (`router.go:1516-1519`, `if !route.mount`), so the mount must be found in `app.Stack()`.
+- **Suggested action:** apply group 7.
+
 ### Owner decisions 2026-11-18
 - **Status:** closed: recorded in the plan
 - **Target:** gin-and-fiber-engines

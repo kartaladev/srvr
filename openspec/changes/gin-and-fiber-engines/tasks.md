@@ -180,6 +180,30 @@ Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `O
 - [x] 6.3 Godoc on `engine.Route`, `srvr.WithRouteCheck` and a runnable `Example` asserting a route table at startup; verify `go test -run Example` passes
 - [x] 6.4 Verify slice end to end: listing parity rows added to `internal/paritytest`; route-listing and check branches covered in `go tool cover -func`; from each module's directory `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` clean with `GOWORK=off` for released modules; gopls diagnostics and find references on changed definitions; run /simplify on the slice and commit `feat(engine): list registered routes and run route checks`
 
+## 7. Slice: verification fixes
+
+Findings and owner decisions of the verification pass on `32e2566`: see notes.md "Verification fixes 2026-11-18". Each behaviour runs RED (run the test and confirm it fails for the stated reason), GREEN, REFACTOR.
+
+- [ ] 7.1 Default logger only after a successful construction (engine-support / Scenario: Default logger after construction, all rows); verify `go test -race -run TestDefaultLoggerAfterConstruction` passes in the core, `ginsrvr` and `fibersrvr`
+  - RED: one non-parallel table per module (`slog.SetDefault` is global; the previous default is restored in `t.Cleanup`), recording `slog.Default()` before `New` and checking that a record written through it afterwards reaches the server's handler only when `New` succeeded; fails on every failing-construction row because `ResolveConfig` calls `slog.SetDefault` before the later checks
+  - GREEN: remove `slog.SetDefault` from `engine.ResolveConfig`; add `Core.SetDefaultLogger`, called as the last statement before the successful return of `srvr.New`, `ginsrvr.New` and `fibersrvr.New`
+  - REFACTOR: Move Statement to Callers, then update the `WithSetDefaultLogger` godoc (applied once construction succeeds)
+- [ ] 7.2 Fiber duplicates compared as fiber matches them (fiber-engine / Scenario: Fiber duplicate normalisation, the rows without a sub-app); verify `go test -race -run TestFiberDuplicateNormalisation` passes in `fibersrvr`
+  - RED: table over `Start`, with the `CaseSensitive` and `StrictRouting` opt-ins set through `WithFiberConfig`; fails because `Get("/users")` with `Get("/users/")` or `Get("/Users")` starts, and the opt-in rows are proved reachable through `app.Test`
+  - GREEN: the duplicate key mirrors fiber's `normalizeRoutePattern` with the app's final config, then drops parameter names (design D3)
+  - REFACTOR: Extract Function `matchKey`, pinned by a table of fiber's normalisation cases, then /simplify
+- [ ] 7.3 Mounted sub-app routes listed and checked (engine-support / Scenario: Sub-app route listing, all rows; fiber-engine / Scenario: Fiber duplicate normalisation, the sub-app rows); verify `go test -race -run 'TestSubAppRouteListing|TestFiberDuplicateNormalisation|TestMountFields'` passes in `fibersrvr`
+  - RED: listing table recording the route check's input, and the sub-app duplicate rows; fail because the check receives `[]` and a sub-app route colliding with a parent route starts; one row also asserts `GET /api/users` answers `200` so the listed path is the served one
+  - GREEN: implement the design D8 sub-app walk and feed its routes to the listing and the duplicate check
+  - Guard test `TestMountFields` pins the three unexported fields and their types, like `TestRouteFlagFields`
+  - REFACTOR: Extract Function for the walk, then /simplify; update the `fibersrvr` godoc beside the path-scoped `Use` note
+- [ ] 7.4 Streamed body size as a documented difference (engine-parity / Scenario: Documented differences, the fiber `SendStream` row); verify `go test -race -run TestParity_Exceptions` passes in `internal/paritytest`
+  - RED: subtest asserting the client gets `hello` and the record has `http.response.body.size` `0`; run it to confirm it pins the current behaviour (it passes: a pin, not a defect - say so in the commit)
+  - GREEN: none in code; `fibersrvr` godoc lists the difference under "Documented differences from net/http"
+- [ ] 7.5 Remove `t.Parallel()` from the gin cyclic `c.Error` parity subtest, as task 5.4 requires, and say why in its comment; verify `go test -race -run 'TestParity_Exceptions/gin_never'` passes
+- [ ] 7.6 Pin design D3's never-served shutdown fact: `fiber.New().ShutdownWithContext(ctx)` returns `nil`; verify `go test -race -run TestFiberShutdownNeverServed` passes in `fibersrvr`
+- [ ] 7.7 Verify slice end to end: from the core, `ginsrvr`, `fibersrvr` (with `GOWORK=off`) and `internal/paritytest`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and coverage of the new branches (`SetDefaultLogger`, duplicate key, mount walk) in `go tool cover -func`; gopls diagnostics on changed files; no stray `.test` processes; write follow-ups to `notes.md`; run /simplify and commit as `fix(...)` (at most two commits: the fiber route listing, and the rest)
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.

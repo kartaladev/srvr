@@ -7,7 +7,7 @@ Defines how the Fiber v3 engine module serves consumer routes with srvr's lifecy
 ## ADDED Requirements
 
 ### Requirement: Fiber route configurers receive a router
-`fibersrvr` SHALL accept `srvr.RouteConfigurer[fiber.Router]` through `Register` and SHALL call each `Configure` once, in registration order, during `Start`, with a router rooted at `/`, before the listener is bound. Duplicate or conflicting routes (same method and path after normalising parameter names), which fiber accepts silently, SHALL fail `Start`.
+`fibersrvr` SHALL accept `srvr.RouteConfigurer[fiber.Router]` through `Register` and SHALL call each `Configure` once, in registration order, during `Start`, with a router rooted at `/`, before the listener is bound. Duplicate routes, which fiber accepts silently and of which it serves only the first, SHALL fail `Start` (see "Fiber duplicate routes are compared as fiber matches them").
 
 #### Scenario: Fiber registration
 - **Given** a `fibersrvr` server and configurer `<configurer>`
@@ -30,6 +30,31 @@ Defines how the Fiber v3 engine module serves consumer routes with srvr's lifecy
 | registers `Get("/users/:id")` and `Get("/users/:name")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/users/:name` |
 | registers `Get("/users/:id")` twice | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/users/:id` |
 | one configurer registers `Get("/a")`, another registers `Get("/a")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/a` and both configurer types |
+
+### Requirement: Fiber duplicate routes are compared as fiber matches them
+Two fiber routes SHALL conflict, failing `Start` with `srvr.ErrRouteConfig`, when they have the same method and the same path after normalising it as fiber matches it: parameter names ignored, letters lowercased unless the app's `CaseSensitive` is on, a trailing slash removed unless its `StrictRouting` is on (both read after `WithFiberConfig`), with the routes of mounted sub-apps compared at their full mounted path.
+
+#### Scenario: Fiber duplicate normalisation
+- **Given** a `fibersrvr` server and configurer `<configurer>`
+- **When** the consumer registers it and starts the server
+- **Then** `Register` returns `<register>` and `Start` `<start>`
+
+##### Examples: accepted
+| configurer | register | start |
+|------------|----------|-------|
+| registers `Get("/users")` and `Get("/Users")` with `WithFiberConfig(func(c *fiber.Config){ c.CaseSensitive = true })` | `nil` | becomes ready, and `GET /Users` reaches the second route |
+| registers `Get("/users")` and `Get("/users/")` with `WithFiberConfig(func(c *fiber.Config){ c.StrictRouting = true })` | `nil` | becomes ready, and `GET /users/` reaches the second route |
+| registers `Get("/users")` and mounts sub-app `sub` with `Get("/users")` with `Use("/api", sub)` | `nil` | becomes ready |
+
+##### Examples: rejected
+| configurer | register | start |
+|------------|----------|-------|
+| registers `Get("/users")` and `Get("/users/")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/users/` |
+| registers `Get("/users")` and `Get("/Users")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/Users` |
+| registers `Get("/users")` and `Get("/users/")` with `WithFiberConfig(func(c *fiber.Config){ c.CaseSensitive = true })` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/users/` |
+| registers `Get("/users")` and `Get("/Users")` with `WithFiberConfig(func(c *fiber.Config){ c.StrictRouting = true })` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/Users` |
+| mounts sub-app `sub` with `Get("/Users/")` with `Use("/api", sub)` and registers `Get("/api/users")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/api/Users/` and `/api/users` |
+| one configurer mounts sub-app `sub` with `Get("/x")` with `Use("/", sub)`, another registers `Get("/x")` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/x` and both configurer types |
 
 ### Requirement: Fiber handler errors become problems
 An error returned by a Fiber handler or middleware SHALL be rendered by fiberprblm's error handler as an RFC 9457 problem with the `trace_id` member; a `*fiber.Error` code SHALL be a status hint and its message SHALL NOT be sent.
