@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/kartaladev/prblm"
 )
@@ -32,9 +34,11 @@ type Server struct {
 	cfg Config
 	// problems renders every error response.
 	problems *prblm.Handler
-	// correlation is the log handler srvr writes its records through and
-	// request loggers are bound from.
-	correlation *correlation
+	// log is the handler srvr writes its records through and request
+	// loggers are bound from.
+	log *logHandler
+	// serviceAttrs are added to lifecycle and failed records.
+	serviceAttrs []slog.Attr
 	// ready is closed once the listener is bound.
 	ready chan struct{}
 
@@ -70,9 +74,14 @@ func New(opts ...Option) (*Server, error) {
 		stopped:  make(chan struct{}),
 	}
 
-	srv.correlation = newCorrelation(&srv.settings)
-	if s.setDefaultLogger {
-		slog.SetDefault(slog.New(srv.correlation))
+	if srv.log, err = newLogHandler(&srv.settings.log); err != nil {
+		return nil, err
+	}
+
+	srv.serviceAttrs = s.service.attrs(debug.ReadBuildInfo)
+
+	if s.log.setDefault {
+		slog.SetDefault(slog.New(srv.log))
 	}
 
 	srv.problems, err = newProblems(s.problemOptions, prblm.WithEnrichers(traceIDEnricher), prblm.OnError(srv.onError))
@@ -198,6 +207,7 @@ func (s *Server) begin() ([]RouteConfigurer[*Group], error) {
 // fail ends a Start that failed before serving: nothing was served, so
 // only the AfterDrain hooks run, and err is returned with their failures.
 func (s *Server) fail(ctx context.Context, err error) error {
+	s.logEvent(ctx, slog.LevelError, eventFailed, slog.String(keyExceptionMsg, err.Error()))
 	s.closeUnserved(ctx)
 
 	return errors.Join(err, s.hookErr)
@@ -305,6 +315,7 @@ func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handle
 	s.addr = ln.Addr().String()
 	s.mu.Unlock()
 
+	s.logEvent(ctx, slog.LevelInfo, eventStarted, slog.String(keyServerAddress, s.addr))
 	close(s.ready)
 
 	go func() { r.served <- r.hs.Serve(ln) }()
@@ -329,9 +340,12 @@ func (s *Server) stop(drainCtx context.Context) bool {
 
 	close(r.stopping)
 	_ = r.ln.Close()
+	s.logEvent(drainCtx, slog.LevelInfo, eventStopping)
 
+	begin := time.Now()
 	beforeErr := s.runHooks(drainCtx, BeforeDrain)
 	drainErr := drain(drainCtx, r.hs)
+	s.logStopped(drainCtx, time.Since(begin), drainErr)
 	afterErr := s.runAfterDrain(drainCtx)
 
 	s.finish(errors.Join(beforeErr, afterErr), drainErr)
@@ -435,3 +449,17 @@ func (l *onceCloseListener) Close() error {
 // result is what the Shutdown call that stopped the server returns: the
 // hook failures and the drain error. Read it only after s.stopped closed.
 func (s *Server) result() error { return errors.Join(s.hookErr, s.drainErr) }
+
+// logStopped writes server.stopped: INFO, or WARN with srvr.drain.forced
+// when the drain deadline passed and connections were closed.
+func (s *Server) logStopped(ctx context.Context, d time.Duration, drainErr error) {
+	attrs := []slog.Attr{slog.Float64(keyDrainDuration, millis(d))}
+	level := slog.LevelInfo
+
+	if drainErr != nil {
+		level = slog.LevelWarn
+		attrs = append(attrs, slog.Bool(keyDrainForced, true))
+	}
+
+	s.logEvent(ctx, level, eventStopped, attrs...)
+}

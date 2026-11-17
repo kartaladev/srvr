@@ -2,6 +2,8 @@ package srvr_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -155,4 +157,23 @@ func ExampleWithErrorHook() {
 
 	// Output:
 	// answered 404 for: prblm: not found
+}
+
+func ExampleLogConfig() {
+	// Any loader can fill the config structs; srvr reads no files or
+	// environment variables itself.
+	var c srvr.LogConfig
+	if err := json.Unmarshal([]byte(`{"level":"debug","format":"text"}`), &c); err != nil {
+		panic(err)
+	}
+
+	_, err := srvr.New(srvr.WithLogConfig(c), srvr.WithLogOutput(io.Discard))
+	fmt.Println("valid:", err == nil)
+
+	_, err = srvr.New(srvr.WithLogConfig(srvr.LogConfig{Level: "loud"}))
+	fmt.Println(errors.Is(err, srvr.ErrConfig))
+
+	// Output:
+	// valid: true
+	// true
 }

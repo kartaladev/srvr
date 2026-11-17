@@ -86,16 +86,12 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 	}
 
 	ctx := r.Context()
-	h := s.correlation
-	if !h.Enabled(ctx, level) {
+	if s.settings.access.suppressed(r.URL.Path, status) || !s.log.Enabled(ctx, level) {
 		return
 	}
 
-	record := slog.NewRecord(time.Now(), level, msg, 0)
-	record.AddAttrs(
-		slog.Int(keySchema, schemaVersion),
-		slog.String(keyMethod, r.Method),
-	)
+	record := newOwnRecord(level, msg)
+	record.AddAttrs(slog.String(keyMethod, r.Method))
 
 	if req != nil && req.route != "" {
 		record.AddAttrs(slog.String(keyRoute, req.route))
@@ -104,18 +100,20 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 	record.AddAttrs(
 		slog.Int(keyStatus, status),
 		slog.Int64(keyBodySize, rec.bytes),
-		slog.Float64(keyDuration, float64(d.Microseconds())/1000),
+		slog.Float64(keyDuration, millis(d)),
 	)
 
 	if ua := r.UserAgent(); ua != "" {
 		record.AddAttrs(slog.String(keyUserAgent, ua))
 	}
 
+	s.addOptIns(&record, r)
+
 	if fail != nil {
 		addFailure(&record, fail)
 	}
 
-	_ = h.Handle(ctx, record)
+	s.log.handle(ctx, record, true)
 }
 
 // addFailure adds what the client saw: the problem sent, or that the
@@ -221,3 +219,19 @@ func (w *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (w *responseRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// addOptIns adds the attributes the access log configuration opts into.
+func (s *Server) addOptIns(record *slog.Record, r *http.Request) {
+	c := &s.settings.access
+	if c.IncludePath {
+		record.AddAttrs(slog.String(keyURLPath, r.URL.Path))
+	}
+
+	if c.IncludeQuery && r.URL.RawQuery != "" {
+		record.AddAttrs(slog.String(keyURLQuery, r.URL.RawQuery))
+	}
+
+	if c.IncludeClientAddress {
+		record.AddAttrs(slog.String(keyClientAddress, clientAddress(r.RemoteAddr)))
+	}
+}

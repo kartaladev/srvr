@@ -1,6 +1,7 @@
 package srvr_test
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -77,4 +78,47 @@ func flatKeys(rec map[string]any, prefix string) []string {
 	slices.SortFunc(keys, strings.Compare)
 
 	return keys
+}
+
+// goldenLifecycleKeys pins the keys of srvr's lifecycle events, for a
+// server with a service name and version (vcs.revision and
+// deployment.environment.name are added when known).
+var goldenLifecycleKeys = map[string][]string{
+	"server.started":              {"level", "msg", "server.address", "service.name", "service.version", "srvr.log.schema", "time"},
+	"server.stopping":             {"level", "msg", "service.name", "service.version", "srvr.log.schema", "time"},
+	"server.stopped":              {"level", "msg", "service.name", "service.version", "srvr.drain.duration_ms", "srvr.log.schema", "time"},
+	"server.shutdown_hook.failed": {"code.function.name", "exception.message", "level", "msg", "service.name", "service.version", "srvr.log.schema", "srvr.shutdown_hook.index", "srvr.shutdown_hook.phase", "time"},
+	"server.failed":               {"exception.message", "level", "msg", "service.name", "service.version", "srvr.log.schema", "time"},
+}
+
+// TestLogSchemaGolden_Lifecycle pins the keys of the lifecycle events.
+func TestLogSchemaGolden_Lifecycle(t *testing.T) {
+	t.Parallel()
+
+	out := &logBuffer{}
+	opts := []srvr.Option{
+		srvr.WithLogOutput(out),
+		srvr.WithServiceConfig(srvr.ServiceConfig{Name: "registration-api", Version: "1.4.2"}),
+		srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { return errors.New("flush failed") }),
+	}
+	stopByContext(t, opts)
+
+	taken := listen(t)
+	srv, err := srvr.New(append(opts, srvr.WithAddr(taken.Addr().String()))...)
+	mustNil(t, err)
+	_ = srv.Start(context.Background())
+
+	for event, want := range goldenLifecycleKeys {
+		recs := out.find(t, event)
+		if len(recs) == 0 {
+			t.Fatalf("no %s record:\n%s", event, out.String())
+		}
+		got := slices.DeleteFunc(flatKeys(recs[0], ""), func(k string) bool { return k == "vcs.revision" })
+		if !slices.Equal(got, want) {
+			t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
+		}
+		if recs[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
+			t.Errorf("%s srvr.log.schema = %v", event, recs[0]["srvr.log.schema"])
+		}
+	}
 }

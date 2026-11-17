@@ -173,27 +173,27 @@
 
 ## 7. Slice: logging configuration and safety
 
-- [ ] 7.1 Level and format configuration (structured-logging / Scenario: Level and format, accepted and rejected rows; Scenario: Config struct decoded from a file); verify `go test -race -run 'TestLogConfig|TestLogConfigDecode'` passes
+- [x] 7.1 Level and format configuration (structured-logging / Scenario: Level and format, accepted and rejected rows; Scenario: Config struct decoded from a file); verify `go test -race -run 'TestLogConfig|TestLogConfigDecode'` passes
   - RED: tables; fails because `LogConfig` does not exist
   - GREEN: `LogConfig`, `WithLogConfig`, `WithLogLevel`, `WithLogFormat`, `WithLogOutput`, construction-time parsing naming fields; add the log row of `TestOptionPrecedence`
   - REFACTOR: Replace Primitive with Object for format, then /simplify
-- [ ] 7.2 Runtime level changes (structured-logging / Scenario: Runtime level change, all rows including concurrent); verify `go test -race -count=20 -run TestLogLevelVar` passes
+- [x] 7.2 Runtime level changes (structured-logging / Scenario: Runtime level change, all rows including concurrent); verify `go test -race -count=20 -run TestLogLevelVar` passes
   - RED: table; fails because the level is fixed at construction
   - GREEN: `WithLogLevelVar` passed as the handler's `Leveler`
   - REFACTOR: /simplify
-- [ ] 7.3 Source attribute points to the caller (structured-logging / Scenario: Source attribute); verify `go test -race -run TestAddSource` passes
+- [x] 7.3 Source attribute points to the caller (structured-logging / Scenario: Source attribute); verify `go test -race -run TestAddSource` passes
   - RED: table asserting file and line; fails because the wrapper changes PC or access records carry source
   - GREEN: wrapper preserves record PC, access records use PC 0
   - REFACTOR: /simplify
-- [ ] 7.4 Own handler or logger (structured-logging / Scenario: Own handler, all rows); verify `go test -race -run TestOwnHandler` passes
+- [x] 7.4 Own handler or logger (structured-logging / Scenario: Own handler, all rows); verify `go test -race -run TestOwnHandler` passes
   - RED: table including conflicting settings, nil, erroring and panicking handler; fails because conflicts are not detected
   - GREEN: `WithLogHandler`, `WithLogger`, conflict validation, guard handler with recover and error counting
   - REFACTOR: Extract Class for the guard, then /simplify
-- [ ] 7.5 Access log configuration (structured-logging / Scenario: Access log configuration, all rows); verify `go test -race -run TestAccessLogConfig` passes
+- [x] 7.5 Access log configuration (structured-logging / Scenario: Access log configuration, all rows); verify `go test -race -run TestAccessLogConfig` passes
   - RED: table including 500 on skipped path and disabled log; fails because suppression is unconditional
   - GREEN: `AccessLogConfig{Disabled, SkipPaths}`, `WithAccessLogConfig`, `WithAccessLogSkipPaths`, `WithAccessLogDisabled` suppressing only below 500, exact path match; add the access-log row of `TestOptionPrecedence`
   - REFACTOR: /simplify
-- [ ] 7.6 Redaction at every level (structured-logging / Scenario: Redaction at every level, defaults and opt-ins); verify `go test -race -run TestRedaction` passes
+- [x] 7.6 Redaction at every level (structured-logging / Scenario: Redaction at every level, defaults and opt-ins); verify `go test -race -run TestRedaction` passes
   - RED: table scanning every output line for forbidden values; fails if any value appears
   - GREEN: allow-list of attributes, opt-ins `IncludePath`, `IncludeQuery`, `IncludeClientAddress` and their options `WithAccessLogIncludePath`, `WithAccessLogIncludeQuery`, `WithAccessLogIncludeClientAddress`
   - REFACTOR: Replace Conditional with table of attribute builders, then /simplify
@@ -201,20 +201,20 @@
   - RED: tables including consumer attributes, `With` attributes, attributes in groups, non-string kinds, `error` values via `slog.Any`, an unresolved `LogValuer`, a long `msg`, a consumer attribute named `exception.message`, `MaxAttrBytes` 0/-1/16 by option and config, and a consumer handler; fails because only request attributes srvr builds are cut
   - GREEN: truncation in srvr's wrapper handler (record `msg`, record attributes and recorded `With` steps, recursing into groups, after `Value.Resolve()`; strings and `error` values) at UTF-8 boundaries, `LogConfig.MaxAttrBytes`, `WithLogMaxAttrBytes`, top-level `srvr.attr.truncated`; larger `exception.*` limits only for attributes srvr marks on its own records
   - REFACTOR: Extract Function for the attribute walk shared with correlation replay, then /simplify
-- [ ] 7.8 Log write failures never fail requests (structured-logging / Scenario: Broken output, all rows); verify `go test -race -run TestBrokenOutput` passes
+- [x] 7.8 Log write failures never fail requests (structured-logging / Scenario: Broken output, all rows); verify `go test -race -run TestBrokenOutput` passes
   - RED: table with EPIPE and short-write writers; fails because errors are ignored silently or counted wrong
   - GREEN: counting writer guard, `LogWriteErrors()`
   - REFACTOR: /simplify
-- [ ] 7.9 Service and build information (structured-logging / Scenario: Service attributes, all rows); verify `go test -race -run TestServiceAttributes` passes
+- [x] 7.9 Service and build information (structured-logging / Scenario: Service attributes, all rows); verify `go test -race -run TestServiceAttributes` passes
   - RED: table with an injectable build-info reader; fails because attributes are missing
   - GREEN: `ServiceConfig`, `WithServiceConfig`, `WithServiceName`, `WithServiceVersion`, `WithServiceEnvironment`, defaults from `debug.ReadBuildInfo`, `unknown_service:<exe>`; add the service row of `TestOptionPrecedence`
   - REFACTOR: /simplify
-- [ ] 7.10 Lifecycle records (server-lifecycle / Scenario: Lifecycle records, all rows including the shutdown-hook rows); verify `go test -race -run TestLifecycleRecords` passes
+- [x] 7.10 Lifecycle records (server-lifecycle / Scenario: Lifecycle records, all rows including the shutdown-hook rows); verify `go test -race -run TestLifecycleRecords` passes
   - RED: table; fails because lifecycle events are not logged
   - GREEN: `server.started/stopping/stopped/failed` and `server.shutdown_hook.failed` (phase, index, hook `code.function.name`, `exception.message`) with service attributes and `srvr.log.schema`; add the lifecycle rows of `TestLogSchemaGolden`
   - REFACTOR: /simplify
-- [ ] 7.11 Godoc for every logging option with defaults and reasons, and an `Example` loading `LogConfig` from JSON; verify `go test -run Example` passes
-- [ ] 7.12 Verify slice end to end, confirm guard, truncation and redaction branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): make logging configurable and safe`
+- [x] 7.11 Godoc for every logging option with defaults and reasons, and an `Example` loading `LogConfig` from JSON; verify `go test -run Example` passes
+- [x] 7.12 Verify slice end to end, confirm guard, truncation and redaction branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): make logging configurable and safe`
 
 ## 8. Slice: triage error records
 

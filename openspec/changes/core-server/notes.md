@@ -64,4 +64,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** core-server
 - **Context:** Design D7 replays a logger's `WithAttrs`/`WithGroup` steps per record after adding `trace_id`/`span_id`; the task asked for per-trace caching if grouped records cost more than twice ungrouped ones.
 - **Evidence:** `correlation_bench_test.go` `BenchmarkCorrelation` (`go test -run '^$' -bench BenchmarkCorrelation -benchmem .`, Go 1.27.4, Apple M-series, 14 cores): ungrouped 649.6 ns/op, 400 B/op, 7 allocs/op; grouped (`With("table","users").WithGroup("db")`) 848.4 ns/op, 880 B/op, 13 allocs/op - 1.31x the time, 2.2x the bytes.
-- **Suggested action:** none; time stays under 2x, so per-trace caching is not needed. Re-measure if a later change adds steps to the hot path.
+- **Suggested action:** none; time stays under 2x, so per-trace caching is not needed. Re-measured after slice 7 added truncation and failure containment to the same handler: ungrouped 784.8 ns/op, 752 B/op, 9 allocs/op; grouped 986.4 ns/op, 1281 B/op, 15 allocs/op (1.26x); the 2 extra allocations come from the attribute scan closure that decides whether a record needs cutting.
+
+### Task 7.7 completes with 8.1 (plan ordering)
+- **Status:** closed: applied during apply
+- **Target:** core-server
+- **Context:** Task 7.7 includes structured-logging "Scenario: Error attributes keep their own limits", whose rows assert `exception.message` on the failed record; that attribute only exists from task 8.1. Slice 7 shipped the mechanism (srvr-owned text bypasses `MaxAttrBytes`) and every other 7.7 row; the two own-limit rows are tested with 8.1, and 7.7 is checked then.
+- **Evidence:** planning order in `tasks.md` (7.7 before 8.1); no defect.
+- **Suggested action:** none.

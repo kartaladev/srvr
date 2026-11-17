@@ -1,6 +1,9 @@
 package srvr
 
-import "testing"
+import (
+	"log/slog"
+	"testing"
+)
 
 // TestOptionPrecedence covers server-lifecycle / Scenario: Option and config
 // precedence: options apply in argument order and a With<Struct> option
@@ -18,6 +21,7 @@ func TestOptionPrecedence(t *testing.T) {
 		{"WithConfig then WithAddr", []Option{WithConfig(Config{Addr: ":9090"}), WithAddr(":7070")}, listenAddr, ":7070"},
 		{"WithAddr then WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{Addr: ":9090"})}, listenAddr, ":9090"},
 		{"WithAddr then empty WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{})}, listenAddr, ":8080"},
+		{"WithLogConfig then WithLogLevel", []Option{WithLogConfig(LogConfig{Level: "debug"}), WithLogLevel(slog.LevelWarn)}, logLevel, "WARN"},
 		{"WithTraceConfig ignores incoming", []Option{WithTraceConfig(TraceConfig{IgnoreIncoming: true})}, ignoresIncoming, true},
 	}
 
@@ -40,3 +44,5 @@ func TestOptionPrecedence(t *testing.T) {
 func listenAddr(s *Server) any { return s.cfg.Addr }
 
 func ignoresIncoming(s *Server) any { return s.settings.trace.IgnoreIncoming }
+
+func logLevel(s *Server) any { return s.settings.log.Level }

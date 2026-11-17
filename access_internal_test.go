@@ -64,8 +64,38 @@ func TestRecordFailure(t *testing.T) {
 func TestCorrelation_EmptyDerivations(t *testing.T) {
 	t.Parallel()
 
-	h := &correlation{base: slog.NewJSONHandler(io.Discard, nil)}
+	h := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)}
 	if h.WithAttrs(nil) != h || h.WithGroup("") != h {
 		t.Fatal("empty derivation returned a new handler")
+	}
+}
+
+// TestClientAddress keeps a RemoteAddr without a port as is.
+func TestClientAddress(t *testing.T) {
+	t.Parallel()
+
+	for remote, want := range map[string]string{"127.0.0.1:5000": "127.0.0.1", "[::1]:5000": "::1", "@": "@"} {
+		if got := clientAddress(remote); got != want {
+			t.Errorf("clientAddress(%q) = %q, want %q", remote, got, want)
+		}
+	}
+}
+
+// TestFuncName names functions and returns "" for anything else.
+func TestFuncName(t *testing.T) {
+	t.Parallel()
+
+	var nilFunc func()
+	for _, tt := range []struct {
+		fn   any
+		want string
+	}{
+		{TestFuncName, "github.com/kartaladev/srvr.TestFuncName"},
+		{nilFunc, ""},
+		{"not a func", ""},
+	} {
+		if got := funcName(tt.fn); got != tt.want {
+			t.Errorf("funcName(%T) = %q, want %q", tt.fn, got, tt.want)
+		}
 	}
 }

@@ -41,6 +41,7 @@ func TestNew_Config(t *testing.T) {
 		{name: "invalid shutdown phase", opts: []srvr.Option{srvr.WithShutdownHook(srvr.ShutdownPhase(9), hook)}, message: "ShutdownPhase"},
 		{name: "MaxHeaderBytes negative via Config", opts: []srvr.Option{srvr.WithConfig(srvr.Config{MaxHeaderBytes: -1})}, message: "MaxHeaderBytes"},
 		{name: "WithLogOutput nil", opts: []srvr.Option{srvr.WithLogOutput(nil)}, message: "Output"},
+		{name: "WithLogLevelVar nil", opts: []srvr.Option{srvr.WithLogLevelVar(nil)}, message: "LevelVar"},
 		// faulty consumer input
 		{name: "nil option", opts: []srvr.Option{nil}, message: "Option"},
 	}

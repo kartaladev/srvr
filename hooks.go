@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"time"
 )
@@ -88,6 +89,12 @@ func (s *Server) runHooks(ctx context.Context, phase ShutdownPhase) error {
 		}
 
 		if err := runHook(ctx, h.fn); err != nil {
+			s.logEvent(ctx, slog.LevelWarn, eventHookFailed,
+				slog.String(keyHookPhase, phase.String()),
+				slog.Int(keyHookIndex, i),
+				slog.String(keyFunction, funcName(h.fn)),
+				slog.String(keyExceptionMsg, err.Error()),
+			)
 			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, err))
 		}
 	}
