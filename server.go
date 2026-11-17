@@ -240,7 +240,7 @@ func (s *Server) finish(hookErr, drainErr error) {
 // configure runs the configurers and returns the handler serving their
 // routes.
 func (s *Server) configure(configurers []RouteConfigurer[*Group]) (http.Handler, error) {
-	b := &builder{wrap: s.problems.Wrap}
+	b := &builder{wrap: s.wrapHandler}
 	g := &Group{b: b}
 
 	for _, c := range configurers {
@@ -462,4 +462,10 @@ func (s *Server) logStopped(ctx context.Context, d time.Duration, drainErr error
 	}
 
 	s.logEvent(ctx, level, eventStopped, attrs...)
+}
+
+// wrapHandler renders the errors h returns as problems, after guarding
+// prblm's resolution against cyclic error chains.
+func (s *Server) wrapHandler(h func(http.ResponseWriter, *http.Request) error) http.Handler {
+	return s.problems.Wrap(func(w http.ResponseWriter, r *http.Request) error { return guardChain(h(w, r)) })
 }

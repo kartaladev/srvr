@@ -58,6 +58,9 @@ func TestEndToEnd_TraceCorrelation(t *testing.T) {
 
 	id, _ := res.problem.Ext("trace_id")
 	rec := out.waitRecord(t, "http.request.failed")
+	if rec["error.type"] != "*errors.errorString" || rec["exception.message"] != "boom" || rec["error.fingerprint"] == nil {
+		t.Fatalf("record is not self-contained: %v", rec)
+	}
 	if id != incomingTrace || rec["trace_id"] != id {
 		t.Fatalf("problem trace_id %v, record trace_id %v, want both %s", id, rec["trace_id"], incomingTrace)
 	}

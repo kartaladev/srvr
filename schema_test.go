@@ -3,8 +3,10 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"io"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -27,11 +29,29 @@ var goldenKeys = map[string][]string{
 		"level", "msg", "span_id", "srvr.log.schema", "time", "trace_id", "user_agent.original",
 	},
 	"http.request.failed": {
-		"duration_ms", "http.request.method", "http.response.body.size", "http.response.status_code", "http.route",
-		"level", "msg", "problem.status", "problem.title", "problem.type", "span_id", "srvr.log.schema", "time",
-		"trace_id", "user_agent.original",
+		"code.file.path", "code.function.name", "code.line.number", "duration_ms", "error.chain", "error.fingerprint",
+		"error.type", "exception.message", "http.request.method", "http.response.body.size", "http.response.status_code",
+		"http.route", "level", "msg", "problem.status", "problem.title", "problem.type", "service.name", "service.version",
+		"span_id", "srvr.log.schema", "time", "trace_id", "user_agent.original",
 	},
 }
+
+// goldenPanicKeys and goldenAbortedKeys pin the failed record of a
+// recovered panic and of a request aborted with http.ErrAbortHandler.
+var (
+	goldenPanicKeys = []string{
+		"code.file.path", "code.function.name", "code.line.number", "duration_ms", "error.fingerprint", "error.kind",
+		"error.type", "exception.message", "exception.stacktrace", "exception.type", "http.request.method",
+		"http.response.body.size", "http.response.status_code", "http.route", "level", "msg", "problem.status",
+		"problem.title", "problem.type", "service.name", "service.version", "span_id", "srvr.log.schema",
+		"srvr.stacktrace.truncated", "time", "trace_id", "user_agent.original",
+	}
+	goldenAbortedKeys = []string{
+		"duration_ms", "error.kind", "error.type", "http.request.method", "http.response.body.size", "http.route", "level",
+		"msg", "service.name", "service.version", "span_id", "srvr.log.schema", "srvr.response.aborted", "time",
+		"trace_id", "user_agent.original",
+	}
+)
 
 // TestLogSchemaGolden covers structured-logging / Scenario: Schema version
 // attribute and pins the keys of every event.
@@ -45,17 +65,50 @@ func TestLogSchemaGolden(t *testing.T) {
 			return nil
 		})
 		g.GET("/fail", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") })
-	})
+		g.GET("/panic", func(http.ResponseWriter, *http.Request) error { panic("boom") })
+		g.GET("/abort", func(http.ResponseWriter, *http.Request) error { panic(http.ErrAbortHandler) })
+	}, srvr.WithServiceVersion("1.4.2"))
 	get(t, base+"/ok")
 	get(t, base+"/fail")
 
 	for event, want := range goldenKeys {
-		rec := out.waitRecord(t, event)
+		var rec map[string]any
+		eventually(t, func() bool {
+			for _, r := range out.find(t, event) {
+				if r["http.route"] == "/ok" || r["http.route"] == "/fail" {
+					rec = r
+				}
+			}
+
+			return rec != nil
+		}, "no "+event+" record")
 		if got := flatKeys(rec, ""); !slices.Equal(got, want) {
 			t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
 		}
 		if rec["srvr.log.schema"] != float64(goldenSchemaVersion) {
 			t.Errorf("%s srvr.log.schema = %v, want %d", event, rec["srvr.log.schema"], goldenSchemaVersion)
+		}
+	}
+
+	for path, want := range map[string][]string{"/panic": goldenPanicKeys, "/abort": goldenAbortedKeys} {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+path, nil)
+		if res, err := http.DefaultClient.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		}
+
+		var rec map[string]any
+		eventually(t, func() bool {
+			for _, r := range out.find(t, "http.request.failed") {
+				if r["http.route"] == path {
+					rec = r
+				}
+			}
+
+			return rec != nil
+		}, "no failed record for "+path)
+		if got := flatKeys(rec, ""); !slices.Equal(got, want) {
+			t.Errorf("%s failed keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", path, got, want)
 		}
 	}
 
@@ -119,6 +172,31 @@ func TestLogSchemaGolden_Lifecycle(t *testing.T) {
 		}
 		if recs[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
 			t.Errorf("%s srvr.log.schema = %v", event, recs[0]["srvr.log.schema"])
+		}
+	}
+}
+
+// TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
+func TestLogSchemaDocumented(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile("LOGGING.md")
+	mustNil(t, err)
+
+	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys)
+	for event, k := range goldenKeys {
+		keys = append(keys, event)
+		keys = append(keys, k...)
+	}
+	for event, k := range goldenLifecycleKeys {
+		keys = append(keys, event)
+		keys = append(keys, k...)
+	}
+
+	for _, k := range keys {
+		name := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(k, "problem."), "problem"), ".")
+		if !strings.Contains(string(doc), "`"+k+"`") && !strings.Contains(string(doc), "`"+name+"`") {
+			t.Errorf("LOGGING.md does not list %q", k)
 		}
 	}
 }

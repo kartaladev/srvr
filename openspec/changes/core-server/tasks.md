@@ -197,7 +197,7 @@
   - RED: table scanning every output line for forbidden values; fails if any value appears
   - GREEN: allow-list of attributes, opt-ins `IncludePath`, `IncludeQuery`, `IncludeClientAddress` and their options `WithAccessLogIncludePath`, `WithAccessLogIncludeQuery`, `WithAccessLogIncludeClientAddress`
   - REFACTOR: Replace Conditional with table of attribute builders, then /simplify
-- [ ] 7.7 Hostile values and truncation of every string attribute (structured-logging / Scenario: Hostile user agent; Scenario: Truncating any string attribute, including the `error` value, `LogValuer`, `msg` and consumer `exception.message` rows; Scenario: Error attributes keep their own limits, all rows); verify `go test -race -run 'TestHostileValues|TestTruncation'` passes
+- [x] 7.7 Hostile values and truncation of every string attribute (structured-logging / Scenario: Hostile user agent; Scenario: Truncating any string attribute, including the `error` value, `LogValuer`, `msg` and consumer `exception.message` rows; Scenario: Error attributes keep their own limits, all rows); verify `go test -race -run 'TestHostileValues|TestTruncation'` passes
   - RED: tables including consumer attributes, `With` attributes, attributes in groups, non-string kinds, `error` values via `slog.Any`, an unresolved `LogValuer`, a long `msg`, a consumer attribute named `exception.message`, `MaxAttrBytes` 0/-1/16 by option and config, and a consumer handler; fails because only request attributes srvr builds are cut
   - GREEN: truncation in srvr's wrapper handler (record `msg`, record attributes and recorded `With` steps, recursing into groups, after `Value.Resolve()`; strings and `error` values) at UTF-8 boundaries, `LogConfig.MaxAttrBytes`, `WithLogMaxAttrBytes`, top-level `srvr.attr.truncated`; larger `exception.*` limits only for attributes srvr marks on its own records
   - REFACTOR: Extract Function for the attribute walk shared with correlation replay, then /simplify
@@ -218,40 +218,40 @@
 
 ## 8. Slice: triage error records
 
-- [ ] 8.1 Error description (triage-error-records / Scenario: Error description, all rows); verify `go test -race -run TestTriage_Description` passes
+- [x] 8.1 Error description (triage-error-records / Scenario: Error description, all rows); verify `go test -race -run TestTriage_Description` passes
   - RED: table; fails because records lack error attributes
   - GREEN: srvr's `OnError` only stores the error in the per-request state; the access stage builds the single `http.request.failed` record from it with `error.type`, `exception.message`, `error.chain`
   - REFACTOR: Extract Class `triageRecord`, then /simplify
-- [ ] 8.2 Problem group and committed flag (triage-error-records / Scenario: Problem group, all rows); verify `go test -race -run TestTriage_Problem` passes
+- [x] 8.2 Problem group and committed flag (triage-error-records / Scenario: Problem group, all rows); verify `go test -race -run TestTriage_Problem` passes
   - RED: table; fails because problem fields are missing
   - GREEN: problem group from the hook's `*prblm.Problem`, committed flag from the writer
   - REFACTOR: /simplify
-- [ ] 8.3 Handler code location (triage-error-records / Scenario: Handler location, all rows); verify `go test -race -run TestTriage_CodeLocation` passes
+- [x] 8.3 Handler code location (triage-error-records / Scenario: Handler location, all rows); verify `go test -race -run TestTriage_CodeLocation` passes
   - RED: table with method value, closure and mounted handler; fails on `-fm` names
   - GREEN: resolve at registration with `runtime.FuncForPC`, normalise names
   - REFACTOR: /simplify
-- [ ] 8.4 Panic records with stack (triage-error-records / Scenario: Panic record; Scenario: Oversized stack; structured-logging / Scenario: Aborted request, both rows, with the access record written before the `http.ErrAbortHandler` panic is re-raised, and `srvr.response.aborted` added to the golden-record test with `srvr.log.schema` unchanged); verify `go test -race -run TestTriage_Panic` passes
+- [x] 8.4 Panic records with stack (triage-error-records / Scenario: Panic record; Scenario: Oversized stack; structured-logging / Scenario: Aborted request, both rows, with the access record written before the `http.ErrAbortHandler` panic is re-raised, and `srvr.response.aborted` added to the golden-record test with `srvr.log.schema` unchanged); verify `go test -race -run TestTriage_Panic` passes
   - RED: tables including panicking `String()`, deep recursion and both Aborted request rows (connection closed, access record with `srvr.response.aborted`); fails because stack is missing or uncapped and no record is written for an aborted request
   - GREEN: `error.type` `panic` and `exception.type` from the panic value's Go type, stack from `*prblm.PanicError`, 32 KiB cap tested at 32768/32769 bytes, message from `PanicError.Value` with guarded formatting
   - REFACTOR: /simplify
-- [ ] 8.5 Stable fingerprint (triage-error-records / Scenario: Fingerprint stability, all rows); verify `go test -race -run TestTriage_Fingerprint` passes
+- [x] 8.5 Stable fingerprint (triage-error-records / Scenario: Fingerprint stability, all rows); verify `go test -race -run TestTriage_Fingerprint` passes
   - RED: table of pairs; fails because no fingerprint exists
   - GREEN: SHA-256 over method, route and type chain (or panic type and top application frame)
   - REFACTOR: /simplify
-- [ ] 8.6 Bounded, safe chain walking (triage-error-records / Scenario: Hostile error values, all rows); verify `go test -race -run TestTriage_Hostile` passes, plus a `FuzzErrorChain` target running 30s without crash
+- [x] 8.6 Bounded, safe chain walking (triage-error-records / Scenario: Hostile error values, all rows); verify `go test -race -run TestTriage_Hostile` passes, plus a `FuzzErrorChain` target running 30s without crash
   - RED: table with deep, cyclic, wide, panicking and typed-nil errors and 1 MiB message; fails or hangs without limits
   - GREEN: breadth-first walk with caps and per-call recover
   - REFACTOR: /simplify
-- [ ] 8.7 Build attributes on errors (triage-error-records / Scenario: Build attributes on errors); verify `go test -race -run TestTriage_Build` passes
+- [x] 8.7 Build attributes on errors (triage-error-records / Scenario: Build attributes on errors); verify `go test -race -run TestTriage_Build` passes
   - RED: table; fails because error records lack service attributes
   - GREEN: attach service/build attributes to failed records
   - REFACTOR: /simplify
-- [ ] 8.8 Consumer redactor (triage-error-records / Scenario: Redacting error text, all rows); verify `go test -race -run TestTriage_Redactor` passes
+- [x] 8.8 Consumer redactor (triage-error-records / Scenario: Redacting error text, all rows); verify `go test -race -run TestTriage_Redactor` passes
   - RED: table including panicking and nil redactor; fails because no redactor exists
   - GREEN: `WithErrorRedactor`, guarded application
   - REFACTOR: /simplify
-- [ ] 8.9 Document the log schema (event names, keys, levels, limits, the `srvr.log.schema` change policy, `error.type` meaning per failure kind) in `LOGGING.md` and godoc, with a sample triage record; write `notes.md` carry-overs for stack capture at error creation, TLS, h2c and health endpoints (Target: `unassigned`); verify the golden schema test matches the document
-- [ ] 8.10 Verify slice end to end (one failing request yields one self-contained record that links to the problem by `trace_id`), confirm builder, walk, fingerprint and redactor branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): write self-contained triage error records`
+- [x] 8.9 Document the log schema (event names, keys, levels, limits, the `srvr.log.schema` change policy, `error.type` meaning per failure kind) in `LOGGING.md` and godoc, with a sample triage record; write `notes.md` carry-overs for stack capture at error creation, TLS, h2c and health endpoints (Target: `unassigned`); verify the golden schema test matches the document
+- [x] 8.10 Verify slice end to end (one failing request yields one self-contained record that links to the problem by `trace_id`), confirm builder, walk, fingerprint and redactor branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): write self-contained triage error records`
 
 ## Workflow follow-up
 

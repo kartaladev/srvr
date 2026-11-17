@@ -26,6 +26,8 @@ type route struct {
 	middleware []Middleware
 	// owner is the Go type of the configurer that registered the route.
 	owner string
+	// location is the handler's code location, resolved at registration.
+	location location
 }
 
 // key is the ServeMux pattern of the route.
@@ -105,7 +107,7 @@ func (g *Group) Handle(method, path string, h HandlerFunc) {
 		hh = g.b.wrap(h)
 	}
 
-	g.add(method, path, hh)
+	g.add(method, path, hh, funcLocation(h))
 }
 
 // Mount routes every method for path to h, a plain [http.Handler] such as
@@ -115,11 +117,15 @@ func (g *Group) Handle(method, path string, h HandlerFunc) {
 // files) serves /static/a.txt from a.txt. Its errors are its own: a status
 // it writes is sent as is.
 func (g *Group) Mount(path string, h http.Handler) {
-	if n := segments(g.prefix); n > 0 && !isNil(h) {
-		h = stripSegments(n, h)
+	var loc location
+	if !isNil(h) {
+		loc = handlerLocation(h)
+		if n := segments(g.prefix); n > 0 {
+			h = stripSegments(n, h)
+		}
 	}
 
-	g.add("", path, h)
+	g.add("", path, h, loc)
 }
 
 // segments returns the number of path segments in a group prefix.
@@ -161,7 +167,7 @@ func cutSegments(p string, n int) string {
 }
 
 // add records a route for method ("" for every method) and path.
-func (g *Group) add(method, path string, h http.Handler) {
+func (g *Group) add(method, path string, h http.Handler, loc location) {
 	pattern, err := joinPattern(g.prefix, path)
 	if err != nil {
 		g.b.errs = append(g.b.errs, err)
@@ -169,7 +175,7 @@ func (g *Group) add(method, path string, h http.Handler) {
 		return
 	}
 
-	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner}
+	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
 	if isNil(h) {
 		g.b.errs = append(g.b.errs, routeError("%q (%s): handler is nil", rt.key(), rt.owner))
 
@@ -240,7 +246,7 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 			return routeError("%q (%s): %w", rt.key(), rt.owner, err)
 		}
 
-		h = withRoute(rt.pattern, h)
+		h = withRoute(rt, h)
 
 		v := tryHandle(mux, rt.key(), h)
 		if v == nil {
@@ -310,12 +316,14 @@ func safeConfigure(c RouteConfigurer[*Group], g *Group) (err error) {
 	return nil
 }
 
-// withRoute returns h recording pattern, the route's path pattern, as the
-// request's http.route before the route's middleware runs.
-func withRoute(pattern string, h http.Handler) http.Handler {
+// withRoute returns h recording the route's path pattern (http.route) and
+// handler location on the request before the route's middleware runs.
+func withRoute(rt route, h http.Handler) http.Handler {
+	pattern, loc := rt.pattern, rt.location
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if req := requestFrom(r.Context()); req != nil {
-			req.route = pattern
+			req.route, req.location = pattern, loc
 		}
 
 		h.ServeHTTP(w, r)

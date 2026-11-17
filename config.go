@@ -53,6 +53,7 @@ type settings struct {
 	log            logSettings
 	access         AccessLogConfig
 	service        ServiceConfig
+	redactor       func(string) string
 	problemOptions []prblm.Option
 	errorHook      ErrorHook
 	// errs collects mistakes options detect while they are applied.

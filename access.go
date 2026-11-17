@@ -60,10 +60,21 @@ func (s *Server) logAccess(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &responseRecorder{ResponseWriter: w}
 
-		req := requestFrom(r.Context())
-		if req != nil {
-			req.rec = rec
-		}
+		req := requestFrom(r.Context()) // set by startTrace, the outer stage
+		req.rec = rec
+
+		defer func() {
+			// http.ErrAbortHandler is re-raised past the recovery stage so
+			// net/http aborts the connection; it is recorded first.
+			if v := recover(); v != nil {
+				// Recovery re-raises only http.ErrAbortHandler; anything
+				// else reaching here is still logged, as an abort.
+				req.aborted = true
+
+				s.writeAccess(r, req, rec, time.Since(start))
+				panic(v)
+			}
+		}()
 
 		next.ServeHTTP(rec, r)
 
@@ -74,31 +85,36 @@ func (s *Server) logAccess(next http.Handler) http.Handler {
 // writeAccess writes the access record of a finished request.
 func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorder, d time.Duration) {
 	status := rec.statusCode()
-
-	var fail *failure
-	if req != nil {
-		fail = req.failure
-	}
+	aborted := req.aborted
+	fail := req.failure
 
 	msg, level := eventRequestCompleted, levelFor(status)
-	if fail != nil {
+
+	switch {
+	case aborted:
+		// The client lost the connection by design; the server did not fail.
+		msg, level = eventRequestFailed, slog.LevelWarn
+	case fail != nil:
 		msg = eventRequestFailed
 	}
 
 	ctx := r.Context()
-	if s.settings.access.suppressed(r.URL.Path, status) || !s.log.Enabled(ctx, level) {
+	if (!aborted && s.settings.access.suppressed(r.URL.Path, status)) || !s.log.Enabled(ctx, level) {
 		return
 	}
 
 	record := newOwnRecord(level, msg)
 	record.AddAttrs(slog.String(keyMethod, r.Method))
 
-	if req != nil && req.route != "" {
+	if req.route != "" {
 		record.AddAttrs(slog.String(keyRoute, req.route))
 	}
 
+	if !aborted || rec.wroteHeader {
+		record.AddAttrs(slog.Int(keyStatus, status))
+	}
+
 	record.AddAttrs(
-		slog.Int(keyStatus, status),
 		slog.Int64(keyBodySize, rec.bytes),
 		slog.Float64(keyDuration, millis(d)),
 	)
@@ -109,8 +125,12 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 
 	s.addOptIns(&record, r)
 
-	if fail != nil {
+	switch {
+	case aborted:
+		record.AddAttrs(s.abortedAttrs()...)
+	case fail != nil:
 		addFailure(&record, fail)
+		record.AddAttrs(s.triageAttrs(r.Method, req, fail)...)
 	}
 
 	s.log.handle(ctx, record, true)

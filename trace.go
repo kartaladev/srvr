@@ -53,6 +53,10 @@ type request struct {
 	rec *responseRecorder
 	// route is the pattern path the router matched, empty when unmatched.
 	route string
+	// location is the code location of the matched route's handler.
+	location location
+	// aborted is set when the request was aborted with http.ErrAbortHandler.
+	aborted bool
 	// failure is the error the request failed with, as srvr's prblm hook
 	// or the unmatched interception recorded it.
 	failure *failure

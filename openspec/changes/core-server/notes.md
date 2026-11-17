@@ -53,8 +53,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** Owner decides whether to document it on `Config.ShutdownTimeout` (and the Kubernetes guidance) or to close `StateNew` connections at the start of the drain via `http.Server.ConnState` tracking; add a scenario either way.
 
 ### A panicking consumer error hook is contained silently
-- **Status:** open
-- **Target:** core-server
+- **Status:** open (deferred at the end of core-server: no spec scenario asks for a record, and a new `srvr.problem.note` event would be an unspecified schema addition; the access record is still written, see `TestAccessRecord_Deferred`)
+- **Target:** unassigned
 - **Context:** `WithErrorHook`'s hook runs under `recover` in srvr's prblm `OnError` (design D4), and the panic is discarded, so a broken consumer hook never shows up in triage. No spec row asks for a record of it.
 - **Evidence:** unverified as a defect: behaviour per D4 (`problems.go` `onError`); raised by the slice 5 /simplify altitude review.
 - **Suggested action:** When per-request state and logging land (slices 6-7), write a `WARN` `srvr.problem.note` record for a panicking consumer hook, or record the decision not to.
@@ -71,4 +71,46 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** core-server
 - **Context:** Task 7.7 includes structured-logging "Scenario: Error attributes keep their own limits", whose rows assert `exception.message` on the failed record; that attribute only exists from task 8.1. Slice 7 shipped the mechanism (srvr-owned text bypasses `MaxAttrBytes`) and every other 7.7 row; the two own-limit rows are tested with 8.1, and 7.7 is checked then.
 - **Evidence:** planning order in `tasks.md` (7.7 before 8.1); no defect.
+- **Suggested action:** none.
+
+### A cyclic error chain hangs prblm's resolution (errors.Is never returns)
+- **Status:** closed: fixed in core-server (task 8.6)
+- **Target:** core-server
+- **Context:** An error whose `Unwrap` returns itself (triage-error-records Hostile error values, "an error whose `Unwrap()` returns itself") made the request hang: prblm resolves errors with `errors.Is`/`errors.As`, which loop forever on a cycle, so no response and no record were ever written. srvr now checks a returned error's chain for a cycle or a panicking `Unwrap` (`hasCycle`, bounded at 4096 errors) and hands prblm an opaque stand-in that renders the safe 500, while the access record still describes the original error.
+- **Evidence:** `triage_test.go` `TestTriage_Hostile/self_unwrap` (`go test -count=1 -timeout 40s -run TestTriage .`) failed with `panic: test timed out after 40s ... running tests: TestTriage_Hostile/self_unwrap (40s)` before the fix and passes after it.
+- **Suggested action:** gin-and-fiber-engines must apply the same guard in its adapters (move `guardChain` into `srvr/engine`); also ask prblm to guard `Resolve` against cyclic chains itself (stdlib `errors.Is` has no cycle check). Follow-up target: gin-and-fiber-engines.
+
+### Stack capture at error creation
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Returned errors carry no stack in Go; srvr records the handler's code location instead (design D8). Capturing a stack where an error is created would need a wrapping helper or an opt-in and adds cost on every error.
+- **Evidence:** unverified: deliberate scope decision of the proposal (Scope by Gall's Law).
+- **Suggested action:** Decide in a later change whether to offer an opt-in error wrapper that captures a stack, and how it maps to `exception.stacktrace`.
+
+### TLS termination
+- **Status:** open
+- **Target:** unassigned
+- **Context:** core-server serves plain HTTP; TLS is expected to terminate at a proxy or mesh. `WithListener` accepts a `tls.Listener` today, but there is no `TLSConfig` option, certificate reload or HTTPS-specific default.
+- **Evidence:** unverified: deliberate scope decision of the proposal.
+- **Suggested action:** Plan a change for `TLSConfig`/certificate files with safe defaults (TLS 1.2+, modern ciphers) if consumers need in-process TLS.
+
+### HTTP/2 cleartext (h2c)
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Without TLS, net/http serves HTTP/1.1 only; gRPC-style clients behind a mesh may want h2c. Go 1.24+ supports it through `http.Server.Protocols`.
+- **Evidence:** unverified: deliberate scope decision of the proposal.
+- **Suggested action:** Add an opt-in `Protocols`/`EnableH2C` setting in a later change.
+
+### Health endpoints
+- **Status:** open
+- **Target:** unassigned
+- **Context:** srvr has `Ready()` for in-process readiness but no `/healthz`/`/readyz` handlers; consumers register their own routes (and can skip them in the access log with `SkipPaths`).
+- **Evidence:** unverified: deliberate scope decision of the proposal.
+- **Suggested action:** Decide whether srvr should offer opt-in liveness/readiness routes tied to `Ready()` and the stop sequence (readiness failing as draining begins).
+
+### The cycle check crashed on an unhashable error value
+- **Status:** closed: fixed in core-server (slice 8 /simplify review)
+- **Target:** core-server
+- **Context:** `hasCycle` used every error with a comparable type as a map key; an error struct holding a slice in an interface field is comparable by type but panics when hashed, so the guard itself would have turned a returned error into a panic record.
+- **Evidence:** `triage_internal_test.go` `TestHasCycle_Unhashable` (`go test -count=1 -run TestHasCycle_Unhashable .`) failed with `panic: hash of unhashable type: []int` before the fix and passes after it.
 - **Suggested action:** none.
