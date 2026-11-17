@@ -35,7 +35,7 @@ func TestRequestState(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			mux, err := srv.router([]RouteConfigurer[*Group]{routes(func(g *Group) {
+			mux, _, err := srv.router([]RouteConfigurer[*Group]{routes(func(g *Group) {
 				g.GET("/users/{id}", func(http.ResponseWriter, *http.Request) error { return nil })
 			})})
 			if err != nil {

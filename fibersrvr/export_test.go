@@ -15,7 +15,7 @@ var configured sync.Map
 // app with fiber's app.Test, without a listener.
 func (s *Server) Test(req *http.Request, confs ...srvr.RouteConfigurer[fiber.Router]) (*http.Response, error) {
 	if _, done := configured.LoadOrStore(s, true); !done {
-		if err := s.configure(confs); err != nil {
+		if _, err := s.configure(confs); err != nil {
 			return nil, err
 		}
 	}

@@ -2,6 +2,7 @@ package ginsrvr
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -215,37 +216,73 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // registers conflicting routes (gin panics) or registers a route with a
 // nil handler fails Start with an error wrapping srvr.ErrRouteConfig.
 func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) (engine.Runner, error) {
-		if err := s.configure(configurers); err != nil {
-			return nil, err
+	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) (engine.Runner, engine.Routes, error) {
+		routes, err := s.configure(configurers)
+		if err != nil {
+			return nil, nil, err
 		}
 
-		return engine.HTTPRunner(s.core.Config(), s.handler()), nil
+		return engine.HTTPRunner(s.core.Config(), s.handler()), routes, nil
 	})
 }
 
 // Shutdown stops the server gracefully, as srvr.Server.Shutdown does.
 func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx) }
 
-// configure runs each configurer on the root group under recover and
-// checks the routes it added.
-func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) error {
+// configure runs each configurer on the root group under recover, checks
+// the routes it added, resolves the handlers' locations and returns the
+// route listing, each route attributed to the configurer that added it.
+func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) (engine.Routes, error) {
+	var routes engine.Routes
+
+	before := s.engine.Routes()
+
 	for _, c := range configurers {
 		if err := engine.Configure(c, &s.engine.RouterGroup); err != nil {
-			return err
+			return nil, err
 		}
 
-		if err := checkHandlers(s.engine.Routes(), c); err != nil {
-			return err
+		after := s.engine.Routes()
+		if err := checkHandlers(after, c); err != nil {
+			return nil, err
 		}
+
+		routes = append(routes, added(before, after, fmt.Sprintf("%T", c))...)
+		before = after
 	}
 
 	s.locations = make(map[uintptr]engine.Location)
-	for _, r := range s.engine.Routes() {
+	for _, r := range before {
 		s.locations[handlerKey(r.HandlerFunc)] = engine.FuncLocation(r.HandlerFunc)
 	}
 
-	return nil
+	return engine.CollapseMethods(routes, anyMethods), nil
+}
+
+// anyMethods is the method set of gin's RouterGroup.Any.
+var anyMethods = []string{
+	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodHead,
+	http.MethodOptions, http.MethodDelete, http.MethodConnect, http.MethodTrace,
+}
+
+// added returns the routes in after that are not in before, attributed to
+// owner. gin lists routes by method tree, so they are matched by method
+// and path, not by position.
+func added(before, after gin.RoutesInfo, owner string) engine.Routes {
+	seen := map[string]bool{}
+	for _, r := range before {
+		seen[r.Method+" "+r.Path] = true
+	}
+
+	var out engine.Routes
+
+	for _, r := range after {
+		if !seen[r.Method+" "+r.Path] {
+			out = append(out, engine.Route{Method: r.Method, Pattern: r.Path, Configurer: owner})
+		}
+	}
+
+	return out
 }
 
 // handlerKey identifies a route handler by its function pointer.

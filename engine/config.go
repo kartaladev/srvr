@@ -61,6 +61,7 @@ type Settings struct {
 	ReadBuild      func() (*debug.BuildInfo, bool)
 	ProblemOptions []prblm.Option
 	ErrorHook      ErrorHook
+	RouteChecks    []RouteCheck
 	// Errs collects mistakes options detect while they are applied.
 	Errs []error
 

@@ -68,3 +68,23 @@ func WithListener(ln net.Listener) Option {
 		s.Listener = ln
 	}
 }
+
+// WithRouteCheck adds check, which receives the server's route listing
+// (one engine.Route per declared route, pattern in the engine's syntax,
+// configurer named by its Go type; middleware and implicit routes are
+// left out) after the configure phase and before the listener is bound.
+// Checks run in order, each with Start's context and its own copy of the
+// listing; an error or panic fails Start with an error wrapping
+// [ErrRouteConfig]. When Start's context ends first, Start returns its
+// error and abandons a check that ignores it. check must not be nil.
+func WithRouteCheck(check engine.RouteCheck) Option {
+	return func(s *engine.Settings) {
+		if check == nil {
+			s.Errs = append(s.Errs, engine.ConfigError("RouteCheck", "<nil>", "is nil"))
+
+			return
+		}
+
+		s.RouteChecks = append(s.RouteChecks, check)
+	}
+}

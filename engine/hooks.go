@@ -72,15 +72,34 @@ func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 	return errors.Join(errs...)
 }
 
-// runHook runs fn in its own goroutine, recovering a panic, and stops
-// waiting when ctx is done.
+// runHook runs fn with runGuarded; a hook that outlives ctx fails as
+// abandoned.
 func runHook(ctx context.Context, fn func(context.Context) error) error {
+	err, abandoned := runGuarded(ctx, fn)
+	if abandoned {
+		// For BeforeDrain hooks ctx.Err() comes from the consumer's Shutdown
+		// context.
+		return fmt.Errorf("abandoned: %w", &guardedError{ctx.Err()})
+	}
+
+	return err
+}
+
+// panicError is the failure of consumer code that panicked.
+type panicError struct{ value string }
+
+func (e *panicError) Error() string { return "panic: " + e.value }
+
+// runGuarded runs consumer code fn in its own goroutine, turning a panic
+// into a *panicError, and stops waiting when ctx is done: abandoned is
+// true then, unless fn finished as ctx ended, which still counts.
+func runGuarded(ctx context.Context, fn func(context.Context) error) (err error, abandoned bool) { //nolint:revive // the error is fn's result, not a failure of runGuarded.
 	result := make(chan error, 1)
 
 	go func() {
 		defer func() {
 			if v := recover(); v != nil {
-				result <- errors.New("panic: " + ValueText(v))
+				result <- &panicError{value: ValueText(v)}
 			}
 		}()
 
@@ -89,16 +108,13 @@ func runHook(ctx context.Context, fn func(context.Context) error) error {
 
 	select {
 	case err := <-result:
-		return err
+		return err, false
 	case <-ctx.Done():
-		// A hook that finished as the budget ran out still counts.
 		select {
 		case err := <-result:
-			return err
+			return err, false
 		default:
-			// For BeforeDrain hooks ctx.Err() comes from the consumer's
-			// Shutdown context.
-			return fmt.Errorf("abandoned: %w", &guardedError{ctx.Err()})
+			return nil, true
 		}
 	}
 }

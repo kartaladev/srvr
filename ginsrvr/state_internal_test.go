@@ -42,7 +42,7 @@ func TestGinRequestState(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := srv.configure([]srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
+			if _, err := srv.configure([]srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
 				g.GET("/users/:id", func(c *gin.Context) { c.Status(http.StatusOK) })
 			})}); err != nil {
 				t.Fatal(err)

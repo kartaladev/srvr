@@ -175,15 +175,16 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // in-flight requests for at most ShutdownTimeout. It follows
 // srvr.Server.Start in every other respect.
 func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Runner, error) {
-		if err := s.configure(configurers); err != nil {
-			return nil, err
+	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Runner, engine.Routes, error) {
+		routes, err := s.configure(configurers)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		r := &runner{app: s.app, cancelBase: s.cancelBase, conns: &tracker{open: map[net.Conn]struct{}{}}}
 		s.serving.Store(r)
 
-		return r, nil
+		return r, routes, nil
 	})
 }
 
@@ -192,22 +193,24 @@ func (s *Server) Start(ctx context.Context) error {
 // closes their connections before returning ctx's error.
 func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx) }
 
-// configure runs each configurer on the app's root router under recover
-// and then rejects duplicate routes, which fiber registers silently
-// (merging an identical registration into the first, which wins).
-func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) error {
+// configure runs each configurer on the app's root router under recover,
+// rejects duplicate routes, which fiber registers silently (merging an
+// identical registration into the first, which wins), and returns the
+// route listing. The duplicate check is srvr's own route check and runs
+// before the consumer's.
+func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Routes, error) {
 	defer func() { s.owners.current = "" }()
 
 	for _, c := range configurers {
 		s.owners.current = fmt.Sprintf("%T", c)
 
 		if err := engine.Configure[fiber.Router](c, s.app); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if err := s.owners.duplicate(); err != nil {
-		return err
+		return nil, err
 	}
 
 	s.locations = make(map[uintptr]engine.Location)
@@ -218,7 +221,7 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) err
 		}
 	}
 
-	return nil
+	return engine.CollapseMethods(s.owners.routes, s.app.Config().RequestMethods), nil
 }
 
 // handlerKey identifies a route handler by its function pointer.
@@ -231,17 +234,13 @@ type routeOwners struct {
 	// current is the type of the configurer running, "" outside the
 	// configure phase.
 	current string
-	routes  []ownedRoute
-}
-
-type ownedRoute struct {
-	method, path, owner string
+	routes  engine.Routes
 }
 
 // record is the app's OnRoute hook.
 func (o *routeOwners) record(r fiber.Route) error {
 	if o.current != "" && !routeFlag(r, "use") && !routeFlag(r, "mount") && !routeFlag(r, "autoHead") {
-		o.routes = append(o.routes, ownedRoute{method: r.Method, path: r.Path, owner: o.current})
+		o.routes = append(o.routes, engine.Route{Method: r.Method, Pattern: r.Path, Configurer: o.current})
 	}
 
 	return nil
@@ -262,13 +261,13 @@ func routeFlag(r fiber.Route, name string) bool {
 // route whose method and path, with parameter names normalised (":id" and
 // ":name" are the same segment), repeat an earlier one.
 func (o *routeOwners) duplicate() error {
-	first := map[string]ownedRoute{}
+	first := map[string]engine.Route{}
 
 	for _, r := range o.routes {
-		key := r.method + " " + normalise(r.path)
+		key := r.Method + " " + normalise(r.Pattern)
 		if earlier, dup := first[key]; dup {
 			return engine.RouteError("%q (%s) duplicates %q (%s); fiber would serve only the first",
-				r.method+" "+r.path, r.owner, earlier.method+" "+earlier.path, earlier.owner)
+				r.Method+" "+r.Pattern, r.Configurer, earlier.Method+" "+earlier.Pattern, earlier.Configurer)
 		}
 
 		first[key] = r

@@ -86,7 +86,7 @@ func TestGinEngineHook(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := srv.configure([]srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
+			if _, err := srv.configure([]srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
 				g.GET("/users", func(c *gin.Context) { c.Status(http.StatusOK) })
 				g.GET("/ip", func(c *gin.Context) { c.String(http.StatusOK, c.ClientIP()) })
 			})}); err != nil {

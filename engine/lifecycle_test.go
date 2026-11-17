@@ -57,7 +57,9 @@ func startLifecycle(t *testing.T, l *engine.Lifecycle[int], runner engine.Runner
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- l.Start(ctx, func([]int) (engine.Runner, error) { return runner, nil }) }()
+	go func() {
+		done <- l.Start(ctx, func([]int) (engine.Runner, engine.Routes, error) { return runner, nil, nil })
+	}()
 
 	select {
 	case <-l.Ready():
@@ -99,11 +101,11 @@ func TestEngineLifecycle(t *testing.T) {
 		isCfg bool  // the call returns an error wrapping ErrConfig
 	}{
 		{name: "Start while running", state: "running", call: func(l *engine.Lifecycle[int]) error {
-			return l.Start(context.Background(), func([]int) (engine.Runner, error) { return &fakeRunner{}, nil })
+			return l.Start(context.Background(), func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
 		}, want: srvr.ErrServerStarted},
 		{name: "Shutdown never started", state: "never started", call: func(l *engine.Lifecycle[int]) error { return l.Shutdown(context.Background()) }},
 		{name: "Start after stop", state: "stopped", call: func(l *engine.Lifecycle[int]) error {
-			return l.Start(context.Background(), func([]int) (engine.Runner, error) { return &fakeRunner{}, nil })
+			return l.Start(context.Background(), func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
 		}, want: srvr.ErrServerClosed},
 		{name: "Register while running", state: "running", call: func(l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerStarted},
 		{name: "Register after stop", state: "stopped", call: func(l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerClosed},

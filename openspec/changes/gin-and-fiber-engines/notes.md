@@ -135,10 +135,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none beyond the RED tests named in the tasks.
 
 ### Unverified assumptions from audit 2
-- **Status:** open: (1) confirmed 2026-11-18; (2) confirmed at consolidation; (3) pending task 6.1
+- **Status:** closed: all three confirmed by running tests (2026-11-18)
 - **Target:** gin-and-fiber-engines
 - **Context:** Three rows rest on source reading, not a running test: (1) a header read stalled past fasthttp's `ReadTimeout` reaches `serverErrorHandler` as a timeout and is answered `408` (Protocol rejection record row 3); (2) net/http `Mount("/")` in group `/static` registers the method-less pattern `/static/`, which depends on how core-server implements `Mount`; (3) fiber `All` registers exactly `RequestMethods`, so the any-method collapse recognises it.
-- **Evidence:** (1) `fibersrvr/protocol_test.go` `TestFiberProtocolRejection/stalled_headers` (real listener, `ReadTimeout` 100ms, headers left unfinished) passes: a `408` problem titled `Request Timeout` and one failed record. (2) and (3): see Context.
+- **Evidence:** (1) `fibersrvr/protocol_test.go` `TestFiberProtocolRejection/stalled_headers` (real listener, `ReadTimeout` 100ms, headers left unfinished) passes: a `408` problem titled `Request Timeout` and one failed record. (2) `routelisting_test.go` `TestRouteListing/Mount_in_a_group` lists `{"" /static/}`. (3) `fibersrvr/routelisting_test.go` `TestRouteListing/All` lists `{"" /x}` through `engine.CollapseMethods` over `app.Config().RequestMethods`.
 - **Suggested action:** Tasks 4.13 and 6.1 write these rows first as RED tests; if one fails for a reason other than the missing feature, correct the row and record the actual behaviour here. Consolidation 1.3 re-checks (2) against merged core code.
 
 ### Gin unmatched requests were already failed before task 3.8's GREEN
@@ -210,3 +210,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** scrty's chain must run outside the router and after srvr's trace and access stages. net/http: wrap the router inside `Server.stages`. gin: srvr's stages wrap the gin engine as an `http.Handler` (`ginsrvr/server.go` `handler`), so the httpsec chain can go between `LimitBody` and the engine, or ginsec as the first consumer-independent global middleware after `requestStage`. fiber: fibersec after `requestStage` and `fiberprblm.Recovery()` in `app.Use`, before routes; fasthttp rejections (408, 413, 431) never reach it. Route listings for scrty's collision check come from task group 6.
 - **Evidence:** unverified: planning carry-over from task 5.5.
 - **Suggested action:** expose one insertion point per engine (an `engine`-level middleware slot) rather than per-engine options, with parity rows.
+
+### Fiber duplicate detection runs before the route checks, not as one
+- **Status:** closed: implementation choice during apply (2026-11-18)
+- **Target:** gin-and-fiber-engines
+- **Context:** Task 6.2 planned to turn fiber's duplicate-route detection into the first internal route check (Substitute Algorithm). It stays a direct call in `fibersrvr`'s configure phase, run before `Core.CheckRoutes`: it needs the registration records fiber's `OnRoute` hook keeps (merged duplicates never reach the listing), which a check receiving `engine.Routes` cannot see. The observable order is the one D3/D8 specify: duplicates fail `Start` before any consumer check runs.
+- **Evidence:** `fibersrvr/register_test.go` duplicate rows and `routelisting_test.go` `TestRouteCheck` pass.
+- **Suggested action:** none.

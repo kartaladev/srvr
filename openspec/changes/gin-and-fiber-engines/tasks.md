@@ -169,16 +169,16 @@ Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `O
 
 ## 6. Slice: registered routes listed and checked on every engine
 
-- [ ] 6.1 Route listing with configurer attribution (engine-support / Scenario: Route listing, all rows including net/http `Mount` and method-less patterns, gin `Any` and `Static`, fiber `All` and path-scoped `Use`); verify `go test -race -run TestRouteListing` passes in the core, `ginsrvr` and `fibersrvr`
+- [x] 6.1 Route listing with configurer attribution (engine-support / Scenario: Route listing, all rows including net/http `Mount` and method-less patterns, gin `Any` and `Static`, fiber `All` and path-scoped `Use`); verify `go test -race -run TestRouteListing` passes in the core, `ginsrvr` and `fibersrvr`
   - RED: table per engine with a recording check; fails because no listing exists
   - GREEN: `engine.Route{Method, Pattern, Configurer}` and `engine.Routes`; the net/http registrar records patterns, gin and fiber diff `e.Routes()` / `app.GetRoutes(true)` around each `Configure`; exclude `Use` entries (path-scoped too) and fiber's implicit `HEAD`; collapse a pattern one configurer registered for the engine's whole any-method set into one entry with `Method` `""`
   - REFACTOR: Extract Function for the before/after diff shared by gin and fiber, then /simplify
-- [ ] 6.2 Route checks fail `Start` (engine-support / Scenario: Route check outcomes, all rows; Scenario: Hooks per engine and stop path, the fiber route-check row); verify `go test -race -run 'TestRouteCheck|TestFiberShutdownHooks'` passes in each engine module
+- [x] 6.2 Route checks fail `Start` (engine-support / Scenario: Route check outcomes, all rows; Scenario: Hooks per engine and stop path, the fiber route-check row); verify `go test -race -run 'TestRouteCheck|TestFiberShutdownHooks'` passes in each engine module
   - RED: table including error, panic, nil, mutating, context-honouring and context-ignoring blocking check rows, and the engine-support "Consumer faults on every engine" route-check row (hostile error text, re-entrant `Addr`); fails because `srvr.WithRouteCheck` does not exist
   - GREEN: `srvr.WithRouteCheck(func(context.Context, engine.Routes) error)` runs checks in order under recover after configure and before bind, each with `Start`'s context and its own `slices.Clone` of the listing; `Start` returns the context error when it ends first and abandons the check; fiber duplicate detection becomes the first internal check
   - REFACTOR: Replace the fiber-specific duplicate call with the check mechanism (Substitute Algorithm), then /simplify
-- [ ] 6.3 Godoc on `engine.Route`, `srvr.WithRouteCheck` and a runnable `Example` asserting a route table at startup; verify `go test -run Example` passes
-- [ ] 6.4 Verify slice end to end: listing parity rows added to `internal/paritytest`; route-listing and check branches covered in `go tool cover -func`; from each module's directory `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` clean with `GOWORK=off` for released modules; gopls diagnostics and find references on changed definitions; run /simplify on the slice and commit `feat(engine): list registered routes and run route checks`
+- [x] 6.3 Godoc on `engine.Route`, `srvr.WithRouteCheck` and a runnable `Example` asserting a route table at startup; verify `go test -run Example` passes
+- [x] 6.4 Verify slice end to end: listing parity rows added to `internal/paritytest`; route-listing and check branches covered in `go tool cover -func`; from each module's directory `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` clean with `GOWORK=off` for released modules; gopls diagnostics and find references on changed definitions; run /simplify on the slice and commit `feat(engine): list registered routes and run route checks`
 
 ## Workflow follow-up
 

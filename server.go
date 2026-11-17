@@ -79,13 +79,13 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // a [WithListener] listener's Accept fails, Start stops the server in order
 // and returns that error.
 func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []RouteConfigurer[*Group]) (engine.Runner, error) {
-		mux, err := s.router(configurers)
+	return s.lc.Start(ctx, func(configurers []RouteConfigurer[*Group]) (engine.Runner, engine.Routes, error) {
+		mux, routes, err := s.router(configurers)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
-		return engine.HTTPRunner(s.core.Config(), s.pipeline(mux)), nil
+		return engine.HTTPRunner(s.core.Config(), s.pipeline(mux)), routes, nil
 	})
 }
 
@@ -101,28 +101,33 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx) }
 
 // router runs the configurers and returns the ServeMux holding their
-// routes.
-func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, error) {
+// routes and the listing of the routes they declared.
+func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, engine.Routes, error) {
 	b := &builder{wrap: s.wrapHandler}
 	g := &Group{b: b}
 
 	for _, c := range configurers {
 		b.owner = fmt.Sprintf("%T", c)
 		if err := engine.Configure(c, g); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	if len(b.errs) > 0 {
-		return nil, errors.Join(b.errs...)
+		return nil, nil, errors.Join(b.errs...)
 	}
 
 	mux := http.NewServeMux()
 	if err := installRoutes(mux, b.routes); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return mux, nil
+	routes := make(engine.Routes, len(b.routes))
+	for i, rt := range b.routes {
+		routes[i] = engine.Route{Method: rt.method, Pattern: rt.pattern, Configurer: rt.owner}
+	}
+
+	return mux, routes, nil
 }
 
 // pipeline wraps the router in the per-request stages, outermost first:

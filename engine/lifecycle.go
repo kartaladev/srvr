@@ -116,11 +116,12 @@ func (l *Lifecycle[C]) Addr() string {
 }
 
 // Start runs prepare with the registered configurers (the configure
-// phase, which no later Register can change), binds the listener, closes Ready and serves through the
+// phase, which no later Register can change), runs the route checks on the
+// listing it returns, binds the listener, closes Ready and serves through the
 // returned Runner until ctx is done or Shutdown is called; then it stops
 // the server in order. See srvr.Server.Start for the contract every
 // engine shares.
-func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) (Runner, error)) error {
+func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) (Runner, Routes, error)) error {
 	if ctx == nil {
 		return ConfigError("Start context", "<nil>", "is nil")
 	}
@@ -133,8 +134,12 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 		return l.fail(ctx, err)
 	}
 
-	runner, err := prepare(l.configurers)
+	runner, routes, err := prepare(l.configurers)
 	if err != nil {
+		return l.fail(ctx, err)
+	}
+
+	if err := l.core.CheckRoutes(ctx, routes); err != nil {
 		return l.fail(ctx, err)
 	}
 
