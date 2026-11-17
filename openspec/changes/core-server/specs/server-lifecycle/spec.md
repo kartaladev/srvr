@@ -332,3 +332,25 @@ The server SHALL log `server.started` with the bound address, `server.stopping` 
 | the drain deadline passes | `server.stopped` | `WARN` | `srvr.drain.forced` |
 | a shutdown hook returns an error | `server.shutdown_hook.failed` | `WARN` | `srvr.shutdown_hook.phase` |
 | a shutdown hook panics | `server.shutdown_hook.failed` | `WARN` | `exception.message` |
+
+### Requirement: Lifecycle error text is redacted and limited
+The `exception.message` of `server.failed` and `server.shutdown_hook.failed`, and of any other srvr lifecycle record carrying consumer error text, SHALL be built like a request failure record's: the guarded error text passed through the `WithErrorRedactor` redactor (a redactor that panics SHALL cause `[redaction failed]`, never the unredacted text) and then limited to 8 KiB, instead of `MaxAttrBytes`.
+
+#### Scenario: Lifecycle error text is redacted and limited
+- **Given** a server with the default logger writing to a buffer, configured with `<redactor>`
+- **When** `<failure>`
+- **Then** the `<event>` record's `exception.message` is `<message>`
+
+##### Examples:
+| redactor | failure | event | message |
+|----------|---------|-------|---------|
+| (none) | an `AfterDrain` hook returns `errors.New("close db: secret")` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | `close db: secret` |
+| `WithErrorRedactor(secretMasker)` | an `AfterDrain` hook returns `errors.New("close db: secret")` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | `close db: ***` |
+| `WithErrorRedactor(panicky)` | an `AfterDrain` hook returns `errors.New("close db: secret")` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | `[redaction failed]` |
+| `WithErrorRedactor(secretMasker)` | an `AfterDrain` hook panics with `"secret"` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | `panic: ***` |
+| `WithErrorRedactor(secretMasker)` | `Start` is called with a done context whose `Err()` returns `errors.New("stop: secret")` | `server.failed` | `stop: ***` |
+| `WithErrorRedactor(panicky)` | `Start` is called with a done context whose `Err()` returns `errors.New("stop: secret")` | `server.failed` | `[redaction failed]` |
+| (none) | an `AfterDrain` hook returns an error of 5000 bytes of `x` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | 5000 bytes of `x` |
+| (none) | an `AfterDrain` hook returns an error of 9000 bytes of `x` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | 8192 bytes of `x` followed by `…[truncated]` |
+| `WithErrorRedactor(expander)` returning 9000 bytes of `x` | an `AfterDrain` hook returns `errors.New("close db: secret")` and `Shutdown` is called before `Start` | `server.shutdown_hook.failed` | 8192 bytes of `x` followed by `…[truncated]` |
+| (none) | `Start` is called with a done context whose `Err()` returns an error of 9000 bytes of `x` | `server.failed` | 8192 bytes of `x` followed by `…[truncated]` |

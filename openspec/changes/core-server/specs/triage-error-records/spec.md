@@ -134,7 +134,7 @@ Every failed-request record SHALL carry `service.name`, `service.version` and, w
 | `1.4.2` | (none) | (none) |
 
 ### Requirement: Error text can be redacted by the consumer
-The consumer SHALL be able to install a redactor applied to `exception.message` and `exception.stacktrace` before writing; a redactor that panics SHALL cause the attribute to be replaced by `[redaction failed]`, never the unredacted text.
+The consumer SHALL be able to install a redactor applied to `exception.message` and `exception.stacktrace` before writing, on request failure records and on srvr's lifecycle records (server-lifecycle / Lifecycle error text is redacted and limited); a redactor that panics SHALL cause the attribute to be replaced by `[redaction failed]`, never the unredacted text.
 
 #### Scenario: Redacting error text
 - **Given** a server configured with `<redactor>`

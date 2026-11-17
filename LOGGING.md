@@ -74,7 +74,9 @@ goes to logs, never to 5xx responses.
 | `server.failed` | ERROR | `exception.message` |
 | `server.shutdown_hook.failed` | WARN | `srvr.shutdown_hook.phase`, `srvr.shutdown_hook.index`, `code.function.name`, `exception.message` |
 
-Lifecycle records carry the service keys and never `trace_id`.
+Lifecycle records carry the service keys and never `trace_id`. Their `exception.message` is built
+like a request failure record's: it passes the `WithErrorRedactor` redactor (`[redaction failed]`
+when the redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`.
 
 ## Sample triage record
 

@@ -314,6 +314,19 @@ Findings of the second `core-server` verification (C1, W1, S1, S2) and the two e
 - [x] 10.6 Godoc: `WithListener` (ownership starts once `New` returns a server; a failed `New` leaves the listener with the caller; `ErrServerClosed` does not close it because it was closed when the server closed; `Shutdown` before `Start` closes it), `WithShutdownHook` (typed-nil and panicking hook errors count as failures); `LOGGING.md` if it describes the status or late-failure levels; verify `go doc` shows them and `TestLogSchemaGolden` still passes with `srvr.log.schema` unchanged
 - [x] 10.7 Verify the slice: confirm the hook, `fail` and recorder branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
 
+## 11. Slice: redact and limit lifecycle error text
+
+Owner decision (notes.md "Lifecycle records do not pass exception.message through the error redactor"): srvr's lifecycle records build `exception.message` like request failure records do - redacted, panicking redactor contained, 8 KiB limit. No key is renamed or retyped, so `srvr.log.schema` stays unchanged.
+
+- [ ] 11.1 Lifecycle error text is redacted (server-lifecycle / Scenario: Lifecycle error text is redacted and limited, the redactor rows); verify `go test -race -run TestLifecycleErrorText` passes
+  - RED: recreate the deleted probe as a table row - `WithErrorRedactor` masking `secret`, an `AfterDrain` hook returning `errors.New("close db: secret")`, `Shutdown` before `Start`; fails with `unredacted: close db: secret` because `runHooks` (`hooks.go`) and `fail` (`server.go`) log `errorText(err)` as a plain string attribute
+  - GREEN: one helper in `triage.go` building the `exception.message` attribute (guarded text -> `(*Server).redact` -> `cutString(..., maxMessageBytes)` -> `ownText`), used by `errorAttrs`, `runHooks` and `fail`
+  - REFACTOR: Extract Function so `errorAttrs` and the lifecycle sites share it; /simplify
+- [ ] 11.2 Lifecycle error text has the 8 KiB limit (same scenario, the 5000- and 9000-byte rows and the expanding-redactor row); verify `go test -race -run TestLifecycleErrorText` passes
+  - RED: the 5000-byte hook error row; fails before 11.1's GREEN because `MaxAttrBytes` (1024) cuts the plain string attribute (if 11.1's GREEN already made it pass, record the row as characterization with a mutation check: replace the helper call with the plain attribute, see the row fail, restore)
+- [ ] 11.3 Godoc and log schema document: `WithErrorRedactor` names the lifecycle records; `LOGGING.md` lifecycle section (written with the plan); verify `go doc` shows it and `TestLogSchemaGolden` and `TestLogSchemaGolden_Lifecycle` still pass with `srvr.log.schema` unchanged
+- [ ] 11.4 Verify the slice: confirm the helper and its lifecycle call sites are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run the full suite without `-race` about 10 times to look for the unreproduced failure (notes.md "One unreproduced failure of the core test suite"), run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): redact and cap lifecycle error records`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.
