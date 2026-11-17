@@ -45,15 +45,22 @@ func ResolveConfig(opts []Option) (*Core, error) {
 
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
 
-	if s.Log.SetDefault {
-		slog.SetDefault(slog.New(c.log))
-	}
-
 	if c.problems, err = newProblems(c.ProblemOptions()); err != nil {
 		return nil, err
 	}
 
 	return c, nil
+}
+
+// SetDefaultLogger makes the server's logger the process default
+// (slog.SetDefault) when srvr.WithSetDefaultLogger asked for it, and does
+// nothing otherwise. It changes process-wide state, so every engine calls
+// it as the last step of a construction that succeeds: a New that returns
+// an error leaves slog.Default() unchanged.
+func (c *Core) SetDefaultLogger() {
+	if c.settings.Log.SetDefault {
+		slog.SetDefault(slog.New(c.log))
+	}
 }
 
 // Settings returns a copy of the applied settings; they cannot change

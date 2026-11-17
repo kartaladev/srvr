@@ -58,4 +58,7 @@
 //     its own middleware is not listed. srvr reads them from fiber's
 //     unexported fields when Start runs, so routes added to a sub-app after
 //     Start are not listed.
+//   - The access record's http.response.body.size for a streamed body
+//     (c.SendStream) is the stream's declared Content-Length, 0 when it has
+//     none, not the bytes written: measuring the stream would buffer it.
 package fibersrvr

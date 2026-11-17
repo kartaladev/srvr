@@ -79,6 +79,7 @@ func New(opts ...srvr.Option) (*Server, error) {
 	s.app = fiber.New(cfg)
 	s.app.Hooks().OnRoute(s.owners.record)
 	s.app.Use(s.requestStage, fiberprblm.Recovery())
+	core.SetDefaultLogger()
 
 	return s, nil
 }

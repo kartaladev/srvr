@@ -47,7 +47,10 @@ func New(opts ...Option) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{core: core, lc: engine.NewLifecycle[RouteConfigurer[*Group]](core)}, nil
+	s := &Server{core: core, lc: engine.NewLifecycle[RouteConfigurer[*Group]](core)}
+	core.SetDefaultLogger()
+
+	return s, nil
 }
 
 // Register adds conf to the configurers run when the server starts. Each

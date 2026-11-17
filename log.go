@@ -99,9 +99,10 @@ func WithLogger(l *slog.Logger) Option {
 }
 
 // WithSetDefaultLogger makes the server's logger the process default
-// (slog.SetDefault) when the server is constructed, so slog.Default()
-// records written with a request context carry its trace correlation. It
-// is opt-in because it changes global state.
+// (slog.SetDefault) once the server's construction succeeds, so
+// slog.Default() records written with a request context carry its trace
+// correlation. A construction that fails, on any engine, leaves
+// slog.Default() unchanged. It is opt-in because it changes global state.
 func WithSetDefaultLogger() Option {
 	return func(s *engine.Settings) { s.Log.SetDefault = true }
 }

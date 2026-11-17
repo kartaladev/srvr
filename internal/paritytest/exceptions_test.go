@@ -143,6 +143,20 @@ func TestParity_Exceptions(t *testing.T) {
 		}
 	})
 
+	t.Run("fiber logs a stream's declared length as the body size", func(t *testing.T) {
+		t.Parallel()
+
+		base, logs := fiberServer(t, func(r fiber.Router) {
+			r.Get("/x", func(c fiber.Ctx) error { return c.SendStream(bytes.NewReader([]byte("hello"))) })
+		})
+
+		res, body, err := send(t, http.MethodGet, base+"/x", nil)
+		must(t, err)
+		if r := one(t, logs); res.StatusCode != http.StatusOK || string(body) != "hello" || r["http.response.body.size"] != float64(0) {
+			t.Fatalf("response %d %q, record %v", res.StatusCode, body, r)
+		}
+	})
+
 	t.Run("net/http attempts the problem for a gone client", func(t *testing.T) {
 		t.Parallel()
 
@@ -324,10 +338,10 @@ func TestParity_Exceptions(t *testing.T) {
 
 	// gin's c.Error never returns for a cyclic chain; the stuck handler
 	// goroutine cannot be stopped, so this runs once, waits a bounded time
-	// and leaves it behind until the test binary exits.
+	// and leaves it behind until the test binary exits. It is deliberately
+	// not parallel (task 5.4): it runs alone, before the parallel subtests
+	// above resume, so they do not share the CPU its goroutine spins on.
 	t.Run("gin never completes c.Error with a cyclic chain", func(t *testing.T) {
-		t.Parallel()
-
 		base, _ := ginServer(t, func(g *gin.RouterGroup) {
 			g.GET("/x", func(c *gin.Context) { _ = c.Error(&selfCycleError{}) })
 		}, srvr.WithShutdownTimeout(100*time.Millisecond))

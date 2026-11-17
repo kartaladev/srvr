@@ -57,6 +57,8 @@ func New(opts ...srvr.Option) (*Server, error) {
 		core.Warn(context.Background(), engine.WarnGinDebugMode, "gin runs in debug mode and prints [GIN-debug] lines to standard output; set GIN_MODE=release or call gin.SetMode(gin.ReleaseMode) (srvr does not change gin's process-wide mode)")
 	}
 
+	core.SetDefaultLogger()
+
 	return s, nil
 }
 

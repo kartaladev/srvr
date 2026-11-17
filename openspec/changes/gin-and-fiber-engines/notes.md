@@ -3,11 +3,32 @@
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
 ### Verification fixes 2026-11-18 (task group 7)
-- **Status:** open: planned in task group 7
+- **Status:** closed: task group 7 applied (W1, W2, W3, W4, S1 fixed or pinned; S2 unconfirmed and pinned by `TestFiberShutdownNeverServed`)
 - **Target:** gin-and-fiber-engines
 - **Context:** The verification pass on `32e2566` found: W1 a failed construction still replaces `slog.Default()` (`engine.ResolveConfig` calls `slog.SetDefault` before later checks can fail); W2 fiber duplicates differing only by a trailing slash or letter case pass `Start` (owner: normalise like fiber, respecting `CaseSensitive`/`StrictRouting`); W3 routes of a mounted fiber sub-app are served but missing from the listing and the duplicate check (owner: list them); W4 a streamed fiber body logs its declared length (keep, document); S1 the gin cyclic `c.Error` parity subtest runs with `t.Parallel()` against task 5.4; S2 design D3 says `ShutdownWithContext` on a never-served app returns `nil`, claimed to return `fiber.ErrNotRunning`. Refreshed: engine-support new requirements "A failed construction changes no process-wide state" and "Mounted fiber sub-app routes are listed"; fiber-engine new requirement "Fiber duplicate routes are compared as fiber matches them" (the registration requirement points to it); engine-parity streamed body-size row; design D1, D3, D4, D8 (sub-app approach and the alternatives rejected), Defaults, Hot Paths, Risks; tasks group 7. `openspec validate gin-and-fiber-engines --strict` passes.
 - **Evidence:** S2 did not reproduce: a probe in `fibersrvr` (`fiber.New().ShutdownWithContext(context.Background())`, `GOWORK=off go test -run TestZZProbe -v .`) logged `<nil>` and `errors.Is(err, fiber.ErrNotRunning)` `false`, also after serving and on a second call; fiber v3.7.0 `app.go:1436-1438` returns `ErrNotRunning` only when `app.server` is nil, which `fiber.New` never leaves. D3's wording stays, clarified, and task 7.6 pins it. W3 probe: fiber v3.7.0 does not fire `OnRoute` for a mount (`router.go:1516-1519`, `if !route.mount`), so the mount must be found in `app.Stack()`.
 - **Suggested action:** apply group 7.
+
+### A fiber sub-app's own merged duplicate is not reported
+- **Status:** open
+- **Target:** unassigned
+- **Context:** fiber merges a registration identical to the last route of a method stack into that route (v3.7.0 `router.go` `mergesIntoLastLocked`), so `sub.Get("/x", h1)` followed by `sub.Get("/x", h2)` on a mounted sub-app leaves one route in the sub-app's stack. srvr sees parent registrations through `OnRoute`, which fires for the merge, but reads sub-apps from their stacks, so this duplicate inside a sub-app is not reported (one served by `h1` unless it calls `Next`).
+- **Evidence:** design D8 failure modes; fiber v3.7.0 `router.go` (`latestID` documents the merge).
+- **Suggested action:** read `Route.id` and `Route.latestID` (unexported) in the sub-app walk and report a route whose `latestID` differs from its `id`, pinning both fields in `TestMountFields`; or ask fiber to fire `OnRoute` of the parent for mounted routes.
+
+### Domain-mounted fiber sub-apps are not covered by the route listing tests
+- **Status:** open
+- **Target:** unassigned
+- **Context:** fiber v3.7.0 keeps sub-apps mounted through `Domain(host).Use(prefix, sub)` in `domainAppList`, wrapped by a domain router. The sub-app walk (design D8) was only verified for plain and group mounts; whether a domain mount appears in the parent's stack as a `mount` route, and with which path, is unverified.
+- **Evidence:** fiber v3.7.0 `mount.go` `domainMountedApp`, `domain.go`; no test in `fibersrvr/subapp_test.go` uses `Domain`.
+- **Suggested action:** add a listing row for a domain mount; if it is missing, list it or document it next to the path-scoped `Use` note.
+
+### One construction helper could own the order of New's final steps
+- **Status:** open
+- **Target:** unassigned
+- **Context:** the default-logger fix (task 7.1) makes every engine call `Core.SetDefaultLogger` as the last step of a successful `New`; a future engine must remember it. A review suggested an `engine` helper that resolves the configuration, runs the engine's build step and applies the default logger only on success, making the order structural.
+- **Evidence:** `engine/core.go` `SetDefaultLogger`; `server.go`, `ginsrvr/server.go`, `fibersrvr/server.go` `New`; `TestDefaultLoggerAfterConstruction` in each module guards today's engines.
+- **Suggested action:** decide together with the `engine` package stability carry-over before v1.
 
 ### Owner decisions 2026-11-18
 - **Status:** closed: recorded in the plan
