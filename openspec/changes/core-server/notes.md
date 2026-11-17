@@ -173,22 +173,25 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none beyond task group 12.
 
 ### A middleware constructor that panics during Start leaves the server unable to stop
-- **Status:** open
+- **Status:** closed: owner decided 2026-11-17 to contain it like a configurer panic; planned as task group 13
 - **Target:** core-server
 - **Context:** `installRoutes` (`group.go`) calls each middleware constructor through `chain` (`mw(h)`) during `Start` without a `recover`, unlike `Configure` (`safeConfigure`). A middleware whose constructor panics makes `Start` panic after `begin` moved the server to starting; nothing closes it, so a later `Shutdown` waits until its context ends. Found while planning task group 12; not one of the third verification's findings (it is panic containment, not the formatting class), so not changed.
 - **Evidence:** probe `TestProbeMiddlewarePanicAtStart` (`zz_probe_test.go.txt` in the session scratchpad), `GOWORK=off go test -count=1 -run TestProbeMiddlewarePanicAtStart -v .`: `recovered: mw`, then `shutdown: context deadline exceeded` (1s deadline).
 - **Suggested action:** Add a route-registration row (Faulty middleware: "panics while being applied at Start" -> `Start` returns an error wrapping `ErrRouteConfig` naming the route and configurer, with the panic value through `valueText`; a later `Shutdown` returns `nil`), recover in `chain` and route the failure through `fail`.
+- **Decision:** the owner decided that a middleware constructor panicking during `Start` is contained the same way as a configurer panic: `Start` returns an `ErrRouteConfig` error with the panic value through `valueText`, the server ends closed, a passed listener is closed under the ownership rules, and a later `Shutdown` returns `nil` promptly; every other consumer callback invoked during `Start`/configure is checked for the same gap, each with a test. Applied: route-registration Requirement: A middleware constructor that panics fails Start, design D3, task 13.1.
 
 ### A listener whose Close panics leaves the server unable to stop; one whose Accept panics crashes the process
-- **Status:** open
+- **Status:** closed: owner decided 2026-11-17 to wrap the passed listener; planned as task group 13
 - **Target:** core-server
 - **Context:** `closeUnserved` and `stopRun` (`server.go`) call the listener's `Close` without a `recover`; a panic there escapes before `finish`, so the server never closes and every later `Shutdown` blocks. `http.Server.Serve` calls `Accept` on its own goroutine without a `recover`, so a panicking `Accept` kills the process. Both are faulty consumer listeners like task group 12's `Addr()` case, but outside the third verification's findings, so not changed. The `sync.Once` in `onceCloseListener` was kept (task 12.2's lock audit).
 - **Evidence:** probes `TestProbeClosePanic` (`Shutdown before Start recovered: true`, then `Shutdown again HANG`) and `TestProbeAcceptPanic` (`panic: accept`, `FAIL github.com/kartaladev/srvr`), `zz_probe3_test.go.txt` in the session scratchpad.
 - **Suggested action:** Owner decides the contract: guard `Close` like a `Close` error (ignored, the server still closes) and wrap the served listener so a panicking `Accept` becomes an error returned by `Serve` (then `Start` returns it, wrapping `ErrConfig` or a new sentinel); add spec rows for both.
+- **Decision:** the owner decided that srvr wraps the passed listener so a panic in `Accept`, `Close` or `Addr` becomes an error. An `Accept` panic stops serving and `Start` returns it (wrapping `ErrConfig` naming `Listener`, the panic value through `valueText`) with a `server.failed` record; because the server was running, it stops in order (drain included) rather than through `fail`'s served-nothing path. A `Close` panic is treated like a `Close` error, which srvr ignores: the stop completes and the stopping call returns what it returns for a successful `Close` (`nil` when hooks and drain succeed), with no record. The wrapper adds only a deferred `recover` per `Accept`; connections are not wrapped. Applied: server-lifecycle Requirements: A passed listener whose Accept panics stops serving, and A passed listener whose Close panics never blocks the stop, the Lifecycle records row, design D1, tasks 13.3 and 13.4.
 
 ### WithLogger accepts a Logger without a handler and drops every record
-- **Status:** open
+- **Status:** closed: owner decided 2026-11-17 to reject it in New; planned as task group 13
 - **Target:** unassigned
 - **Context:** `WithLogger(&slog.Logger{})` passes the `l == nil` check, but `l.Handler()` is nil, so every call srvr makes to the base handler panics, is counted in `LogWriteErrors()` and the record is skipped: the server logs nothing, silently (AGENTS rule 7 asks construction to fail instead). Found while planning task group 12.
 - **Evidence:** probe `TestProbeZeroLogger` (`zz_probe2_test.go.txt` in the session scratchpad): `New err: <nil>`.
 - **Suggested action:** Reject a Logger whose `Handler()` is nil or a typed nil in `WithLogger` with `ErrConfig` naming `Logger`; add a row to structured-logging / Own handler.
+- **Decision:** the owner decided that `WithLogger` rejects a Logger whose `Handler()` is nil or a typed nil with `ErrConfig` naming `Logger` (AGENTS rule 7). Applied: server-lifecycle Construction requirement and two rejected rows in Scenario: Valid and invalid configuration, design D7, task 13.2.

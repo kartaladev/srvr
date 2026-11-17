@@ -142,6 +142,22 @@ Registering two routes whose patterns ServeMux treats as conflicting SHALL make 
 | panics while handling | `500` | `nil` |
 | never calls the next handler and writes `403` | `403` | `nil` |
 
+### Requirement: A middleware constructor that panics fails Start
+`Start` calls each middleware constructor once per route while it installs the routes. A constructor that panics SHALL fail `Start` like a panicking `Configure`: an error wrapping `srvr.ErrRouteConfig` that names the route and the configurer that registered it and contains the panic value, read without panicking. The server SHALL close as on any other `Start` failure.
+
+#### Scenario: Middleware constructor panics
+- **Given** a configurer of type `*main.API` registering `<route>` under group middleware whose constructor panics with `<value>`
+- **When** `Start` is called
+- **Then** `Start` returns an error wrapping `srvr.ErrRouteConfig` containing `<route>`, `*main.API` and `<text>`, without panicking, and `Ready()` is never closed
+- **And** a later `Shutdown` returns `nil` without blocking
+
+##### Examples:
+| route | value | text |
+|-------|-------|------|
+| `GET /x` | `"mw"` | `mw` |
+| `GET /x` | a value whose `Error()` panics with itself, of type `T` | `<panic in Error(): T>` |
+| `Mount("/static/", files)` | `"mw"` | `mw` |
+
 ### Requirement: Plain handlers can be mounted
 A group SHALL accept a plain `http.Handler` through `Mount(path, handler)`, routed for every method, receiving the group's middleware, with its panics recovered like other routes. The handler SHALL see the request path with the group prefix removed, as `http.StripPrefix` does.
 

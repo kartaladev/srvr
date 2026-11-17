@@ -369,6 +369,30 @@ Findings of the third `core-server` verification (C1, W1, S1 and one unconfirmed
 - [x] 12.10 Verify the slice: confirm the address helper, hook error types, truncator rewrite and every audited site are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
   - Result: `go vet`, `golangci-lint` (0 issues) and `go test -race ./...` pass with `GOWORK=off`; gopls reports no diagnostics on the changed files; coverage 99.6% of statements, every new or changed function at 100% except two timing-dependent branches that predate this slice: `runHook`'s "hook finished as the budget ran out" (`hooks.go`) and `Start`'s "Serve returned because the stop closed the listener" (notes.md); /simplify applied: `guardedError` (12.3), `configError` reading its value through `valueText`, `valueText` reading errors through `errorText`, shared test helpers (`bounded`, `newRecovered`, `recordingHandler.value`, `waitRefused`, `returning`); skipped: an efficiency note that with a negative limit a record holding a group or `LogValuer` is rebuilt although nothing in it needs converting (opt-in path that loosens a safety default; looking inside groups would add its own walk), and moving the synchronous-call warning to one place (each option's godoc is read on its own)
 
+## 13. Slice: contain remaining consumer faults
+
+Owner decisions of 2026-11-17 on the three open `notes.md` entries left by task group 12: a middleware constructor panic at `Start` is contained like a configurer panic; `WithLogger` rejects a Logger without a handler; a passed listener whose `Accept` or `Close` panics never crashes the process or blocks the stop (an `Accept` panic fails `Start` with `server.failed` after an orderly stop; a `Close` panic is ignored like a `Close` error). Each RED step recreates the probe recorded in `notes.md` as a test.
+
+- [ ] 13.1 A middleware constructor that panics at `Start` fails `Start` and closes the server (route-registration / Scenario: Middleware constructor panics, all rows); verify `go test -race -run TestMiddleware_ConstructorPanics` passes
+  - RED: the rows, each bounding `Start` and the later `Shutdown` with a deadline; fails because `chain` (`group.go`) calls `mw(h)` without `recover`, so `Start` panics and `Shutdown` waits until its context ends (probe: `shutdown: context deadline exceeded`)
+  - GREEN: `chain` recovers a constructor panic and returns an error naming the middleware index with the value through `valueText`; `installRoutes` wraps it in `ErrRouteConfig` with the route and owner, and `Start` fails through `fail`
+  - Audit: list every consumer callback `Start` and `configure` invoke (configurers, middleware constructors, `Use`/`Group`/`Handle`/`Mount` and the handler location, prblm options, error hooks, listener methods, hooks, log handlers, the redactor, the `Start` and `Shutdown` contexts) and name the test that covers each; record the result here; a gap outside the three decisions goes to `notes.md`
+  - REFACTOR: /simplify
+- [ ] 13.2 `WithLogger` rejects a Logger without a handler (server-lifecycle / Scenario: Valid and invalid configuration, the two `WithLogger` rows); verify `go test -race -run TestNew_Config` passes
+  - RED: the rows; fail because `WithLogger` (`log.go`) checks only `l == nil` and `New` returns a server (probe: `New err: <nil>`)
+  - GREEN: `WithLogger` rejects `isNil(l.Handler())` with `configError("Logger", ...)`
+  - REFACTOR: /simplify
+- [ ] 13.3 A passed listener whose `Accept` panics fails `Start` without crashing the process (server-lifecycle / Requirement: A passed listener whose Accept panics stops serving, all rows, and Scenario: Lifecycle records, the `Accept` row); verify `go test -race -run 'TestListener_AcceptPanics|TestLifecycleRecords'` passes
+  - RED: the rows with a listener that delegates to a real one and panics on the chosen `Accept` call; fails because `http.Server.Serve` calls `Accept` on its own goroutine without `recover`, so the test binary crashes (probe: `panic: accept`)
+  - GREEN: the listener wrapper (`onceCloseListener`, renamed for what it now does) recovers in `Accept` and returns an error wrapping `ErrConfig` naming `Listener` with the value through `valueText`; `Start` writes `server.failed` for a `Serve` that failed on its own and then stops in order; a benchmark or `testing.AllocsPerRun` check shows the wrapper adds no allocation per `Accept`
+  - REFACTOR: /simplify
+- [ ] 13.4 A passed listener whose `Close` panics never blocks the stop (server-lifecycle / Scenario: A listener whose Close panics, all rows); verify `go test -race -run TestListener_ClosePanics` passes
+  - RED: the rows, each call bounded by a deadline; fails because `closeUnserved` and `stopRun` (`server.go`) call `Close` without `recover`, so the panic escapes before `finish` and a later `Shutdown` blocks (probe: `Shutdown again HANG`)
+  - GREEN: every close of a passed listener goes through the wrapper, whose `Close` turns a panic into an error that srvr ignores like a `Close` error
+  - REFACTOR: /simplify
+- [ ] 13.5 Godoc: `WithListener` (an `Accept` panic fails `Start`, a `Close` panic is ignored like a `Close` error), `Middleware` (a constructor panic at `Start` fails `Start`), `WithLogger` (a Logger without a handler is rejected); `LOGGING.md` `server.failed` (also written when serving fails, for example a panicking `Accept`); verify `go doc` shows them and `TestLogSchemaGolden_Lifecycle` passes with `srvr.log.schema` unchanged
+- [ ] 13.6 Verify the slice: confirm the changed functions are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.

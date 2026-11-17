@@ -7,7 +7,7 @@ Defines how a srvr server is constructed, started, observed as ready and shut do
 ## ADDED Requirements
 
 ### Requirement: Construction validates configuration
-Constructing a server SHALL validate every option and config field and SHALL return an error naming the offending field and value instead of a server when any is invalid. Construction SHALL NOT open a listener.
+Constructing a server SHALL validate every option and config field and SHALL return an error naming the offending field and value instead of a server when any is invalid. Construction SHALL NOT open a listener. A `*slog.Logger` passed with `WithLogger` whose `Handler()` is nil or a typed nil SHALL fail construction naming `Logger`: srvr could not write a single record through it, and silently dropping every record is not a safe default.
 
 #### Scenario: Valid and invalid configuration
 - **Given** a server configured with `<field>` set to `<value>`
@@ -38,6 +38,8 @@ Constructing a server SHALL validate every option and config field and SHALL ret
 | `WithListener` and `Addr` | both set | an error wrapping `srvr.ErrConfig` | `Listener` |
 | `WithShutdownHook` | `srvr.BeforeDrain` with a nil function | an error wrapping `srvr.ErrConfig` | `ShutdownHook` |
 | `WithShutdownHook` | phase `srvr.ShutdownPhase(9)` | an error wrapping `srvr.ErrConfig` | `ShutdownPhase` |
+| `WithLogger` | a zero `&slog.Logger{}`, whose `Handler()` is nil | an error wrapping `srvr.ErrConfig` | `Logger` |
+| `WithLogger` | `slog.New(h)` where `h` is a typed-nil `slog.Handler` | an error wrapping `srvr.ErrConfig` | `Logger` |
 
 ### Requirement: Safe default server limits
 With no configuration the server SHALL listen on `:8080` and apply the default timeouts, header limit, request body limit and drain time. A zero config value SHALL mean the default; a negative timeout or body limit SHALL disable that limit.
@@ -187,6 +189,41 @@ A typed-nil listener SHALL fail construction like a nil one. A listener whose `A
 | returns a typed-nil `*net.TCPAddr` |
 | panics with `"addr"` |
 | returns an address whose `String()` panics with a value whose `Error()` panics with itself |
+
+### Requirement: A passed listener whose Accept panics stops serving
+srvr SHALL call a passed listener's `Accept`, which net/http calls on a goroutine of its own, under `recover`. A panic SHALL stop serving instead of crashing the process: `Start` returns an error wrapping `srvr.ErrConfig` that names `Listener` and contains the panic value read without panicking, writes `server.failed`, and stops the running server in order (stop accepting, `BeforeDrain` hooks, drain, `AfterDrain` hooks, listener closed).
+
+#### Scenario: A listener whose Accept panics
+- **Given** a server configured with `WithListener(ln)` where `ln.Accept()` panics with `<value>` after `<accepted>`
+- **When** `Start` is called
+- **Then** `Start` returns an error wrapping `srvr.ErrConfig` whose message contains `Listener` and `<text>`, and the process does not crash
+- **And** a `server.failed` record whose `exception.message` contains `<text>` is written, followed by `server.stopped`
+- **And** `ln` is closed, and a later `Shutdown` returns `nil` without blocking
+
+##### Examples:
+| value | accepted | text |
+|-------|----------|------|
+| `"accept"` | no connection | `accept` |
+| `"accept"` | one connection whose `GET /x` was answered `200` | `accept` |
+| a value whose `Error()` panics with itself, of type `T` | no connection | `<panic in Error(): T>` |
+
+### Requirement: A passed listener whose Close panics never blocks the stop
+srvr SHALL call a passed listener's `Close` under `recover` and treat a panic like an error returned by `Close`, which srvr ignores: the stop sequence completes, the server closes, the call that stopped the server returns exactly what it returns when `Close` succeeds, and no record is written for it.
+
+#### Scenario: A listener whose Close panics
+- **Given** a server configured with `WithListener(ln)` where `ln.Close()` panics with `"close"`
+- **When** `<call>` returns
+- **Then** it returns `<result>`, without panicking
+- **And** a later `Shutdown` returns `nil` and a later `Start` an error matching `srvr.ErrServerClosed`, each without blocking
+
+##### Examples:
+| call | result |
+|------|--------|
+| `Shutdown` before `Start` | `nil` |
+| `Start` with an already-cancelled context | an error matching `context.Canceled` |
+| `Start`, where a route configurer panics | an error matching `srvr.ErrRouteConfig` |
+| `Shutdown` on a running server | `nil` |
+| `Start`, after its context ends while running | `nil` |
 
 ### Requirement: Shutdown is graceful, bounded and idempotent
 `Shutdown(ctx)` SHALL stop accepting connections, wait for in-flight requests until `ctx` is done, then close remaining connections and return the context error. Repeated calls SHALL be safe and return nil once shut down.
@@ -369,6 +406,7 @@ The server SHALL log `server.started` with the bound address, `server.stopping` 
 | shutdown begins | `server.stopping` | `INFO` | `service.name` |
 | shutdown completes | `server.stopped` | `INFO` | `srvr.drain.duration_ms` |
 | binding fails | `server.failed` | `ERROR` | `exception.message` |
+| serving fails because the passed listener's `Accept` panics | `server.failed` | `ERROR` | `exception.message` |
 | the drain deadline passes | `server.stopped` | `WARN` | `srvr.drain.forced` |
 | a shutdown hook returns an error | `server.shutdown_hook.failed` | `WARN` | `srvr.shutdown_hook.phase` |
 | a shutdown hook panics | `server.shutdown_hook.failed` | `WARN` | `exception.message` |
