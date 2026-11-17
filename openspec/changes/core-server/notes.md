@@ -142,3 +142,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** In `server.go` `Start`, when `http.Server.Serve` returns and the stop sequence has already begun, `served` is reset to nil (`case <-r.stopping: served = nil`, about line 183). Whether a test reaches it depends on which `select` case wins, so `go tool cover -func` reports `Start` at 96% on some runs. Found while verifying task group 9; not part of its findings, so not changed.
 - **Evidence:** unverified as a defect (coverage only): `GOWORK=off go test -count=1 -coverprofile=c.out ./...` listed `server.go:183.4,183.16 1 0`.
 - **Suggested action:** Decide whether to make the branch deterministic (a seam closing the listener before `Serve` returns, or restructuring so the stop sequence's own error result is the only source) and add a test, or accept the timing-dependent coverage.
+
+### Second verification findings folded into the plan (task group 10)
+- **Status:** closed: applied to the plan; implemented by task group 10
+- **Target:** core-server
+- **Context:** The second `core-server` verification raised C1 (`runHooks` calls a hook error's `Error()` unguarded in the stopping caller's goroutine, so a typed-nil or `Error()`-panicking hook error panics out of `Shutdown` or `Start` and every later `Shutdown` hangs), W1 (a handler writing only `103` logs `http.response.status_code` `103` although the client receives `200`), S1 (the `WithListener` wording "leaves ln open" for `ErrServerClosed`, when the listener was already closed) and S2 (ownership starts once `New` returns a server). Owner decisions kept and now stated explicitly in the specs: a late 4xx is logged at the higher of the two levels; `Shutdown` before `Start` closes the `WithListener` listener.
+- **Evidence:** RED tests of task group 10 (10.1-10.3).
+- **Suggested action:** none beyond task group 10.

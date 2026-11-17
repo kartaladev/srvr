@@ -129,7 +129,7 @@ The server SHALL expose `Ready()` returning a channel closed once the listener i
 | failed to bind | (empty) |
 
 ### Requirement: Start failures are returned, not hidden
-`Start` SHALL return an error, without signalling readiness, when the listener cannot be bound or route configuration fails. Route configuration SHALL run before binding so a broken configuration never accepts a connection.
+`Start` SHALL return an error, without signalling readiness, when the listener cannot be bound or route configuration fails. Route configuration SHALL run before binding so a broken configuration never accepts a connection. A `Start` context that is already done SHALL fail `Start` with its `Err()` value even when that value is a typed nil or has an `Error()` method that panics: srvr reads its text without panicking.
 
 #### Scenario: Start fails
 - **Given** a server where `<condition>`
@@ -144,10 +144,12 @@ The server SHALL expose `Ready()` returning a channel closed once the listener i
 | a route configurer panics | `srvr.ErrRouteConfig` | is never closed |
 | two routes register the same pattern | `srvr.ErrRouteConfig` | is never closed |
 | the `Start` context is already cancelled | `context.Canceled` | is never closed |
+| the `Start` context is done and its `Err()` returns an error whose `Error()` panics | that error | is never closed |
+| the `Start` context is done and its `Err()` returns a typed-nil error | that error | is never closed |
 | `Start(nil)` is called | `srvr.ErrConfig` | is never closed |
 
 ### Requirement: A passed listener is owned by the server
-A listener passed with `WithListener` SHALL be closed when the server closes, as `http.Server.Serve` closes its listener: after serving, on every `Start` failure after the server left its initial state, and on `Shutdown` before `Start`. `Start(nil)`, `ErrServerStarted` and `ErrServerClosed` change nothing and SHALL leave it open.
+A listener passed with `WithListener` SHALL be owned by the server once `New` returns one (if `New` fails, the caller keeps it) and SHALL be closed when the server closes: after serving, on every `Start` failure after the server left its initial state, and on `Shutdown` before `Start`. `Start(nil)` and `ErrServerStarted` SHALL NOT close it; `ErrServerClosed` does not close it (it was closed when the server closed).
 
 #### Scenario: A passed listener is owned by the server
 - **Given** a server configured with `WithListener(ln)` where `<condition>`
@@ -163,6 +165,7 @@ A listener passed with `WithListener` SHALL be closed when the server closes, as
 | `Shutdown` was called before `Start` | `Shutdown`, with `nil` | is closed and refuses connections |
 | the server served and was shut down | `Start`, with `nil` | is closed and refuses connections |
 | `Start(nil)` is called | `Start`, with an error matching `srvr.ErrConfig` | still accepts connections (nothing changed; the server can still start) |
+| `New` failed because another option is invalid | `New`, with an error wrapping `srvr.ErrConfig` | still accepts connections (the caller keeps it) |
 
 ### Requirement: Shutdown is graceful, bounded and idempotent
 `Shutdown(ctx)` SHALL stop accepting connections, wait for in-flight requests until `ctx` is done, then close remaining connections and return the context error. Repeated calls SHALL be safe and return nil once shut down.
@@ -240,13 +243,14 @@ A listener passed with `WithListener` SHALL be closed when the server closes, as
 | has no hooks registered | `Shutdown(ctx)` is called | `0` | `0` |
 
 ### Requirement: Faulty shutdown hooks never stop the shutdown
-A hook that returns an error, panics or outlives its budget SHALL be logged and SHALL NOT prevent the remaining hooks or the drain from running. The call that stopped the server (`Start` or `Shutdown`) SHALL return an error wrapping `srvr.ErrShutdownHook` joined with each hook's error and any drain error.
+A hook that returns an error (a typed nil or one whose `Error()` panics included), panics or outlives its budget SHALL be logged without panicking and SHALL NOT prevent the remaining hooks, the drain or the server closing. The call that stopped the server (`Start` or `Shutdown`) SHALL return an error wrapping `srvr.ErrShutdownHook` joined with each hook's error and any drain error.
 
 #### Scenario: Faulty hooks
 - **Given** a running server whose first `AfterDrain` hook `<fault>` and whose second `AfterDrain` hook succeeds
 - **When** the `Start` context is cancelled
 - **Then** `Start` returns `<result>`
 - **And** the second hook ran
+- **And** a later `Shutdown` returns `nil`
 
 ##### Examples:
 | fault | result |
@@ -254,7 +258,21 @@ A hook that returns an error, panics or outlives its budget SHALL be logged and 
 | returns `errors.New("flush failed")` | an error matching `srvr.ErrShutdownHook` whose message contains `flush failed` |
 | panics with `"boom"` | an error matching `srvr.ErrShutdownHook` whose message contains `boom` |
 | blocks and ignores its context, with `ShutdownHookTimeout` `50ms` | an error matching `srvr.ErrShutdownHook` and `context.DeadlineExceeded`, returned within `200ms` |
+| returns a typed-nil error `(*hookErr)(nil)` | an error matching `srvr.ErrShutdownHook` |
+| returns an error whose `Error()` panics | an error matching `srvr.ErrShutdownHook` |
 | returns `nil` | `nil` |
+
+#### Scenario: Hostile hook errors when Shutdown is called before Start
+- **Given** a server that was never started, whose `AfterDrain` hook `<fault>`
+- **When** `Shutdown` is called
+- **Then** `Shutdown` returns an error matching `srvr.ErrShutdownHook` without panicking
+- **And** a second `Shutdown` returns `nil` and a later `Start` returns an error matching `srvr.ErrServerClosed`
+
+##### Examples:
+| fault |
+|-------|
+| returns a typed-nil error `(*hookErr)(nil)` |
+| returns an error whose `Error()` panics |
 
 #### Scenario: Faulty hook during Shutdown
 - **Given** a running server whose `BeforeDrain` hook returns `errors.New("close failed")`

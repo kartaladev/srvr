@@ -112,6 +112,7 @@ When a handler returns an error or panics after the response status has been wri
 | `200` | returns `errors.New("late")` | `ERROR` |
 | `200` | panics with `"late"` | `ERROR` |
 | `201` | returns `prblm.ErrConflict` | `WARN` |
+| `500` | returns `prblm.ErrConflict` | `ERROR` |
 
 ### Requirement: Consumers extend error rendering
 The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types) and an error hook. srvr's own hook, which records the error for the request's access record, SHALL always run, and the consumer's hook SHALL run after it. A panic in the consumer's hook SHALL NOT affect the response.

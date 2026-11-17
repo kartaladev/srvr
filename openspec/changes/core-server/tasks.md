@@ -290,6 +290,29 @@ Findings of the `core-server` verification (C1, C2, W1-W4, S1-S6). Reproductions
 - [x] 9.10 Godoc and log schema document: `AccessLogConfig` and its options (failed records are never suppressed), `LogWriteErrors` (process-wide), `WithListener` (ownership), `recordFailure` (W3 rule), `LOGGING.md` levels and suppression; verify `go doc` shows them and `TestLogSchemaGolden` still passes with `srvr.log.schema` unchanged (no key renamed or removed; a failure's level is not a key)
 - [x] 9.11 Verify the slice: confirm the log guard, truncation, access level and suppression, listener close and stop-sequence branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
 
+## 10. Slice: second verification fixes
+
+Findings of the second `core-server` verification (C1, W1, S1, S2) and the two earlier choices it asked to state explicitly (a late 4xx is logged at the higher of the two levels; `Shutdown` before `Start` closes the `WithListener` listener). Rows that reproduce a defect are the RED tests; rows that pin behaviour already correct are characterization rows confirmed by a mutation check (break the code, see the row fail, restore).
+
+- [ ] 10.1 Hostile hook error values never break the stop sequence (server-lifecycle / Scenario: Faulty hooks, the typed-nil and `Error()`-panics rows and the later-`Shutdown` assertion; Scenario: Hostile hook errors when Shutdown is called before Start, all rows); verify `go test -race -run 'TestFaultyHooks|TestHostileHookErrors'` passes
+  - RED: register an `AfterDrain` hook returning a typed-nil error or an error whose `Error()` panics, call `Shutdown` before `Start` under a `recover`, then call `Shutdown` again with a deadline; fails because `runHooks` (`hooks.go`) calls `err.Error()` unguarded in the caller's goroutine, so the first call panics, `finish` never runs and the second call never returns
+  - GREEN: read the hook error's text through the guarded `errorText`
+  - REFACTOR: /simplify
+- [ ] 10.2 Audit the core module for other unguarded `Error()` calls on consumer-supplied errors and guard each with a test; the known one is `fail` (`server.go`), which logs `err.Error()` of a `Start` context's `Err()` (server-lifecycle / Scenario: Start fails, the two hostile `Err()` rows); verify `go test -race -run TestStart_Fails` passes
+  - RED: a `Start` context that is done and whose `Err()` returns a typed-nil error or an error whose `Error()` panics; fails because `Start` panics
+  - GREEN: log the text through `errorText`
+  - REFACTOR: /simplify
+- [ ] 10.3 The access record reports the final status (structured-logging / Scenario: Access record content, the `103` row); verify `go test -race -run 'TestAccessRecord$|TestResponseRecorder'` passes
+  - RED: a handler that calls `w.WriteHeader(103)` and writes nothing else; fails because `responseRecorder.statusCode` (`access.go`) returns the informational status
+  - GREEN: report `200` when no final (`>= 200`) header was written
+  - REFACTOR: /simplify
+- [ ] 10.4 Late 4xx level row (error-responses / Scenario: Late error, the `500` then `prblm.ErrConflict` row); verify `go test -race -run TestLateError` passes
+  - Characterization: add the row; confirm it fails when the level stops taking the higher of the two (mutation), then restore
+- [ ] 10.5 Listener ownership starts when `New` returns (server-lifecycle / Scenario: A passed listener is owned by the server, the failed-`New` row); verify `go test -race -run TestListenerOwnership` passes
+  - Characterization: add the row; confirm it fails if `New` closes the listener on failure (mutation), then restore
+- [ ] 10.6 Godoc: `WithListener` (ownership starts once `New` returns a server; a failed `New` leaves the listener with the caller; `ErrServerClosed` does not close it because it was closed when the server closed; `Shutdown` before `Start` closes it), `WithShutdownHook` (typed-nil and panicking hook errors count as failures); `LOGGING.md` if it describes the status or late-failure levels; verify `go doc` shows them and `TestLogSchemaGolden` still passes with `srvr.log.schema` unchanged
+- [ ] 10.7 Verify the slice: confirm the hook, `fail` and recorder branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.

@@ -154,7 +154,7 @@ Every record written with a request's context SHALL carry `trace_id` and `span_i
 | `slog.Default().WithGroup("db")` after `WithSetDefaultLogger()` | `"db":{"k":"v"}` |
 
 ### Requirement: One access record per request
-The server SHALL write exactly one access record per request when the response finishes or is aborted, with `msg` `http.request.completed` or, when an error was returned, a panic recovered, the request aborted or no route matched, `http.request.failed`. Its level SHALL be `INFO` below 400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. Skip paths and disabling the access log SHALL suppress only `http.request.completed` records with status below 500.
+The server SHALL write exactly one access record per request when the response finishes or is aborted, with `msg` `http.request.completed` or, when an error was returned, a panic recovered, the request aborted or no route matched, `http.request.failed`. Its status SHALL be the final one sent. Its level SHALL be `INFO` below 400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. Skip paths and disabling the access log SHALL suppress only `http.request.completed` records with status below 500.
 
 #### Scenario: Access record content
 - **Given** route `GET /users/{id}` whose handler `<behaviour>`
@@ -167,6 +167,7 @@ The server SHALL write exactly one access record per request when the response f
 |-----------|-----|-------|-------|--------|
 | writes `200` | `http.request.completed` | `INFO` | `/users/{id}` | `200` |
 | writes `304` | `http.request.completed` | `INFO` | `/users/{id}` | `304` |
+| writes only `103` Early Hints and nothing else | `http.request.completed` | `INFO` | `/users/{id}` | `200` (the status the client receives; an informational status is never reported) |
 | writes `404` directly and returns `nil` | `http.request.completed` | `WARN` | `/users/{id}` | `404` |
 | returns `prblm.ErrNotFound` | `http.request.failed` | `WARN` | `/users/{id}` | `404` |
 | returns `errors.New("boom")` | `http.request.failed` | `ERROR` | `/users/{id}` | `500` |
@@ -216,7 +217,7 @@ The server SHALL write exactly one access record per request when the response f
 | `WithAccessLogDisabled()` then `WithAccessLogConfig(AccessLogConfig{})` | `GET /ping` | written |
 
 ### Requirement: Failed-request records are never suppressed
-An `http.request.failed` record SHALL be written whatever the access log configuration. A recovered panic SHALL be logged at `ERROR`, and an error that arrived after the response started at the higher of the level of the status sent and of the status the error would have been answered with.
+An `http.request.failed` record SHALL be written whatever the access log configuration. A recovered panic SHALL be logged at `ERROR`, and an error that arrived after the response started at the higher of the level of the status sent and of the status the error would have been answered with: a late 4xx error after a `2xx` is `WARN`, after a `5xx` it is `ERROR`.
 
 #### Scenario: Failures while the access log is suppressed
 - **Given** a server configured with `<config>`
