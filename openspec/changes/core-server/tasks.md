@@ -10,26 +10,26 @@
 
 ## 2. Slice: one route served with problem errors
 
-- [ ] 2.1 Create module `github.com/kartaladev/srvr` (go 1.27) with `go.work`, `.golangci.yml`, `Makefile` targets (`test`, `lint`, `cover`) and a CI workflow running `go vet`, `golangci-lint`, `go test -race` with `GOWORK=off`; verify `make test lint` passes on an empty package with a `doc.go`
-- [ ] 2.2 Add prblm as the only third-party dependency; verify `go list -m all` shows only the standard library toolchain modules, srvr and prblm
-- [ ] 2.3 Register a configurer and serve its route (route-registration / Scenario: Registration outcome, accepted rows; Scenario: Configure order); verify `go test -race -run TestRegister` passes
+- [x] 2.1 Create module `github.com/kartaladev/srvr` (go 1.27) with `go.work`, `.golangci.yml`, `Makefile` targets (`test`, `lint`, `cover`) and a CI workflow running `go vet`, `golangci-lint`, `go test -race` with `GOWORK=off`; verify `make test lint` passes on an empty package with a `doc.go`
+- [x] 2.2 Add prblm as the only third-party dependency; verify `go list -m all` shows only the standard library toolchain modules, srvr and prblm
+- [x] 2.3 Register a configurer and serve its route (route-registration / Scenario: Registration outcome, accepted rows; Scenario: Configure order); verify `go test -race -run TestRegister` passes
   - RED: `TestRegister` table with the accepted rows and the configure-order row; fails because `New`, `Register`, `RouteConfigurer` do not exist
   - GREEN: `New`, generic `RouteConfigurer[G]`/`RouteRegistrar[G]`, `Register` storing configurers, `*Group` with `GET`/`POST`/`PUT`/`PATCH`/`DELETE`/`Handle`
   - REFACTOR: Extract Function for method helpers delegating to `Handle`, then /simplify
-- [ ] 2.4 Start blocks and stops by context or Shutdown (server-lifecycle / Scenario: Start and stop by context); verify `go test -race -run TestStart_Stop` passes
+- [x] 2.4 Start blocks and stops by context or Shutdown (server-lifecycle / Scenario: Start and stop by context); verify `go test -race -run TestStart_Stop` passes
   - RED: `TestStart_Stop` with the three trigger rows using an in-flight request; fails because `Start` does not block/drain
   - GREEN: minimal state, `http.Server` with listener, `Start` waiting on `ctx.Done()` then `Shutdown`
   - REFACTOR: Extract Method for the drain step, then /simplify
-- [ ] 2.5 Readiness and bound address (server-lifecycle / Scenario: Ephemeral port; Scenario: Address before readiness); verify `go test -race -run TestReady` passes
+- [x] 2.5 Readiness and bound address (server-lifecycle / Scenario: Ephemeral port; Scenario: Address before readiness); verify `go test -race -run TestReady` passes
   - RED: `TestReady` and `TestAddr_BeforeReady` with all rows; fails because `Ready`/`Addr` do not exist
   - GREEN: close `Ready` after bind, store listener address
   - REFACTOR: Encapsulate Variable for the state fields, then /simplify
-- [ ] 2.6 Handler results and errors become problems (route-registration / Scenario: Handler result; error-responses / Scenario: Error to problem, mapped and unmapped rows); verify `go test -race -run 'TestHandlerResult|TestErrorToProblem'` passes
+- [x] 2.6 Handler results and errors become problems (route-registration / Scenario: Handler result; error-responses / Scenario: Error to problem, mapped and unmapped rows); verify `go test -race -run 'TestHandlerResult|TestErrorToProblem'` passes
   - RED: both tables with every row including XML and `text/html` negotiation; fails because handlers are not wrapped
   - GREEN: one `prblm.Handler` per server, routes installed through `Wrap`
   - REFACTOR: Replace Temp with Query for the handler construction, then /simplify
-- [ ] 2.7 Godoc for `Server`, `RouteConfigurer`, `RouteRegistrar`, `Group` and a runnable `Example` (net/http hello world with a problem error); verify `go test -run Example` passes and `go doc` shows the defaults
-- [ ] 2.8 Verify slice end to end with an httptest round trip (register, start, request, problem, shutdown), confirm dispatch, `Wrap` and Start/Shutdown are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(core): serve routes with RFC 9457 errors on net/http`
+- [x] 2.7 Godoc for `Server`, `RouteConfigurer`, `RouteRegistrar`, `Group` and a runnable `Example` (net/http hello world with a problem error); verify `go test -run Example` passes and `go doc` shows the defaults
+- [x] 2.8 Verify slice end to end with an httptest round trip (register, start, request, problem, shutdown), confirm dispatch, `Wrap` and Start/Shutdown are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(core): serve routes with RFC 9457 errors on net/http`
 
 ## 3. Slice: lifecycle hardening and limits
 
