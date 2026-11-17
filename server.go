@@ -59,13 +59,19 @@ func New(opts ...Option) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{
+	srv := &Server{
 		settings: s,
 		cfg:      s.resolve(),
-		problems: prblm.NewHandler(),
 		ready:    make(chan struct{}),
 		stopped:  make(chan struct{}),
-	}, nil
+	}
+
+	srv.problems, err = newProblems(s.problemOptions, prblm.OnError(srv.onError))
+	if err != nil {
+		return nil, err
+	}
+
+	return srv, nil
 }
 
 // Register adds conf to the configurers run when the server starts. Each
@@ -238,9 +244,9 @@ func (s *Server) configure(configurers []RouteConfigurer[*Group]) (http.Handler,
 }
 
 // pipeline wraps the router in the per-request stages, outermost first:
-// body limit, panic recovery, router.
-func (s *Server) pipeline(router http.Handler) http.Handler {
-	return limitBody(s.cfg.MaxRequestBodyBytes, s.problems.Recover(router))
+// body limit, panic recovery, unmatched-route answers, router.
+func (s *Server) pipeline(mux *http.ServeMux) http.Handler {
+	return limitBody(s.cfg.MaxRequestBodyBytes, s.problems.Recover(s.answerUnmatched(mux)))
 }
 
 // listen returns the configured listener or binds the configured address.

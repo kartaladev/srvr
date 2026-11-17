@@ -119,3 +119,39 @@ func ExampleGroup() {
 	// Output:
 	// 200 user 42 1 v1
 }
+
+func ExampleWithErrorHook() {
+	srv, err := srvr.New(
+		srvr.WithAddr("127.0.0.1:0"),
+		// Not prblm.OnError: srvr owns prblm's single hook.
+		srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
+			fmt.Println("answered", p.Status, "for:", err)
+		}),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	if err := srv.Register(Hello{}); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = srv.Start(ctx) }()
+	<-srv.Ready()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/missing", nil)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
+
+	// Output:
+	// answered 404 for: prblm: not found
+}

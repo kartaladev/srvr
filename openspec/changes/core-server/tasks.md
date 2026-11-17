@@ -110,24 +110,24 @@
 
 ## 5. Slice: unmatched routes, panics and error extension
 
-- [ ] 5.1 404 and 405 problems with `Allow` (error-responses / Scenario: No route or wrong method, all rows); verify `go test -race -run TestUnmatched` passes
+- [x] 5.1 404 and 405 problems with `Allow` (error-responses / Scenario: No route or wrong method, all rows); verify `go test -race -run TestUnmatched` passes
   - RED: table; fails because ServeMux writes plain text
   - GREEN: `mux.Handler(r)` empty-pattern interception with a recording writer; convert only 404/405
   - REFACTOR: Extract Class for the recording writer, then /simplify
-- [ ] 5.2 Recovered panics are safe problems (error-responses / Scenario: Recovered panic, all rows including `panic(nil)` and `http.ErrAbortHandler`); verify `go test -race -run TestPanicRecovery` passes
+- [x] 5.2 Recovered panics are safe problems (error-responses / Scenario: Recovered panic, all rows including `panic(nil)` and `http.ErrAbortHandler`); verify `go test -race -run TestPanicRecovery` passes
   - RED: table; fails because panics are not recovered or leak the value
   - GREEN: `prblm.Recover` outermost around the router
   - REFACTOR: Inline unnecessary wrappers, then /simplify
-- [ ] 5.3 Late errors are not rendered (error-responses / Scenario: Late error, all rows); verify `go test -race -run TestLateError` passes
+- [x] 5.3 Late errors are not rendered (error-responses / Scenario: Late error, all rows); verify `go test -race -run TestLateError` passes
   - RED: table asserting the client response; fails because a second write is attempted or commit is not tracked (the `srvr.response.committed` access-record assertion is added in 6.10, when access records exist)
   - GREEN: commit tracking on the response writer, expose committed state for logging
   - REFACTOR: Combine writer wrappers into one (Combine Functions into Class), then /simplify
-- [ ] 5.4 Consumer prblm options and error hook (error-responses / Scenario: Consumer mapper and hook, all rows); verify `go test -race -run TestErrorExtension` passes
+- [x] 5.4 Consumer prblm options and error hook (error-responses / Scenario: Consumer mapper and hook, all rows); verify `go test -race -run TestErrorExtension` passes
   - RED: table including panicking hook and nil hook, asserting the response (the "access record is still written" assertion is added in 6.10); fails because options are not passed through
   - GREEN: `WithProblemOptions`, `WithErrorHook`, srvr `OnError` appended last, consumer hook guarded by recover, invalid prblm options recovered into `ErrConfig`
   - REFACTOR: Separate Query from Modifier in the hook composition, then /simplify
-- [ ] 5.5 Godoc on why `prblm.OnError` must not be passed directly and an `Example` with `WithErrorHook`; add the godoc link to the existing `unassigned` prblm carry-over in `notes.md` (composable `OnError`, exported status-only sentinel) and attach a failing test as its evidence; verify `go test -run Example` passes and the note cites the test
-- [ ] 5.6 Verify slice end to end, confirm interception, recovery and commit branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): render unmatched routes and panics as problems`
+- [x] 5.5 Godoc on why `prblm.OnError` must not be passed directly and an `Example` with `WithErrorHook`; add the godoc link to the existing `unassigned` prblm carry-over in `notes.md` (composable `OnError`, exported status-only sentinel) and attach a failing test as its evidence; verify `go test -run Example` passes and the note cites the test
+- [x] 5.6 Verify slice end to end, confirm interception, recovery and commit branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): render unmatched routes and panics as problems`
 
 ## 6. Slice: trace context and access log
 

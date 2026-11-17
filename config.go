@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/kartaladev/prblm"
 )
 
 // ErrConfig is wrapped by every error New returns for invalid
@@ -45,8 +47,10 @@ type Config struct {
 type settings struct {
 	Config
 
-	listener net.Listener
-	hooks    []hook
+	listener       net.Listener
+	hooks          []hook
+	problemOptions []prblm.Option
+	errorHook      ErrorHook
 	// errs collects mistakes options detect while they are applied.
 	errs []error
 }

@@ -28,7 +28,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Status:** open
 - **Target:** unassigned
 - **Context:** One upstream issue on kartaladev/prblm covering two asks. (1) `prblm.OnError` is a single slot (the last option wins), so srvr must own it and offer `WithErrorHook`; a consumer passing `prblm.OnError` through `WithProblemOptions` is silently overridden. (2) `ginprblm` reports `c.AbortWithStatus(4xx)` to `OnError` with the unexported `errStatusOnly`, so callers cannot tell it apart with `errors.Is`; the gin engine therefore classifies failures from `c.Errors` (gin-and-fiber-engines notes "ginprblm reports status-only aborts to OnError with an unexported error" is merged into this entry). Asks: allow several `OnError` hooks run in order, and export `ginprblm.ErrStatusOnly`.
-- **Evidence:** unverified for (1) as a running test until task 5.5 adds one; (2) probe `probes/gin/hook_test.go` `TestHookOnStatusOnly` (`go test -count=1 -v -run TestHookOnStatusOnly .`): `OnError called: err="ginprblm: response aborted with an error status and no error" type=*prblm.statusError`.
+- **Evidence:** (1) `upstream_test.go` `TestUpstream_PrblmOnErrorComposes` (`SRVR_UPSTREAM_TESTS=1 go test -count=1 -run TestUpstream ./...`, prblm v0.1.0): `OnError hooks called: first=false second=true, want both`; it is skipped without the variable so CI stays green, and srvr documents the workaround on `WithProblemOptions` and `WithErrorHook` (godoc, `ExampleWithErrorHook`). Earlier: unverified for (1) as a running test until task 5.5 adds one; (2) probe `probes/gin/hook_test.go` `TestHookOnStatusOnly` (`go test -count=1 -v -run TestHookOnStatusOnly .`): `OnError called: err="ginprblm: response aborted with an error status and no error" type=*prblm.statusError`.
 - **Suggested action:** Open one issue on kartaladev/prblm with both asks; when released, drop srvr's single-slot workaround note and switch the gin classification to `errors.Is(err, ginprblm.ErrStatusOnly)`.
 
 ### Planning audit 2 2026-11-17: decisions A1-A4 and audit fixes applied
@@ -44,3 +44,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Design D9 gives the `AfterDrain` phase one fresh context bounded by `ShutdownHookTimeout`, shared by all its hooks, and srvr stops waiting at the budget. After a hook that blocks past the budget, every later `AfterDrain` hook is still called, but with an already-done context, and srvr does not wait for it; a flush that checks its context then fails immediately. The Faulty hooks row "the second hook ran" holds (the hook is called), but the second hook can finish after `Start` returned. Per-hook budgets would avoid this but make the total stop time `n x ShutdownHookTimeout`, which breaks the "15s + 5s fits a 30s grace period" default.
 - **Evidence:** `hooks_faulty_test.go` `TestShutdownHooks_Faulty/blocks_and_ignores_its_context` failed 5 of 60 runs (`go test -race -count=20 ./...`, three runs) with `the second hook did not run` when it asserted completion right after `Start` returned; it now waits for the call (`eventually`), matching D9.
 - **Suggested action:** Owner decides whether to keep one shared phase budget (documented on `WithShutdownHook`) or give each hook a slice of it; no change needed for core-server as designed.
+
+### Shutdown waits up to 5s for a connection that never sent a request
+- **Status:** open
+- **Target:** unassigned
+- **Context:** `http.Server.Shutdown` treats a connection in `StateNew` (accepted, no request read yet) as active for 5 seconds before closing it as idle. A client that opens a connection and sends nothing (a pre-connecting proxy, a speculative dial of `http.Transport` after a response body was closed unread) therefore delays every graceful drain by up to 5s, inside `ShutdownTimeout`. srvr inherits this from net/http; it is not specified anywhere in core-server.
+- **Evidence:** unverified as a srvr defect (stdlib behaviour, `net/http/server.go` `closeIdleConns`); observed while writing tests: `TestUnmatched_Redirect` took 6.42s and `TestPanicRecovery/nil` 5.89s while their clients closed response bodies unread, and 0.00s once the bodies were read (`go test -count=1 -v ./...`).
+- **Suggested action:** Owner decides whether to document it on `Config.ShutdownTimeout` (and the Kubernetes guidance) or to close `StateNew` connections at the start of the drain via `http.Server.ConnState` tracking; add a scenario either way.
+
+### A panicking consumer error hook is contained silently
+- **Status:** open
+- **Target:** core-server
+- **Context:** `WithErrorHook`'s hook runs under `recover` in srvr's prblm `OnError` (design D4), and the panic is discarded, so a broken consumer hook never shows up in triage. No spec row asks for a record of it.
+- **Evidence:** unverified as a defect: behaviour per D4 (`problems.go` `onError`); raised by the slice 5 /simplify altitude review.
+- **Suggested action:** When per-request state and logging land (slices 6-7), write a `WARN` `srvr.problem.note` record for a panicking consumer hook, or record the decision not to.
