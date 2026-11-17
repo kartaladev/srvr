@@ -27,6 +27,7 @@ Defines how the Gin engine module serves consumer routes with srvr's lifecycle, 
 | a typed-nil pointer | an error wrapping `srvr.ErrRouteConfig` | (none) |
 | panics with `boom` in `Configure` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` containing `boom` and the configurer type |
 | registers `GET /users/:id` and `GET /users/:name` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/users/:name` |
+| registers `GET /x` with handler `nil` | `nil` | returns an error wrapping `srvr.ErrRouteConfig` naming `/x` and the configurer type |
 
 ### Requirement: Gin handler errors become problems
 An error recorded with `c.Error(err)` or `c.AbortWithError(code, err)` SHALL be rendered by ginprblm as an RFC 9457 problem with the `trace_id` member, using the server's prblm options; unmapped errors SHALL become `500` problems without detail.

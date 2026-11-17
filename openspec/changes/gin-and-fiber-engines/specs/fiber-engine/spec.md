@@ -169,6 +169,7 @@ srvr SHALL derive Fiber's `ErrorHandler`, `BodyLimit` and timeouts from srvr's c
 | `WithFiberConfig(func(c *fiber.Config){ c.ErrorHandler = nil })` | errors still render as problems |
 | `WithFiberConfig(func(c *fiber.Config){ c.Immutable = true })` | `Immutable` is `true` |
 | `WithFiberConfig(nil)` | construction returns an error wrapping `srvr.ErrConfig` |
+| `WithFiberConfig(func(c *fiber.Config){ panic("boom") })` | construction returns an error wrapping `srvr.ErrConfig` containing `boom` |
 
 ### Requirement: Fiber protocol rejections are logged with their problem
 For a request fasthttp rejects before routing (`408`, `413`, `431`), fiber replays srvr's middleware with the status already set and renders through its error handler afterwards. The access stage SHALL detect this by a status of 400 or more set before the chain ran, SHALL NOT render the error itself, and SHALL write one `http.request.failed` record whose `problem` group carries that status and its standard title.

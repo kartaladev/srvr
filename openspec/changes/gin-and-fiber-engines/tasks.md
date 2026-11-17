@@ -2,13 +2,15 @@
 
 ## 1. Consolidation: refresh plan against merged changes
 
-- [ ] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`); verify they are named in the completion note
-- [ ] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `gin-and-fiber-engines` or `unassigned` (adopt, defer or close); verify none is left undecided
-- [ ] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code: check every `core-server` assumption listed in proposal.md - Impact (error names, config struct names, event names, attribute keys, `trace_id` member, `Register` signature, record builder inputs) with gopls, and re-check gin, fiber, ginprblm and fiberprblm released versions and APIs; verify `openspec validate gin-and-fiber-engines --strict` passes
-- [ ] 1.4 Record the consolidation outcome at the top of `openspec/changes/gin-and-fiber-engines/notes.md`; verify the file lists what was refreshed or states none was needed
-- [ ] 1.5 Commit the consolidation as `docs(openspec): consolidate gin-and-fiber-engines against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`); verify they are named in the completion note
+- [x] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `gin-and-fiber-engines` or `unassigned` (adopt, defer or close); verify none is left undecided
+- [x] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code: check every `core-server` assumption listed in proposal.md - Impact (error names, config struct names, event names, attribute keys, `trace_id` member, `Register` signature, record builder inputs) with gopls, and re-check gin, fiber, ginprblm and fiberprblm released versions and APIs; verify `openspec validate gin-and-fiber-engines --strict` passes
+- [x] 1.4 Record the consolidation outcome at the top of `openspec/changes/gin-and-fiber-engines/notes.md`; verify the file lists what was refreshed or states none was needed
+- [x] 1.5 Commit the consolidation as `docs(openspec): consolidate gin-and-fiber-engines against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: engine-neutral pieces extracted, net/http unchanged
+
+Blocked until the owner decides notes.md "Where srvr's public configuration types live once engine exists" (design D1, Layering); every task below depends on where `Option`, the config structs, `Trace` and the sentinel errors are defined.
 
 - [ ] 2.1 Shared configuration model (engine-support / Scenario: Same validation on every engine, `net/http` rows); verify `go test -race ./...` in the core passes unchanged and `go test -race -run TestEngineConfig ./engine/...` passes
   - RED: `TestEngineConfig` in package `engine` with the `net/http` rows driving `engine.ResolveConfig`; fails because the package does not exist
@@ -17,8 +19,9 @@
 - [ ] 2.2 Shared lifecycle state machine (engine-support / Scenario: Lifecycle misuse on every engine, as rows run against net/http); verify `go test -race -count=20 -run TestEngineLifecycle ./engine/...` passes
   - RED: `TestEngineLifecycle` with a fake serve/drain adapter covering every state row; fails because the state machine is internal
   - GREEN: `engine.Lifecycle` with `Serve` and `Drain` callbacks, net/http engine uses it; the core's shutdown-hook runner (`BeforeDrain`/`AfterDrain`, once per server, `Start`-failure rule) moves into it unchanged, so the core's hook rows stay green
+  - Also make `Start`'s "Serve returned because the stop closed the listener" branch deterministic through the fake adapter and cover it (adopted core-server carry-over)
   - REFACTOR: Extract Class for the adapter seam, then /simplify
-- [ ] 2.3 Shared request primitives (trace context middleware core, access and triage record builders, logging pipeline) moved to `engine` without behaviour change; verify the `core-server` suite, the log schema golden test and `go test -race ./...` pass
+- [ ] 2.3 Shared request primitives (trace context middleware core, access and triage record builders, logging pipeline) and the design D10 guards moved to `engine` without behaviour change, with failure classification reading panics through `errors.As` to `*prblm.PanicError`; verify the `core-server` suite, the log schema golden test and `go test -race ./...` pass
   - RED: tests in `engine` for each moved builder copied from core tests first (fail: symbols missing)
   - GREEN: move code, core uses `engine`
   - REFACTOR: Inline Function for core wrappers left empty, then /simplify
@@ -33,7 +36,7 @@
 
 - [ ] 3.1 Module setup (first task of the first slice that needs it): create `github.com/kartaladev/srvr/ginsrvr` (go 1.27, gin v1.12.0, ginprblm, srvr core), add to `go.work`, CI job with `GOWORK=off`; verify `make test lint` passes for the empty module
 - [ ] 3.2 Gin registration and start (gin-engine / Scenario: Gin registration, accepted and rejected rows); verify `go test -race -run TestGinRegister` passes
-  - RED: table including nil, typed-nil, panicking configurer and conflicting `:id`/`:name`; fails because `ginsrvr` does not exist
+  - RED: table including nil, typed-nil, panicking configurer, conflicting `:id`/`:name` and a route with a `nil` handler (detected from `e.Routes()` after configure, gin accepts it); fails because `ginsrvr` does not exist
   - GREEN: `ginsrvr.New`, `Register`, configure phase under recover on a `gin.New()` engine, served by `engine.Lifecycle`
   - REFACTOR: Extract Function for configurer invocation shared with core where identical, then /simplify
 - [ ] 3.3 Gin lifecycle misuse and shutdown hooks (engine-support / Scenario: Lifecycle misuse on every engine, `gin` rows; Scenario: Hooks per engine and stop path, `gin` rows); verify `go test -race -run 'TestGinLifecycle|TestGinShutdownHooks'` passes
@@ -81,7 +84,11 @@
   - GREEN: delegate to `engine.ResolveConfig`
   - REFACTOR: /simplify
 - [ ] 3.14 Godoc (including the global gin mode and `GIN_MODE=release`) and a runnable `Example` with a `RegistrationHandler` whose `Register` method is mounted on `*gin.RouterGroup` (as in gin-engine / Scenario: Gin registration); verify `go test -run Example` passes
-- [ ] 3.15 Verify slice end to end with an httptest round trip (register, start, problem with `trace_id`, one access record, shutdown); confirm gin pipeline branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `ginsrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(ginsrvr): serve gin routes with srvr lifecycle, problems and logs`
+- [ ] 3.15 Gin consumer faults (engine-support / Scenario: Consumer faults on every engine, `gin` rows except the route-check row, which task 6.2 covers; Scenario: Hooks per engine and stop path, the `gin` re-entrant row); verify `go test -race -run 'TestGinConsumerFaults|TestGinShutdownHooks'` passes
+  - RED: one table over httptest and real listeners; fails on any row whose guard is not wired (for example an unguarded `c.Errors` entry or a panic logged as a returned error)
+  - GREEN: wire the `engine` guards (design D10): `c.Errors` guarded before ginprblm resolves them, listener through `guardedListener`, no lock held across consumer calls
+  - REFACTOR: /simplify
+- [ ] 3.16 Verify slice end to end with an httptest round trip (register, start, problem with `trace_id`, one access record, shutdown); confirm gin pipeline branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `ginsrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(ginsrvr): serve gin routes with srvr lifecycle, problems and logs`
 
 ## 4. Slice: fiber engine end to end
 
@@ -135,7 +142,11 @@
   - GREEN: the access stage reads the status before calling `c.Next()`; a status of 400 or more marks a replay - no rendering, `problem` group from that status and `http.StatusText`, `OnError` without request state skips
   - REFACTOR: Extract Function for the replay detection shared with the unmatched classification, then /simplify
 - [ ] 4.14 Godoc (pooled context, use `c.Context()` for long work, disconnect limitation, header-limit cap, no header timeout, plain `501` for unknown methods, `http.ErrAbortHandler` recovered as an ordinary panic, protocol rejections logged from the pre-set status, path-scoped `Use` invisible to route checks) and a runnable `Example` on `fiber.Router`; verify `go test -run Example` passes
-- [ ] 4.15 Verify slice end to end over a real listener (register, start, problem with `trace_id`, one access record, forced drain); confirm fiber pipeline, copy and drain branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `fibersrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(fibersrvr): serve fiber v3 routes with srvr lifecycle, problems and logs`
+- [ ] 4.15 Fiber consumer faults (engine-support / Scenario: Consumer faults on every engine, `fiber` rows; Scenario: Hooks per engine and stop path, the `fiber` re-entrant row; fiber-engine / Scenario: Fiber config hook, the panicking hook row); verify `go test -race -run 'TestFiberConsumerFaults|TestFiberConfigHook|TestFiberShutdownHooks'` passes
+  - RED: one table, handler rows through `app.Test`, listener rows over a real listener; fails on any row whose guard is not wired (for example a cyclic chain reaching `fiberprblm.ErrorHandler`)
+  - GREEN: wire the `engine` guards (design D10): `guardChain` before the error handler, `guardedListener` under the tracking listener, `WithFiberConfig` under recover with `valueText`
+  - REFACTOR: /simplify
+- [ ] 4.16 Verify slice end to end over a real listener (register, start, problem with `trace_id`, one access record, forced drain); confirm fiber pipeline, copy and drain branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `fibersrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(fibersrvr): serve fiber v3 routes with srvr lifecycle, problems and logs`
 
 ## 5. Slice: cross-engine parity
 
@@ -162,7 +173,7 @@
   - GREEN: `engine.Route{Method, Pattern, Configurer}` and `engine.Routes`; the net/http registrar records patterns, gin and fiber diff `e.Routes()` / `app.GetRoutes(true)` around each `Configure`; exclude `Use` entries (path-scoped too) and fiber's implicit `HEAD`; collapse a pattern one configurer registered for the engine's whole any-method set into one entry with `Method` `""`
   - REFACTOR: Extract Function for the before/after diff shared by gin and fiber, then /simplify
 - [ ] 6.2 Route checks fail `Start` (engine-support / Scenario: Route check outcomes, all rows; Scenario: Hooks per engine and stop path, the fiber route-check row); verify `go test -race -run 'TestRouteCheck|TestFiberShutdownHooks'` passes in each engine module
-  - RED: table including error, panic, nil, mutating, context-honouring and context-ignoring blocking check rows; fails because `srvr.WithRouteCheck` does not exist
+  - RED: table including error, panic, nil, mutating, context-honouring and context-ignoring blocking check rows, and the engine-support "Consumer faults on every engine" route-check row (hostile error text, re-entrant `Addr`); fails because `srvr.WithRouteCheck` does not exist
   - GREEN: `srvr.WithRouteCheck(func(context.Context, engine.Routes) error)` runs checks in order under recover after configure and before bind, each with `Start`'s context and its own `slices.Clone` of the listing; `Start` returns the context error when it ends first and abandons the check; fiber duplicate detection becomes the first internal check
   - REFACTOR: Replace the fiber-specific duplicate call with the check mechanism (Substitute Algorithm), then /simplify
 - [ ] 6.3 Godoc on `engine.Route`, `srvr.WithRouteCheck` and a runnable `Example` asserting a route table at startup; verify `go test -run Example` passes
