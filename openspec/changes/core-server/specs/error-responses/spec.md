@@ -130,3 +130,5 @@ The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace,
 | `WithErrorHook(fn)` | `prblm.ErrNotFound` | `404` | receives the error and a problem with status `404` |
 | `WithErrorHook(fn)` where `fn` panics | `prblm.ErrNotFound` | `404` | panics and the access record is still written |
 | `WithErrorHook(nil)` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` |
+| `WithProblemOptions(prblm.WithNamespace("not a uri"))` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` naming `ProblemOptions` |
+| `WithProblemOptions(opt)` where `opt` panics with a value whose `Error()` panics with itself | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` naming `ProblemOptions`, without panicking |

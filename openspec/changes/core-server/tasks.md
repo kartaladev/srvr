@@ -302,6 +302,7 @@ Findings of the second `core-server` verification (C1, W1, S1, S2) and the two e
   - RED: a `Start` context that is done and whose `Err()` returns a typed-nil error or an error whose `Error()` panics; fails because `Start` panics
   - GREEN: log the text through `errorText`
   - Audit result: no other unguarded `Error()` on a consumer-supplied error in the core module (`config.go` `validate` formats a `net.SplitHostPort` error; `triage.go` `valueText` calls `Error()` under `recover`); a probe of a handler returning a typed-nil or `Error()`-panicking error answered `500` with a failed record, so the handler path is not affected (suspicion not confirmed, probe not kept)
+  - Audit correction (third verification): this audit looked only for direct `Error()` calls and missed `fmt` verbs (`%v`, `%w`) and `fmt.Sprint` applied to consumer values, which call `Error()`/`String()` and are guarded by `fmt` only one level deep (a value whose `Error()` panics with itself makes `fmt` panic again): `hooks.go` `runHooks` (`%w` of the hook error) and `runHook` (`%v` of the panic value, `%w` of the hook context's `Err()`), `group.go` `safeConfigure`, `problems.go` `newProblems` and `config.go` `validateListener`. Task 12.8 repeats the audit for the whole class
   - REFACTOR: /simplify
 - [x] 10.3 The access record reports the final status (structured-logging / Scenario: Access record content, the `103` row); verify `go test -race -run 'TestAccessRecord$|TestResponseRecorder'` passes
   - RED: a handler that calls `w.WriteHeader(103)` and writes nothing else; fails because `responseRecorder.statusCode` (`access.go`) returns the informational status
@@ -326,6 +327,43 @@ Owner decision (notes.md "Lifecycle records do not pass exception.message throug
   - RED: the 5000-byte hook error row; fails before 11.1's GREEN because `MaxAttrBytes` (1024) cuts the plain string attribute (if 11.1's GREEN already made it pass, record the row as characterization with a mutation check: replace the helper call with the plain attribute, see the row fail, restore)
 - [x] 11.3 Godoc and log schema document: `WithErrorRedactor` names the lifecycle records; `LOGGING.md` lifecycle section (written with the plan); verify `go doc` shows it and `TestLogSchemaGolden` and `TestLogSchemaGolden_Lifecycle` still pass with `srvr.log.schema` unchanged
 - [x] 11.4 Verify the slice: confirm the helper and its lifecycle call sites are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run the full suite without `-race` about 10 times to look for the unreproduced failure (notes.md "One unreproduced failure of the core test suite"), run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): redact and cap lifecycle error records`
+
+## 12. Slice: third verification fixes
+
+Findings of the third `core-server` verification (C1, W1, S1 and one unconfirmed documentation point). Owner decisions given with the findings: a listener whose `Addr()` returns nil or panics fails `Start` through `fail` and is closed under the ownership rules, never a silent fallback (AGENTS rule 7); no srvr lock is held across a call into consumer code. Each RED step recreates a reproduction from the verification or from this plan's own probes (probe sources kept in the session scratchpad, not in the repository).
+
+- [ ] 12.1 A typed-nil listener and an unreadable listener address fail construction (server-lifecycle / Scenario: Valid and invalid configuration, the typed-nil `*net.TCPListener` rows and the panicking-`Addr()` row); verify `go test -race -run TestNew_Config` passes
+  - RED: add the three rows; the typed-nil row fails because `WithListener` (`config.go`) checks only `ln == nil` and `New` returns a server; the two rows combined with `Addr` fail because `validateListener` formats `s.listener.Addr()` and `New` panics
+  - GREEN: `WithListener` rejects `isNil(ln)` naming `Listener` and does not keep the listener; `validateListener` names the listener through the guarded address helper of 12.2 (its type when the address cannot be read)
+  - REFACTOR: /simplify
+- [ ] 12.2 A listener without a usable address fails `Start` without hanging the server (server-lifecycle / Scenario: A listener without a usable address, all rows); verify `go test -race -run TestListener_UnusableAddress` passes
+  - RED: table over `Addr()` returning nil, a typed-nil `*net.TCPAddr`, panicking, and an address whose `String()` panics with a value whose `Error()` panics; each row bounds every call with a deadline; fails because `serve` (`server.go`) calls `ln.Addr().String()` while holding `s.mu` with no deferred unlock, so `Start` panics and `Shutdown`, `Addr` and `Register` block forever (probe: `Shutdown HANG`)
+  - GREEN: a guarded `listenerAddr(ln) (string, error)` (`recover`, `isNil`, panic value through `valueText`) called by `Start` before `serve`; a failure goes through `s.fail` with an error wrapping `ErrConfig` naming `Listener`, which logs `server.failed`, runs the `AfterDrain` hooks and closes the listener; `serve` receives the address and calls no consumer code under the lock
+  - Lock audit: list every `s.mu` critical section and the one `sync.Once` (`onceCloseListener`) and record which consumer calls, if any, run inside them; add a test for each violation found
+  - REFACTOR: /simplify
+- [ ] 12.3 Hook panic values and hook errors whose `Error()` panics with itself (server-lifecycle / Scenario: Faulty hooks and Scenario: Hostile hook errors when Shutdown is called before Start, the new rows); verify `go test -race -run 'TestShutdownHooks_Faulty$|TestHostileHookErrors'` passes
+  - RED: the panicking-value row crashes the test binary with `fatal error: panic while printing panic value` from `runHook`'s deferred `fmt.Errorf("panic: %v", v)` (`hooks.go`), on a goroutine srvr owns; the returned-error row makes `Shutdown` panic in `runHooks`' `fmt.Errorf("%w: %s hook %d: %w", ...)`; the test helper `recoverPanic` reads the recovered value through a guarded formatter so the test itself cannot crash the same way
+  - GREEN: `runHook` formats the panic value with `valueText`; `runHooks` returns a `hookError{phase, index, err}` whose `Error()` reads `err` through `errorText` and whose `Unwrap() []error` returns `ErrShutdownHook` and `err`
+  - REFACTOR: /simplify
+- [ ] 12.4 A `Shutdown` context with a hostile `Err()` (server-lifecycle / Scenario: A Shutdown context with a hostile Err, all rows); verify `go test -race -run TestShutdown_HostileContext` passes
+  - RED: a running server with a blocking `BeforeDrain` hook and `Shutdown` with a context done after `50ms` whose `Err()` returns an error whose `Error()` panics with itself; fails because the abandoned hook's `fmt.Errorf("abandoned: %w", ctx.Err())` (`hooks.go`) panics out of `Shutdown` and the later `Shutdown` never returns (probe: `Shutdown2 HANG`)
+  - GREEN: the abandoned error is a small type whose `Error()` reads the context error through `errorText` and whose `Unwrap()` returns it
+  - REFACTOR: /simplify
+- [ ] 12.5 A configurer panic value whose `Error()` panics (route-registration / Scenario: Configure panics, the `*main.HostileAPI` row); verify `go test -race -run TestConfigurePanics` passes
+  - RED: the row; fails because `safeConfigure` (`group.go`) builds `routeError("configurer %T panicked: %v", c, v)`, so `Start` panics and the server stays starting
+  - GREEN: format the value with `valueText`
+  - REFACTOR: /simplify
+- [ ] 12.6 A prblm option panic value whose `Error()` panics (error-responses / Scenario: Consumer mapper and hook, the two `WithProblemOptions` rows); verify `go test -race -run TestErrorExtension_Config` passes
+  - RED: the hostile row; fails because `newProblems` (`problems.go`) formats the recovered value with `fmt.Sprint`, so `New` panics. The `WithNamespace("not a uri")` row is already in `TestErrorExtension_Config` (characterization, now named in the spec)
+  - GREEN: format the value with `valueText`
+  - REFACTOR: /simplify
+- [ ] 12.7 Text reaches a consumer handler as strings when `MaxAttrBytes` is negative (structured-logging / Scenario: Text reaches a consumer handler as strings when the limit is disabled, all rows); verify `go test -race -run TestDisabledLimitKinds` passes
+  - RED: a kind-capturing handler; fails because `truncator.record` (`truncate.go`) returns the record unchanged when `maxBytes < 0`, so `exception.message` and `exception.stacktrace` arrive as `slog.KindAny` wrapping the unexported `ownText` (regression from 5bd8e34) and logged `error` values arrive unconverted, for the consumer handler to format
+  - GREEN: the record is rewritten whenever it carries srvr's own text or an `error` value, at any limit; only cutting is disabled by a negative limit
+  - REFACTOR: /simplify
+- [ ] 12.8 Audit the whole core module (every non-test `.go` file, `internal/` included) for each `fmt`, `slog`, `errors` call or string conversion that formats a consumer-supplied value (errors, panic values, configurers, options, listener addresses, context errors, handler results) without `errorText`/`valueText`; fix each site with a test; record the result here with every site checked and found safe and why
+- [ ] 12.9 Godoc: `WithListener` (typed nil rejected; an unusable address fails `Start`), `WithShutdownHook` (any panic value and hostile errors are contained), `WithErrorRedactor`, `WithLogHandler` and `WithLogger` (called synchronously: blocking in them stalls the request or the lifecycle call), `WithLogMaxAttrBytes`/`LogConfig.MaxAttrBytes` if they describe what a negative value hands the handler; `LOGGING.md` where it describes the same; verify `go doc` shows them and `TestLogSchemaGolden` and `TestLogSchemaGolden_Lifecycle` still pass with `srvr.log.schema` unchanged
+- [ ] 12.10 Verify the slice: confirm the address helper, hook error types, truncator rewrite and every audited site are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
 
 ## Workflow follow-up
 

@@ -330,6 +330,20 @@ Reading the text of an `error` value logged through srvr's handler SHALL never f
 | `err` via `slog.Any("err", e)` | an error whose `Error()` panics | `<panic in Error(): T>`, `T` its Go type |
 | `err` added with `l.With(slog.Any("err", e))` | a typed-nil `*MyErr` whose `Error()` dereferences it | `<nil *MyErr>`, the type with its package |
 
+#### Scenario: Text reaches a consumer handler as strings when the limit is disabled
+- **Given** a server configured with `WithLogMaxAttrBytes(-1)` and `WithLogHandler(h)`, where `h` records each attribute's `slog.Kind`
+- **When** `<event>`
+- **Then** `h` receives `<attribute>` as a `slog.KindString` value `<value>`
+
+##### Examples:
+| event | attribute | value |
+|-------|-----------|-------|
+| an `AfterDrain` hook returns `errors.New("flush failed")` and `Shutdown` is called before `Start` | `exception.message` of `server.shutdown_hook.failed` | `flush failed` |
+| a handler returns `errors.New("boom")` | `exception.message` of `http.request.failed` | `boom` |
+| a handler panics with `"boom"` | `exception.stacktrace` of `http.request.failed` | the panic stack |
+| a handler logs `INFO` through the request logger with `slog.Any("err", e)`, `e` a typed-nil `*MyErr` | `err` | `<nil *MyErr>` |
+| a handler logs `INFO` through the request logger with `slog.Any("err", e)`, `e`'s `Error()` panicking with a value whose `Error()` panics | `err` | `<panic in Error(): T>`, `T` its Go type |
+
 ### Requirement: The log schema is versioned
 Every record srvr writes itself (lifecycle, access and failed records, warnings) SHALL carry `srvr.log.schema` `1`; records written by consumer code SHALL NOT. Adding a key SHALL keep the version; renaming or removing a key, or changing a key's meaning or value type, SHALL increase it.
 

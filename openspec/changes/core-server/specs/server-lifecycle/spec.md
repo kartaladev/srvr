@@ -31,6 +31,9 @@ Constructing a server SHALL validate every option and config field and SHALL ret
 | `ShutdownTimeout` | `-1s` | an error wrapping `srvr.ErrConfig` | `ShutdownTimeout` |
 | `MaxHeaderBytes` | `0` via `WithMaxHeaderBytes(0)` | an error wrapping `srvr.ErrConfig` | `MaxHeaderBytes` |
 | `WithListener` | `nil` | an error wrapping `srvr.ErrConfig` | `Listener` |
+| `WithListener` | a typed-nil `*net.TCPListener` | an error wrapping `srvr.ErrConfig` | `Listener` |
+| `WithListener` and `Addr` | a typed-nil `*net.TCPListener` and `:8080` | an error wrapping `srvr.ErrConfig`, without panicking | `Listener` |
+| `WithListener` and `Addr` | a listener whose `Addr()` panics, and `:8080` | an error wrapping `srvr.ErrConfig`, without panicking | `Listener` |
 | a nil `Option` | `srvr.New(nil)` | an error wrapping `srvr.ErrConfig` | `Option` |
 | `WithListener` and `Addr` | both set | an error wrapping `srvr.ErrConfig` | `Listener` |
 | `WithShutdownHook` | `srvr.BeforeDrain` with a nil function | an error wrapping `srvr.ErrConfig` | `ShutdownHook` |
@@ -167,6 +170,24 @@ A listener passed with `WithListener` SHALL be owned by the server once `New` re
 | `Start(nil)` is called | `Start`, with an error matching `srvr.ErrConfig` | still accepts connections (nothing changed; the server can still start) |
 | `New` failed because another option is invalid | `New`, with an error wrapping `srvr.ErrConfig` | still accepts connections (the caller keeps it) |
 
+### Requirement: A listener without a usable address fails Start
+A typed-nil listener SHALL fail construction like a nil one. A listener whose `Addr()` returns nil (or a typed nil) or panics, or whose address's `String()` panics, SHALL fail `Start` with an error wrapping `srvr.ErrConfig` that names `Listener`, through the same path as any other `Start` failure (`server.failed`, `AfterDrain` hooks, the listener closed), never silently and never leaving the server unable to stop.
+
+#### Scenario: A listener without a usable address
+- **Given** a server configured with `WithListener(ln)` where `ln.Addr()` `<fault>`
+- **When** `Start` is called
+- **Then** `Start` returns an error wrapping `srvr.ErrConfig` whose message contains `Listener`, without panicking, and `Ready()` is never closed
+- **And** `ln` is closed and refuses connections, and a `server.failed` record is written
+- **And** a later `Shutdown` returns `nil`, `Addr()` returns the empty string and `Register` returns an error matching `srvr.ErrServerClosed`, each without blocking
+
+##### Examples:
+| fault |
+|-------|
+| returns `nil` |
+| returns a typed-nil `*net.TCPAddr` |
+| panics with `"addr"` |
+| returns an address whose `String()` panics with a value whose `Error()` panics with itself |
+
 ### Requirement: Shutdown is graceful, bounded and idempotent
 `Shutdown(ctx)` SHALL stop accepting connections, wait for in-flight requests until `ctx` is done, then close remaining connections and return the context error. Repeated calls SHALL be safe and return nil once shut down.
 
@@ -243,7 +264,7 @@ A listener passed with `WithListener` SHALL be owned by the server once `New` re
 | has no hooks registered | `Shutdown(ctx)` is called | `0` | `0` |
 
 ### Requirement: Faulty shutdown hooks never stop the shutdown
-A hook that returns an error (a typed nil or one whose `Error()` panics included), panics or outlives its budget SHALL be logged without panicking and SHALL NOT prevent the remaining hooks, the drain or the server closing. The call that stopped the server (`Start` or `Shutdown`) SHALL return an error wrapping `srvr.ErrShutdownHook` joined with each hook's error and any drain error.
+A hook that returns an error (a typed nil or one whose `Error()` panics included), panics (with any value) or outlives its budget SHALL be logged without panicking and SHALL NOT prevent the remaining hooks, the drain or the server closing. The call that stopped the server (`Start` or `Shutdown`) SHALL return an error wrapping `srvr.ErrShutdownHook` joined with each hook's error and any drain error.
 
 #### Scenario: Faulty hooks
 - **Given** a running server whose first `AfterDrain` hook `<fault>` and whose second `AfterDrain` hook succeeds
@@ -260,6 +281,8 @@ A hook that returns an error (a typed nil or one whose `Error()` panics included
 | blocks and ignores its context, with `ShutdownHookTimeout` `50ms` | an error matching `srvr.ErrShutdownHook` and `context.DeadlineExceeded`, returned within `200ms` |
 | returns a typed-nil error `(*hookErr)(nil)` | an error matching `srvr.ErrShutdownHook` |
 | returns an error whose `Error()` panics | an error matching `srvr.ErrShutdownHook` |
+| returns an error whose `Error()` panics with a value whose `Error()` panics | an error matching `srvr.ErrShutdownHook` |
+| panics with a value whose `Error()` panics with itself | an error matching `srvr.ErrShutdownHook` whose message contains `<panic formatting value>` |
 | returns `nil` | `nil` |
 
 #### Scenario: Hostile hook errors when Shutdown is called before Start
@@ -273,6 +296,8 @@ A hook that returns an error (a typed nil or one whose `Error()` panics included
 |-------|
 | returns a typed-nil error `(*hookErr)(nil)` |
 | returns an error whose `Error()` panics |
+| returns an error whose `Error()` panics with a value whose `Error()` panics |
+| panics with a value whose `Error()` panics with itself |
 
 #### Scenario: Faulty hook during Shutdown
 - **Given** a running server whose `BeforeDrain` hook returns `errors.New("close failed")`
@@ -296,6 +321,21 @@ A hook that returns an error (a typed nil or one whose `Error()` panics included
 |-------|--------|------|--------|--------|-------|
 | `50ms` | `5s` | at `BeforeDrain` blocks and ignores its context | an error matching `srvr.ErrShutdownHook` and `context.DeadlineExceeded` | `300ms` | a `server.shutdown_hook.failed` record is written and the `AfterDrain` hook ran once |
 | `15s` | `100ms` | at `AfterDrain` calls `srv.Shutdown(context.Background())` | an error matching `srvr.ErrShutdownHook` and `context.DeadlineExceeded` | `500ms` | the hook's `Shutdown` call returned `nil` after the stop finished, with no deadlock |
+
+### Requirement: A hostile Shutdown context never breaks the stop sequence
+The error of a `BeforeDrain` hook abandoned at its budget carries the hook context's `Err()`, which comes from the consumer's `Shutdown` context. srvr SHALL read its text without panicking, even when it is a typed nil or its `Error()` panics, so the stop sequence always closes the server.
+
+#### Scenario: A Shutdown context with a hostile Err
+- **Given** a running server whose `BeforeDrain` hook blocks and ignores its context
+- **When** `Shutdown` is called with a context that is done after `50ms` and whose `Err()` returns `<err>`
+- **Then** `Shutdown` returns an error matching `srvr.ErrShutdownHook` and `<err>`, without panicking
+- **And** a later `Shutdown` returns `nil`
+
+##### Examples:
+| err |
+|-----|
+| an error whose `Error()` panics with a value whose `Error()` panics |
+| a typed-nil error `(*hookErr)(nil)` |
 
 ### Requirement: Start is single-use
 A server SHALL be started at most once. A second or concurrent `Start` SHALL return an error without affecting the running server.
