@@ -1,0 +1,103 @@
+# Workflow: Gherkin scenarios with Examples, Gall's Law slices, Murphy's Law
+# failure coverage, safe defaults, TDD, a consolidation group first in every
+# change and notes.md carry-overs are defined by the schema itself
+# (openspec/schemas/gherkin-driven). This file holds what is specific to srvr.
+schema: gherkin-driven
+
+context: |
+  srvr is a public Go library (module github.com/kartaladev/srvr, Go 1.27) for running HTTP
+  servers whose routing engine is chosen by the consumer: net/http (Go 1.22+ ServeMux patterns),
+  Gin or Fiber v3. It is embedded by other teams' services, so its public API, defaults and log
+  schema are commitments.
+
+  Sibling libraries (same organisation, pre-1.0, consumed through their released modules):
+  - github.com/kartaladev/prblm renders errors as RFC 9457 problem details (core, ginprblm,
+    fiberprblm). srvr MUST use it for every error response. Each prblm adapter builds its own
+    handler from options, so srvr keeps one shared []prblm.Option per server. prblm never logs;
+    its OnError hook is where srvr logs and counts answered errors.
+  - github.com/kartaladev/scrty is the security library (httpsec chain, ginsec, fibersec). Its
+    chain must run outside the router; it answers its own built-in endpoints and renders refusals
+    as a bare status. srvr supports it through an opt-in bridge module.
+
+  Module layout (multi-module repository, go.work for development)
+  - github.com/kartaladev/srvr: core plus the net/http engine. Dependencies: standard library and
+    prblm core only. No OpenTelemetry, no Prometheus, no gin, no fiber, no scrty.
+  - srvr/ginsrvr (gin), srvr/fibersrvr (fiber v3): one engine each.
+  - srvr/otelsrvr: opt-in metrics and tracing, OpenTelemetry API only (never SDK or exporters).
+  - srvr/otelsetup: opt-in application wiring for the OTel SDK and exporters (Prometheus, OTLP).
+  - srvr/security: opt-in scrty bridge (scrty errors to prblm, endpoint collision check,
+    shutdown hooks). The consumer passes the engine's scrty middleware.
+
+  Public shape
+  - Server: Start(ctx) error, Shutdown(ctx) error. RouteRegistrar[G].Register(RouteConfigurer[G]).
+    RouteConfigurer[G].Configure(group G), with G = *srvr.Group (net/http), *gin.RouterGroup,
+    fiber.Router. A configurer for the wrong engine fails to compile.
+  - Handlers report errors in each engine's native way and srvr renders every one through prblm:
+    net/http handlers return error (func(w, r) error), fiber handlers return error
+    (func(fiber.Ctx) error), gin handlers stay plain gin.HandlerFunc and report through c.Error.
+  - Shared pipeline pieces used by the engine modules live in the public package srvr/engine
+    (documented as unstable before v1), because separate modules cannot import core internal/.
+  - Plain constructors with functional options are the primary API; every option group also has a
+    plain tagged config struct (json/yaml/env tags) that any loader can fill. srvr never reads
+    environment variables or files itself.
+
+  Request pipeline order (outermost first): trace context (W3C traceparent read or generated),
+  access log, observer (metrics/tracing), prblm panic recovery, scrty chain when wired, router.
+
+  Logging is designed for AI-assisted triage
+  - slog, JSON, one object per line to stdout by default; a log agent ships it. No log exporting.
+  - trace_id and span_id on every record that has a request context, with tracing on or off.
+  - Stable event names (http.request.completed, http.request.failed, http.panic.recovered,
+    server.started, server.stopping, ...) and OpenTelemetry semantic-convention attribute keys.
+    The log schema is a public, versioned commitment: every record srvr writes carries srvr.log.schema.
+    Adding a key keeps the version; renaming or removing a key, or changing a key's meaning or
+    value type, bumps it. A golden-record test pins the keys of every event.
+  - Error records are self-contained: full error chain text and types, a fingerprint from error
+    types and route (never message text), code location, stack for panics, the problem actually
+    sent, service and build info. Error text goes to logs, never to 5xx responses.
+  - Credentials, cookies, bodies and query strings are never logged at any level unless a clearly
+    named opt-in allows it.
+
+  Change plan (Gall's Law): core-server -> gin-and-fiber-engines -> otel-observability ->
+  scrty-integration -> triage-debug-buffer. Each change ships a releasable library.
+
+  Project rules that bind every artifact and every apply run
+  - TDD RED -> GREEN -> REFACTOR (Fowler's catalog); every hot path tested, coverage checked with
+    go tool cover -func, no percentage threshold.
+  - Defect claims are proven by a failing test, otherwise they are hypotheses.
+  - Murphy's Law in planning and review; Gall's Law in planning and review.
+  - Load the Go skills starting from golang-how-to before any Go task.
+  - Navigate Go code through the gopls language server (LSP), not grep, for semantic questions.
+  - Safe opinionated defaults; every behaviour configurable programmatically or by configuration.
+  - Conventional commits, one commit per completed task group (slice), never per task; run
+    /simplify on the group's changes before that commit. Consolidation (group 1) commits as
+    docs(openspec) when it changed anything; module scaffolding ships inside the first slice
+    that needs it.
+
+rules:
+  proposal:
+    - Name the zero-configuration behaviour a consumer gets and confirm it leaks nothing to clients - no error text on 5xx, no stack traces, no internal paths - and logs no credentials or bodies.
+    - Flag any change to public API, a default, a module's dependency set or the log schema as a compatibility decision.
+    - Name the earlier changes this change builds on and the assumptions it makes about them, so the consolidation group can check them.
+  specs:
+    - Use concrete values in Examples tables - HTTP methods, paths, status codes, exact header values, media types, problem JSON members, and exact log event names and attribute keys.
+    - Cover each relevant engine (net/http, gin, fiber v3) in Examples rows when behaviour must be identical across them.
+    - Include rows for faulty consumer code - configurers, handlers, middleware, observers and log handlers that return nil, return an error, panic or block.
+    - Include rows for lifecycle misuse - Start twice, Shutdown before Start, Register after Start, cancelled or expired contexts.
+    - Requirements describe the default behaviour; where an override exists, include a scenario showing the consumer's override, both programmatic and by config struct.
+  design:
+    - Slice 1 must be the smallest end-to-end working path the change adds; no slice depends on code that only becomes useful later.
+    - Name the module each new dependency goes in and confirm the core module stays standard library plus prblm.
+    - Every decision that introduces or changes behaviour states the default and how a consumer overrides it, or why there is no override.
+    - Hot paths for srvr are the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, Start and Shutdown, and log record construction including error-chain walking and redaction.
+  tasks:
+    - Tests are Go table-driven tests (one case per Examples row) run with -race; httptest for net/http and gin, app.Test for fiber v3.
+    - Each slice runs go vet, golangci-lint and go test -race for every module it touches, with GOWORK=off for modules that will be released.
+    - Before finishing each slice, use the gopls language server - diagnostics on changed files, find references before changing a definition.
+    - The last task of each slice runs /simplify on the slice's changes and makes one conventional commit for the slice (for example feat(core) or fix(ginsrvr)).
+
+operations:
+  apply:
+    guidance:
+      - Commit once per completed task group with a conventional commit message, after /simplify for slice groups; consolidation commits as docs(openspec) and has nothing to simplify; never commit per task.
+      - Write follow-ups that do not belong to the current change to the change's notes.md as the schema describes, addressed to the change that should take them.

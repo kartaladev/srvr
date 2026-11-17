@@ -1,0 +1,7 @@
+# Go test output
+*.out
+*.test
+coverage.*
+
+# Local, per-developer Claude Code settings
+.claude/settings.local.json

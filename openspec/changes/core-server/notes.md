@@ -1,0 +1,25 @@
+# Notes
+
+Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
+
+
+### Planning audit 2026-11-17 decisions
+- **Status:** closed: applied during planning
+- **Target:** core-server
+- **Context:** The cross-change audit raised 26 owner decisions; the owner accepted every recommended default. Applied here: D1 (correlation handler replays `WithGroup`/`WithAttrs` after adding `trace_id`/`span_id`; Grouped loggers scenario, design D7, task 6.8, benchmark task 6.9), D2 (panic records: `error.type` `panic`, value type in `exception.type`; design D8, task 8.4), D5 (core `WithShutdownHook` with `BeforeDrain`/`AfterDrain`, `ShutdownHookTimeout` 5s, run once on every stop path, `ErrShutdownHook`; design D9, tasks 3.8-3.9, 7.10), D6 (`srvr.log.schema` on every srvr-written record; additive keys keep the version, renames/removals/meaning or type changes bump it; golden-record test, task 6.11), D7 (every string attribute truncated in the wrapper, `MaxAttrBytes` 1024, `srvr.attr.truncated`; design D7, task 7.7), D8 (unmatched 404/405 log `http.request.failed` at `WARN` with `problem`; task 6.10), D13 (`WithConfig`, `WithLogConfig`, `WithAccessLogConfig`, `WithServiceConfig`, `WithTraceConfig` plus individual options, argument order wins; design D10, task 3.3), D25 (task 1.5 consolidation commit; scaffolding folded into slice 2 as tasks 2.1-2.2), D26 (entry below). Also: srvr's `OnError` only collects into the per-request state and the access stage writes the one failed record (design D4, task 8.1); slice-end tasks run vet, lint and tests with `GOWORK=off`.
+- **Evidence:** `trace_id` nesting proven by planning probe `probes/xgroup/main_test.go` (`go test -count=1 -v .`, Go 1.27.4): naive handler wrote `{"db":{"table":"users","trace_id":"4bf9…"}}`, replay wrote `{"trace_id":"4bf9…","db":{"table":"users"}}`. The other decisions are design choices, not defects.
+- **Suggested action:** none; consolidation 1.3 re-checks these against merged code.
+
+### Ask prblm for a composable OnError and an exported status-only sentinel
+- **Status:** open
+- **Target:** unassigned
+- **Context:** One upstream issue on kartaladev/prblm covering two asks. (1) `prblm.OnError` is a single slot (the last option wins), so srvr must own it and offer `WithErrorHook`; a consumer passing `prblm.OnError` through `WithProblemOptions` is silently overridden. (2) `ginprblm` reports `c.AbortWithStatus(4xx)` to `OnError` with the unexported `errStatusOnly`, so callers cannot tell it apart with `errors.Is`; the gin engine therefore classifies failures from `c.Errors` (gin-and-fiber-engines notes "ginprblm reports status-only aborts to OnError with an unexported error" is merged into this entry). Asks: allow several `OnError` hooks run in order, and export `ginprblm.ErrStatusOnly`.
+- **Evidence:** unverified for (1) as a running test until task 5.5 adds one; (2) probe `probes/gin/hook_test.go` `TestHookOnStatusOnly` (`go test -count=1 -v -run TestHookOnStatusOnly .`): `OnError called: err="ginprblm: response aborted with an error status and no error" type=*prblm.statusError`.
+- **Suggested action:** Open one issue on kartaladev/prblm with both asks; when released, drop srvr's single-slot workaround note and switch the gin classification to `errors.Is(err, ginprblm.ErrStatusOnly)`.
+
+### Planning audit 2 2026-11-17: decisions A1-A4 and audit fixes applied
+- **Status:** closed: applied during planning
+- **Target:** core-server
+- **Context:** A second fresh-context audit and owner decisions A1-A4 (recommended defaults accepted). Applied here: A1 - kept D2 and fixed the triage-error-records `*net.OpError` row to `Err: syscall.ECONNREFUSED` (innermost `syscall.Errno`, three-entry chain); A2 - truncation also cuts `error` values, resolved `LogValuer` values and the record `msg`, and only srvr's own `exception.*` attributes get larger limits (structured-logging rows, design D7, task 7.7); A3 - `Scenario: Aborted request` for `http.ErrAbortHandler` with `srvr.response.aborted`, `WARN`, no `problem` group (additive key, no schema bump; task 8.4); A4 - which `Start` failures run hooks, rows in `Hooks on every stop path` (tasks 3.8, 4.3, 4.7) and design D9; new `Scenario: Blocking and re-entrant hooks` (task 3.9); config structs are separate top-level structs and a `With<Struct>` resets nested structs (design D10; trace-context and service rows now use `WithTraceConfig`/`WithServiceConfig`); error-responses consumer-hook wording follows D4 (srvr's hook only records the error).
+- **Evidence:** probe `/private/tmp/claude-501/-Users-zakyalvan-Documents-RND-srvr/ae329126-0c37-4115-98e4-3f992b4b4d3b/scratchpad/probes/audit2/core2`, `GOFLAGS=-mod=mod go test -v ./...` (Go 1.27): `TestOpErr` -> `msg="insert user: dial: connection refused" chain=[*fmt.wrapError *net.OpError syscall.Errno]`; `TestKinds` -> `attr err kind=Any`, `attr lv kind=LogValuer` (slog does not resolve `LogValuer` before `Handle`, so the wrapper calls `Value.Resolve()`).
+- **Suggested action:** none beyond the applied changes; keep both probe cases as RED rows in tasks 8.1 and 7.7.
