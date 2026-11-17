@@ -92,61 +92,61 @@ Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `O
 
 ## 4. Slice: fiber engine end to end
 
-- [ ] 4.1 Module setup (first task of the slice): create `github.com/kartaladev/srvr/fibersrvr` (go 1.27, fiber v3.7.0, fiberprblm, srvr core), add to `go.work`, CI job with `GOWORK=off`; verify `make test lint` passes for the empty module
-- [ ] 4.2 Listener-driven serve/drain adapter in `engine` if Fiber needs one not already extracted (engine-support / Scenario: Lifecycle misuse on every engine, `fiber` rows; Scenario: Hooks per engine and stop path, `fiber` rows except the route-check row, which task 6.2 covers); verify `go test -race -run 'TestFiberLifecycle|TestFiberShutdownHooks'` passes over a real listener
+- [x] 4.1 Module setup (first task of the slice): create `github.com/kartaladev/srvr/fibersrvr` (go 1.27, fiber v3.7.0, fiberprblm, srvr core), add to `go.work`, CI job with `GOWORK=off`; verify `make test lint` passes for the empty module
+- [x] 4.2 Listener-driven serve/drain adapter in `engine` if Fiber needs one not already extracted (engine-support / Scenario: Lifecycle misuse on every engine, `fiber` rows; Scenario: Hooks per engine and stop path, `fiber` rows except the route-check row, which task 6.2 covers); verify `go test -race -run 'TestFiberLifecycle|TestFiberShutdownHooks'` passes over a real listener
   - RED: tables of fiber lifecycle rows and recorded hook sequences, including the forced drain and never-started rows; fail because no fiber engine exists
   - GREEN: `fibersrvr.New` with `app.Listener` on srvr's listener under `engine.Lifecycle`
   - REFACTOR: Extract Function only for what both adapters share, then /simplify
-- [ ] 4.3 Fiber registration and duplicate routes (fiber-engine / Scenario: Fiber registration, accepted and rejected rows including `:id`/`:name`, a repeated route and a cross-configurer duplicate); verify `go test -race -run TestFiberRegister` passes
+- [x] 4.3 Fiber registration and duplicate routes (fiber-engine / Scenario: Fiber registration, accepted and rejected rows including `:id`/`:name`, a repeated route and a cross-configurer duplicate); verify `go test -race -run TestFiberRegister` passes
   - RED: table including nil handler, panicking configurer and the duplicate rows; fails because fiber accepts duplicates silently
   - GREEN: configure phase under recover on `fiber.Router`; after it, read `app.GetRoutes(true)`, normalise parameter names and fail `Start` with `srvr.ErrRouteConfig` naming the pattern and configurers
   - REFACTOR: /simplify
-- [ ] 4.4 Fiber errors become problems (fiber-engine / Scenario: Fiber error to problem, all rows); verify `go test -race -run TestFiberErrors` passes using `app.Test`
+- [x] 4.4 Fiber errors become problems (fiber-engine / Scenario: Fiber error to problem, all rows); verify `go test -race -run TestFiberErrors` passes using `app.Test`
   - RED: table; fails because the default error handler leaks `*fiber.Error` messages
   - GREEN: fiberprblm `ErrorHandler` with the shared option list; the access middleware calls it on a chain error and returns nil so the record has the client's status (count `OnError` calls to prove it runs once)
   - REFACTOR: /simplify
-- [ ] 4.5 Fiber 404 and 405 (fiber-engine / Scenario: Fiber no route or wrong method); verify `go test -race -run TestFiberUnmatched` passes
+- [x] 4.5 Fiber 404 and 405 (fiber-engine / Scenario: Fiber no route or wrong method); verify `go test -race -run TestFiberUnmatched` passes
   - RED: table; fails if `Allow` is missing
   - GREEN: rely on fiberprblm routing errors, add `Allow` when Fiber does not
   - REFACTOR: /simplify
-- [ ] 4.6 Fiber panic recovery (fiber-engine / Scenario: Fiber panic, all rows including `http.ErrAbortHandler`); verify `go test -race -run TestFiberPanic` passes
+- [x] 4.6 Fiber panic recovery (fiber-engine / Scenario: Fiber panic, all rows including `http.ErrAbortHandler`); verify `go test -race -run TestFiberPanic` passes
   - RED: table; fails without recovery, and fails if `http.ErrAbortHandler` is re-raised (the process would crash) or logged with `srvr.response.aborted`
   - GREEN: `fiberprblm.Recovery` after srvr trace and access middleware
   - REFACTOR: /simplify
-- [ ] 4.7 Value copying under context reuse (fiber-engine / Scenario: Context reuse, both rows); verify `go test -race -count=5 -run TestFiberContextReuse` passes
+- [x] 4.7 Value copying under context reuse (fiber-engine / Scenario: Context reuse, both rows); verify `go test -race -count=5 -run TestFiberContextReuse` passes
   - RED: 1000 concurrent requests across routes comparing records to requests; fails if a pooled value leaks
   - GREEN: copy at the boundary
   - REFACTOR: /simplify
-- [ ] 4.8 Trace through fiber.Ctx and cancellable context (fiber-engine / Scenario: Reading trace through fiber.Ctx; Scenario: Forced shutdown cancels handlers); verify `go test -race -run 'TestFiberTraceAccess|TestFiberForcedCancel'` passes
+- [x] 4.8 Trace through fiber.Ctx and cancellable context (fiber-engine / Scenario: Reading trace through fiber.Ctx; Scenario: Forced shutdown cancels handlers); verify `go test -race -run 'TestFiberTraceAccess|TestFiberForcedCancel'` passes
   - RED: tables; fails because `c` never cancels and accessors do not find values
   - GREEN: per-request context from the server base context via `c.SetContext`, accessor fallback, base cancel on forced drain
   - REFACTOR: /simplify
-- [ ] 4.9 Fiber access record route (fiber-engine / Scenario: Fiber route attribute, all rows including `msg` and `level`; engine-support / Scenario: Request state after the chain, `fiber` rows); verify `go test -race -run 'TestFiberAccessRoute|TestFiberRequestState'` passes
+- [x] 4.9 Fiber access record route (fiber-engine / Scenario: Fiber route attribute, all rows including `msg` and `level`; engine-support / Scenario: Request state after the chain, `fiber` rows); verify `go test -race -run 'TestFiberAccessRoute|TestFiberRequestState'` passes
   - RED: table; fails because middleware route is reported
   - GREEN: read `c.Route().Path` after `c.Next()` only when `c.Matched()` into `engine.RequestState`; otherwise omit `http.route`; the access stage is the only one that renders a chain error and records the failure in the state
   - REFACTOR: /simplify
-- [ ] 4.10 Fiber drain closes lingering connections (fiber-engine / Scenario: Fiber drain, all rows); verify `go test -race -run TestFiberDrain` passes
+- [x] 4.10 Fiber drain closes lingering connections (fiber-engine / Scenario: Fiber drain, all rows); verify `go test -race -run TestFiberDrain` passes
   - RED: table counting open connections after `Shutdown`; fails because Fiber leaves them open
   - GREEN: tracking listener, close after drain or deadline
   - REFACTOR: /simplify
-- [ ] 4.11 Fiber config derived and hook guarded (fiber-engine / Scenario: Fiber config hook, all rows; engine-support / Scenario: Same validation on every engine, `fiber` rows; Scenario: Engine-specific option placement, `fiber` rows); verify `go test -race -run 'TestFiberConfig|TestFiberConfigHook'` passes
+- [x] 4.11 Fiber config derived and hook guarded (fiber-engine / Scenario: Fiber config hook, all rows; engine-support / Scenario: Same validation on every engine, `fiber` rows; Scenario: Engine-specific option placement, `fiber` rows); verify `go test -race -run 'TestFiberConfig|TestFiberConfigHook'` passes
   - RED: tables including nil hook, nulled error handler and the body-limit boundary and unlimited rows; body rows run over a real listener because `app.Test` returns a transport error for an oversized body; fails
   - GREEN: derived `fiber.Config` (unlimited body as `math.MaxInt`), `WithFiberConfig`, re-assertion, srvr-built `ListenConfig` without prefork
   - REFACTOR: /simplify
-- [ ] 4.12 Fiber header limit (fiber-engine / Scenario: Fiber header limit, all rows; engine-support / Scenario: Configuration warning record, `fiber` rows); verify `go test -race -run TestFiberHeaderLimit` passes
+- [x] 4.12 Fiber header limit (fiber-engine / Scenario: Fiber header limit, all rows; engine-support / Scenario: Configuration warning record, `fiber` rows); verify `go test -race -run TestFiberHeaderLimit` passes
   - RED: table over a real listener (`app.Test` returns a transport error for protocol rejections), asserting `ReadBufferSize`, status and warning count; fails with fiber's 8 KiB default
   - GREEN: `ReadBufferSize = min(MaxHeaderBytes, 65536)`; `fiber_header_limit_capped` warning only for a consumer-set value above the cap
   - REFACTOR: /simplify
-- [ ] 4.13 Fiber protocol rejections logged with their problem (fiber-engine / Scenario: Protocol rejection record, all rows); verify `go test -race -run TestFiberProtocolRejection` passes over a real listener
+- [x] 4.13 Fiber protocol rejections logged with their problem (fiber-engine / Scenario: Protocol rejection record, all rows); verify `go test -race -run TestFiberProtocolRejection` passes over a real listener
   - RED: table over a real `net.Listener` (not `app.Test`: these paths come from fasthttp's `serverErrorHandler`), counting access records and asserting `problem.status`/`problem.title`; fails because the replayed chain's nil error with a pre-set status writes no `problem` group (or renders twice)
   - GREEN: the access stage reads the status before calling `c.Next()`; a status of 400 or more marks a replay - no rendering, `problem` group from that status and `http.StatusText`, `OnError` without request state skips
   - REFACTOR: Extract Function for the replay detection shared with the unmatched classification, then /simplify
-- [ ] 4.14 Godoc (pooled context, use `c.Context()` for long work, disconnect limitation, header-limit cap, no header timeout, plain `501` for unknown methods, `http.ErrAbortHandler` recovered as an ordinary panic, protocol rejections logged from the pre-set status, path-scoped `Use` invisible to route checks) and a runnable `Example` on `fiber.Router`; verify `go test -run Example` passes
-- [ ] 4.15 Fiber consumer faults (engine-support / Scenario: Consumer faults on every engine, `fiber` rows; Scenario: Hooks per engine and stop path, the `fiber` re-entrant row; fiber-engine / Scenario: Fiber config hook, the panicking hook row); verify `go test -race -run 'TestFiberConsumerFaults|TestFiberConfigHook|TestFiberShutdownHooks'` passes
+- [x] 4.14 Godoc (pooled context, use `c.Context()` for long work, disconnect limitation, header-limit cap, no header timeout, plain `501` for unknown methods, `http.ErrAbortHandler` recovered as an ordinary panic, protocol rejections logged from the pre-set status, path-scoped `Use` invisible to route checks) and a runnable `Example` on `fiber.Router`; verify `go test -run Example` passes
+- [x] 4.15 Fiber consumer faults (engine-support / Scenario: Consumer faults on every engine, `fiber` rows; Scenario: Hooks per engine and stop path, the `fiber` re-entrant row; fiber-engine / Scenario: Fiber config hook, the panicking hook row); verify `go test -race -run 'TestFiberConsumerFaults|TestFiberConfigHook|TestFiberShutdownHooks'` passes
   - RED: one table, handler rows through `app.Test`, listener rows over a real listener; fails on any row whose guard is not wired (for example a cyclic chain reaching `fiberprblm.ErrorHandler`)
   - GREEN: wire the `engine` guards (design D10): `guardChain` before the error handler, `guardedListener` under the tracking listener, `WithFiberConfig` under recover with `valueText`
   - REFACTOR: /simplify
-- [ ] 4.16 Verify slice end to end over a real listener (register, start, problem with `trace_id`, one access record, forced drain); confirm fiber pipeline, copy and drain branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `fibersrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(fibersrvr): serve fiber v3 routes with srvr lifecycle, problems and logs`
+- [x] 4.16 Verify slice end to end over a real listener (register, start, problem with `trace_id`, one access record, forced drain); confirm fiber pipeline, copy and drain branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `fibersrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(fibersrvr): serve fiber v3 routes with srvr lifecycle, problems and logs`
 
 ## 5. Slice: cross-engine parity
 

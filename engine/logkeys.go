@@ -71,4 +71,7 @@ type WarningCode string
 const (
 	// WarnGinDebugMode: gin's process-wide mode is debug at construction.
 	WarnGinDebugMode WarningCode = "gin_debug_mode"
+	// WarnFiberHeaderLimitCapped: a MaxHeaderBytes the consumer set is
+	// above the 64 KiB fiber can buffer per connection, so it was capped.
+	WarnFiberHeaderLimitCapped WarningCode = "fiber_header_limit_capped"
 )

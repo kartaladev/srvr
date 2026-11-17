@@ -55,6 +55,17 @@ type Location struct {
 // Function returns the qualified function name, or "" when unknown.
 func (l Location) Function() string { return l.function }
 
+// FuncPointer returns the code pointer of fn, a function value, as a key
+// for tables built once per route: the same function gives the same key.
+func FuncPointer(fn any) uintptr {
+	v := reflect.ValueOf(fn)
+	if v.Kind() != reflect.Func {
+		return 0
+	}
+
+	return v.Pointer()
+}
+
 // FuncLocation returns the Location of fn. A method value resolves to its
 // "-fm" wrapper, whose suffix is removed; an unknown PC yields the zero
 // Location, never an invented one.

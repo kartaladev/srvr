@@ -3,7 +3,6 @@ package ginsrvr
 import (
 	"context"
 	"net/http"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -250,7 +249,7 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup])
 }
 
 // handlerKey identifies a route handler by its function pointer.
-func handlerKey(h gin.HandlerFunc) uintptr { return reflect.ValueOf(h).Pointer() }
+func handlerKey(h gin.HandlerFunc) uintptr { return engine.FuncPointer(h) }
 
 // checkHandlers rejects a route with a nil handler, which gin accepts and
 // would answer by panicking. It runs after each configurer, so a nil

@@ -41,8 +41,11 @@ type stateKey struct{}
 type RequestState struct {
 	core  *Core
 	trace Trace
-	// rec records the response, set by the access stage.
+	// rec records the response, set by the net/http access stage.
 	rec *responseRecorder
+	// status is the response status an engine without rec reported to
+	// WriteAccess.
+	status int
 	// Route is the route pattern the router matched, in the engine's own
 	// syntax, empty when unmatched.
 	Route string
@@ -58,14 +61,18 @@ type RequestState struct {
 // Matched reports whether a route matched the request.
 func (r *RequestState) Matched() bool { return r.Route != "" }
 
-// Status returns the final status of the response so far: 200 when
-// nothing was written yet, as net/http sends.
+// Status returns the final status of the response so far: the status the
+// access stage recorded, or 200 when nothing was written yet, as net/http
+// sends.
 func (r *RequestState) Status() int {
-	if r.rec == nil {
+	switch {
+	case r.rec != nil:
+		return r.rec.statusCode()
+	case r.status != 0:
+		return r.status
+	default:
 		return http.StatusOK
 	}
-
-	return r.rec.statusCode()
 }
 
 // Failed reports whether the request failed: a returned error or a
@@ -94,9 +101,21 @@ func requestFrom(ctx context.Context) *RequestState {
 		return nil
 	}
 
-	req, _ := ctx.Value(stateKey{}).(*RequestState)
+	if req, ok := ctx.Value(stateKey{}).(*RequestState); ok {
+		return req
+	}
 
-	return req
+	// An engine context such as fiber.Ctx answers Value from its own store
+	// and exposes the request's context through Context().
+	if ec, ok := ctx.(interface{ Context() context.Context }); ok {
+		if inner := ec.Context(); inner != nil && inner != ctx {
+			req, _ := inner.Value(stateKey{}).(*RequestState)
+
+			return req
+		}
+	}
+
+	return nil
 }
 
 // TraceFromContext returns the trace context of a request handled by the
@@ -114,16 +133,27 @@ func TraceFromContext(ctx context.Context) (Trace, bool) {
 // context and adds the request state to the request context.
 func (c *Core) StartTrace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var tc tracectx.Trace
-		if c.settings.Trace.IgnoreIncoming {
-			tc = tracectx.New()
-		} else {
-			tc = tracectx.FromHeaders(r.Header["Traceparent"]) // canonical key: no allocation
-		}
-
-		req := &RequestState{core: c, trace: Trace(tc)}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, req)))
+		// The canonical key reads the header values without allocating.
+		next.ServeHTTP(w, r.WithContext(c.BeginRequest(r.Context(), r.Header["Traceparent"])))
 	})
+}
+
+// BeginRequest starts srvr's state for one request of an engine that is
+// not served through net/http: it continues the trace of traceparent (the
+// request's traceparent header values, copied by the caller) unless the
+// server ignores incoming trace context, and returns ctx carrying the new
+// state, which the engine must make the request's context.
+func (c *Core) BeginRequest(ctx context.Context, traceparent []string) context.Context {
+	if c.settings.Trace.IgnoreIncoming {
+		return c.withState(ctx, tracectx.New())
+	}
+
+	return c.withState(ctx, tracectx.FromHeaders(traceparent))
+}
+
+// withState returns ctx carrying a new request state for trace tc.
+func (c *Core) withState(ctx context.Context, tc tracectx.Trace) context.Context {
+	return context.WithValue(ctx, stateKey{}, &RequestState{core: c, trace: Trace(tc)})
 }
 
 // traceIDEnricher adds the request's trace id to every problem as the

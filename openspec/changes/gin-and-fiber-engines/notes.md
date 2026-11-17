@@ -50,10 +50,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   > **Why it matters:** a buggy error type in application code turns into a stuck goroutine per request instead of a 500.
 
 ### Adapter panic wrappers would log panics as returned errors
-- **Status:** closed: confirmed for gin and fixed in task 2.3 (fiber half re-checked by task 4.6)
+- **Status:** closed: confirmed for gin and fiber, fixed in task 2.3
 - **Target:** gin-and-fiber-engines
 - **Context:** The core classifies a failure as a panic with a type assertion on `*prblm.PanicError` (`access.go` `failure.level`, `triage.go` `triageAttrs`). `ginprblm.Recovery` and `fiberprblm.Recovery` hand prblm their own unexported wrappers (`panickedError`, `recoveredError`), each unwrapping to `*prblm.PanicError`, so the core's checks would see a returned error: `ERROR` level by status still, but `error.type` the wrapper's type and no stack. The shared builders read panics with `errors.As`.
-- **Evidence:** gin confirmed 2026-11-18: `ginsrvr/panic_test.go` `TestGinPanic/boom`, run with `newFailure` temporarily reverted to the pre-2.3 `err.(*prblm.PanicError)` assertion, `GOWORK=off go test -count=1 -run 'TestGinPanic/boom' ./...` in `ginsrvr`: `--- FAIL: TestGinPanic/boom ... record map[... error.chain:[ginprblm.panickedError *prblm.PanicError] ...]` (logged as a returned error, not `error.kind` `panic`); with the fix (`engine/triage.go` `panicOf`, a bounded walk) it passes. Engine-level RED: `engine/panicwrap_internal_test.go` `TestFailure_PanicThroughWrapper` failed with `level = INFO, want ERROR` before the fix. fiber: source of `fiberprblm@v0.1.0/recovery.go` (`recoveredError`), re-checked by task 4.6.
+- **Evidence:** gin confirmed 2026-11-18: `ginsrvr/panic_test.go` `TestGinPanic/boom`, run with `newFailure` temporarily reverted to the pre-2.3 `err.(*prblm.PanicError)` assertion, `GOWORK=off go test -count=1 -run 'TestGinPanic/boom' ./...` in `ginsrvr`: `--- FAIL: TestGinPanic/boom ... record map[... error.chain:[ginprblm.panickedError *prblm.PanicError] ...]` (logged as a returned error, not `error.kind` `panic`); with the fix (`engine/triage.go` `panicOf`, a bounded walk) it passes. Engine-level RED: `engine/panicwrap_internal_test.go` `TestFailure_PanicThroughWrapper` failed with `level = INFO, want ERROR` before the fix. fiber confirmed 2026-11-18 the same way: `fibersrvr/panic_test.go` `TestFiberPanic/boom` with the pre-2.3 assertion: `--- FAIL ... record map[... error.chain:[fiberprblm.recoveredError *prblm.PanicError] ... exception.message:Internal Server Error ...]` (no `error.kind`), passing with the fix.
 - **Suggested action:** none.
 
 
@@ -135,10 +135,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none beyond the RED tests named in the tasks.
 
 ### Unverified assumptions from audit 2
-- **Status:** open
+- **Status:** open: (1) confirmed 2026-11-18; (2) confirmed at consolidation; (3) pending task 6.1
 - **Target:** gin-and-fiber-engines
 - **Context:** Three rows rest on source reading, not a running test: (1) a header read stalled past fasthttp's `ReadTimeout` reaches `serverErrorHandler` as a timeout and is answered `408` (Protocol rejection record row 3); (2) net/http `Mount("/")` in group `/static` registers the method-less pattern `/static/`, which depends on how core-server implements `Mount`; (3) fiber `All` registers exactly `RequestMethods`, so the any-method collapse recognises it.
-- **Evidence:** unverified: established from the cited source lines only.
+- **Evidence:** (1) `fibersrvr/protocol_test.go` `TestFiberProtocolRejection/stalled_headers` (real listener, `ReadTimeout` 100ms, headers left unfinished) passes: a `408` problem titled `Request Timeout` and one failed record. (2) and (3): see Context.
 - **Suggested action:** Tasks 4.13 and 6.1 write these rows first as RED tests; if one fails for a reason other than the missing feature, correct the row and record the actual behaviour here. Consolidation 1.3 re-checks (2) against merged core code.
 
 ### Gin unmatched requests were already failed before task 3.8's GREEN
@@ -161,3 +161,31 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `ginsrvr/helpers_test.go` repeats about 150 lines of the core's `helpers_test.go` and `logging_test.go` (JSON log buffer, request/response helper with problem parsing, start and readiness helpers), and fibersrvr and `internal/paritytest` will need the same. Separate modules cannot share `_test.go` files, so removing the copies needs a public test-support package (for example `srvr/engine/enginetest`), which is new API and a design decision outside this change's plan. Found by the /simplify reuse review of task group 3.
 - **Evidence:** unverified: duplication observed by reading the files, not a defect.
 - **Suggested action:** decide whether a test-support package is worth its API cost before v1; until then keep the copies in step.
+
+### Fiber RED assumptions that did not hold
+- **Status:** closed: plan assumptions corrected during apply (2026-11-18)
+- **Target:** gin-and-fiber-engines
+- **Context:** Task 4.5 expected `Allow` to be missing on fiber's 405; fiber v3.7.0 sets it itself, sorted and with `HEAD` (`GET, HEAD, POST`), so no code was added. Task 4.3: fiber does not list an identical repeated registration in `GetRoutes` (it merges it into the earlier route, `router.go` `addRoute` `mergesIntoLastLocked`), so duplicate detection records registrations through the app's `OnRoute` hook, which fires for merged ones too; Use, mount and automatic HEAD registrations are told apart by fiber's unexported route flags read through reflection (`fibersrvr/server.go` `routeFlag`, pinned by the "Use twice and Get at the root" registration row). Task 4.7: route paths and method strings are not taken from pooled buffers in fiber v3.7.0, so the context-reuse test passes even without srvr's copies; it stays as a guard. Fiber's `ShutdownWithContext` on an app that never served returns `fiber.ErrNotRunning`, not `nil` as design D3 says; srvr never calls it then, because the shared lifecycle closes a never-started server without the runner.
+- **Evidence:** `fibersrvr/unmatched_test.go` `TestFiberUnmatched` green without code; `TestFiberRegister/twice` RED with a `GetRoutes` diff, green with the hook; fiber v3.7.0 `app.go:1432-1434` (`ErrNotRunning`).
+- **Suggested action:** none.
+
+### RequestState.Status is not live on fiber
+- **Status:** open
+- **Target:** otel-observability
+- **Context:** `engine.RequestState.Status()` reads net/http's response recorder live, but on fiber the status is only stored when `WriteAccess` runs (`engine/access.go` `WriteAccess`), so a stage reading it during the request sees 200. Nothing reads it mid-request in this change; otel-observability's observer stage will. Found by the /simplify altitude review of task group 4.
+- **Evidence:** unverified: no reader exists yet; the state tests read it after the access record.
+- **Suggested action:** when a mid-request reader arrives, let the fiber stage give the state a live status source (for example a `func() int` over `c.Response().StatusCode()`), with a RED test from that reader.
+
+### Fiber rejection records build their problem apart from the client's
+- **Status:** open
+- **Target:** unassigned
+- **Context:** For 408, 413 and 431 the access record's `problem` group comes from `engine.Core.RecordRejection` (`prblm.New(status)` and `http.StatusText`), while the client's problem is rendered later by fiberprblm with the consumer's `WithProblemOptions`. With a mapper or namespace that changes these statuses' type or title, the record and the response can differ. Design D4 specifies the status-and-standard-title record. Found by the /simplify altitude review of task group 4.
+- **Evidence:** unverified: no consumer option in this change alters these statuses; a RED test would set a namespace or mapper and compare `problem.type`.
+- **Suggested action:** resolve the rejection problem through the server's problem handler (`Core.Problems().Resolve`) so the record matches the response.
+
+### Fiber access stage buffered streamed bodies (fixed)
+- **Status:** closed: fixed in task group 4 (2026-11-18)
+- **Target:** gin-and-fiber-engines
+- **Context:** The fiber access stage measured the body with `c.Response().Body()`, which in fasthttp v1.78.0 reads a body stream whole into memory before the response is written: every `SendStream`/`SendFile` response was buffered, and an endless stream (server-sent events) never reached the client. Found by the /simplify efficiency review. A streamed body now reports its declared `Content-Length` (0 when unknown), never read by srvr.
+- **Evidence:** `fibersrvr/stream_test.go` `TestFiberStreamNotBuffered`, `GOWORK=off go test -count=1 -run TestFiberStreamNotBuffered ./...` in `fibersrvr` before the fix: `--- FAIL ... no response while the stream is open: ... context deadline exceeded`; passes after.
+- **Suggested action:** none; `http.response.body.size` of a streamed fiber response is its declared length, a difference from net/http's bytes written (to pin with task 5.4's exception rows if parity needs it).

@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -65,6 +66,22 @@ func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 	req.failure = newFailure(err, p, committed)
 }
 
+// errRejected is the failure of a request the engine's server rejected
+// before routing it (oversized body or headers, read timeout).
+var errRejected = errors.New("srvr: request rejected before routing")
+
+// RecordRejection records, for the request of ctx, the failure of a
+// request the server rejected with status before routing it: the engine
+// renders the client's problem itself, after the access record is written,
+// so the record's problem group is built here from the status and its
+// standard title.
+func (c *Core) RecordRejection(ctx context.Context, status int) {
+	p := prblm.New(status)
+	p.Title = http.StatusText(status)
+
+	recordFailure(ctx, fmt.Errorf("%w: %d %s", errRejected, status, p.Title), p)
+}
+
 // LogAccess returns the access stage: it records the response and writes
 // one access record per request when the response finishes.
 func (c *Core) LogAccess(next http.Handler) http.Handler {
@@ -72,7 +89,8 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &responseRecorder{ResponseWriter: w}
 
-		req := requestFrom(r.Context()) // set by StartTrace, the outer stage
+		ctx := r.Context()
+		req := requestFrom(ctx) // set by StartTrace, the outer stage
 		req.rec = rec
 
 		defer func() {
@@ -83,59 +101,96 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 				// else reaching here is still logged, as an abort.
 				req.aborted = true
 
-				c.writeAccess(r, req, rec, time.Since(start))
+				info := httpAccess(r, rec, time.Since(start))
+				if !rec.wroteHeader {
+					info.Status = 0 // the response never started
+				}
+
+				c.writeAccess(ctx, req, info)
 				panic(v)
 			}
 		}()
 
 		next.ServeHTTP(rec, r)
 
-		c.writeAccess(r, req, rec, time.Since(start))
+		c.writeAccess(ctx, req, httpAccess(r, rec, time.Since(start)))
 	})
 }
 
-// writeAccess writes the access record of a finished request.
-func (c *Core) writeAccess(r *http.Request, req *RequestState, rec *responseRecorder, d time.Duration) {
-	status := rec.statusCode()
+// AccessInfo is what the access record of a request reports about it,
+// besides the request state. An engine copies every value out of buffers
+// it reuses before passing it.
+type AccessInfo struct {
+	Method     string
+	Path       string
+	RawQuery   string
+	RemoteAddr string
+	UserAgent  string
+	Status     int
+	BodySize   int64
+	Duration   time.Duration
+}
+
+// httpAccess returns the access information of a net/http request.
+func httpAccess(r *http.Request, rec *responseRecorder, d time.Duration) AccessInfo {
+	return AccessInfo{
+		Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery, RemoteAddr: r.RemoteAddr, UserAgent: r.UserAgent(),
+		Status: rec.statusCode(), BodySize: rec.bytes, Duration: d,
+	}
+}
+
+// WriteAccess writes the access record of a finished request of an engine
+// that is not served through net/http; ctx carries the request state.
+func (c *Core) WriteAccess(ctx context.Context, info AccessInfo) {
+	if req := requestFrom(ctx); req != nil {
+		req.status = info.Status
+		c.writeAccess(ctx, req, info)
+	}
+}
+
+// writeAccess writes the access record of a finished request; a zero
+// info.Status, an aborted request whose response never started, omits the
+// status.
+func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessInfo) {
+	status := info.Status
 	aborted := req.aborted
 	fail := req.failure
 
 	msg, level := outcome(status, aborted, fail)
 
 	// Failed records are the triage record: suppression never applies.
-	ctx := r.Context()
-	if (msg == eventRequestCompleted && c.settings.Access.suppressed(r.URL.Path, status)) || !c.log.Enabled(ctx, level) {
+	if (msg == eventRequestCompleted && c.settings.Access.suppressed(info.Path, status)) || !c.log.Enabled(ctx, level) {
 		return
 	}
 
 	record := newOwnRecord(level, msg)
-	record.AddAttrs(slog.String(keyMethod, r.Method))
+	record.AddAttrs(slog.String(keyMethod, info.Method))
 
 	if req.Route != "" {
 		record.AddAttrs(slog.String(keyRoute, req.Route))
 	}
 
-	if !aborted || rec.wroteHeader {
+	if status != 0 {
 		record.AddAttrs(slog.Int(keyStatus, status))
 	}
 
 	record.AddAttrs(
-		slog.Int64(keyBodySize, rec.bytes),
-		slog.Float64(keyDuration, millis(d)),
+		slog.Int64(keyBodySize, info.BodySize),
+		slog.Float64(keyDuration, millis(info.Duration)),
 	)
 
-	if ua := r.UserAgent(); ua != "" {
-		record.AddAttrs(slog.String(keyUserAgent, ua))
+	if info.UserAgent != "" {
+		record.AddAttrs(slog.String(keyUserAgent, info.UserAgent))
 	}
 
-	c.addOptIns(&record, r)
+	c.addOptIns(&record, info)
 
 	switch {
 	case aborted:
 		record.AddAttrs(c.abortedAttrs()...)
 	case fail != nil:
 		addFailure(&record, fail)
-		record.AddAttrs(c.triageAttrs(r.Method, req, fail)...)
+		record.AddAttrs(c.triageAttrs(info.Method, req, fail)...)
 	}
 
 	c.log.handle(ctx, record, true)
@@ -274,17 +329,17 @@ func (w *responseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (w *responseRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // addOptIns adds the attributes the access log configuration opts into.
-func (c *Core) addOptIns(record *slog.Record, r *http.Request) {
+func (c *Core) addOptIns(record *slog.Record, info AccessInfo) {
 	opt := &c.settings.Access
 	if opt.IncludePath {
-		record.AddAttrs(slog.String(keyURLPath, r.URL.Path))
+		record.AddAttrs(slog.String(keyURLPath, info.Path))
 	}
 
-	if opt.IncludeQuery && r.URL.RawQuery != "" {
-		record.AddAttrs(slog.String(keyURLQuery, r.URL.RawQuery))
+	if opt.IncludeQuery && info.RawQuery != "" {
+		record.AddAttrs(slog.String(keyURLQuery, info.RawQuery))
 	}
 
 	if opt.IncludeClientAddress {
-		record.AddAttrs(slog.String(keyClientAddress, clientAddress(r.RemoteAddr)))
+		record.AddAttrs(slog.String(keyClientAddress, clientAddress(info.RemoteAddr)))
 	}
 }
