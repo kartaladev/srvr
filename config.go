@@ -102,10 +102,12 @@ func WithMaxHeaderBytes(n int) Option {
 // for example a listener from socket activation or a test. It cannot be
 // combined with an address.
 //
-// The server owns ln, as http.Server.Serve does: it closes ln whenever the
-// server closes, whether it served or not. Calls that leave the server
-// unchanged (Start(nil), a Start returning ErrServerStarted or
-// ErrServerClosed) leave ln open.
+// The server owns ln once New returns it, as http.Server.Serve does; if New
+// fails, the caller keeps ln. The server closes ln whenever it closes,
+// whether it served or not: after serving, when Start fails, and when
+// Shutdown is called before Start. Start(nil) and a Start returning
+// ErrServerStarted do not close ln; a Start returning ErrServerClosed does
+// not either (ln was closed when the server closed).
 func WithListener(ln net.Listener) Option {
 	return func(s *settings) {
 		if ln == nil {

@@ -2,6 +2,7 @@ package srvr
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -201,20 +202,17 @@ type responseRecorder struct {
 	wroteHeader bool
 }
 
-// statusCode returns the status sent, 200 when the handler wrote nothing.
+// statusCode returns the final status sent, 200 when the handler wrote
+// none (net/http's default), even after an informational one.
 func (w *responseRecorder) statusCode() int {
-	if w.status == 0 {
-		return http.StatusOK
-	}
-
-	return w.status
+	return cmp.Or(w.status, http.StatusOK)
 }
 
 func (w *responseRecorder) WriteHeader(code int) {
-	if !w.wroteHeader {
-		w.status = code
-		// 1xx informational responses do not start the final response.
-		w.wroteHeader = code >= http.StatusOK
+	// 1xx informational responses neither start the final response nor
+	// set the status the client finally receives.
+	if !w.wroteHeader && code >= http.StatusOK {
+		w.status, w.wroteHeader = code, true
 	}
 
 	w.ResponseWriter.WriteHeader(code)

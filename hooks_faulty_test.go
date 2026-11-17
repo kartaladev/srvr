@@ -36,6 +36,8 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 			wantIs: []error{srvr.ErrShutdownHook, context.DeadlineExceeded},
 			within: 200 * time.Millisecond,
 		},
+		{fault: "returns a typed-nil error", hook: func(context.Context) error { return (*derefError)(nil) }, wantIs: []error{srvr.ErrShutdownHook}},
+		{fault: "returns an error whose Error panics", hook: func(context.Context) error { return badError{} }, wantIs: []error{srvr.ErrShutdownHook}},
 		{fault: "returns nil", hook: func(context.Context) error { return nil }},
 	}
 
@@ -65,6 +67,33 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 			// the second one runs with a spent context and srvr does not wait
 			// for it; it still runs.
 			eventually(t, secondRan.Load, "the second hook did not run")
+			assertErr(t, shutdownBounded(t, srv), nil, "")
+		})
+	}
+}
+
+// TestHostileHookErrors covers server-lifecycle / Scenario: Hostile hook
+// errors when Shutdown is called before Start.
+func TestHostileHookErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		fault string
+		err   error
+	}{
+		{"returns a typed-nil error", (*derefError)(nil)},
+		{"returns an error whose Error panics", badError{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.fault, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newServer(t, srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { return tt.err }))
+
+			assertErr(t, recoverPanic(func() error { return srv.Shutdown(context.Background()) }), []error{srvr.ErrShutdownHook}, "")
+			assertErr(t, shutdownBounded(t, srv), nil, "")
+			assertErr(t, srv.Start(context.Background()), []error{srvr.ErrServerClosed}, "")
 		})
 	}
 }

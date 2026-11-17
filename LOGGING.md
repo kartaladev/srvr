@@ -29,7 +29,8 @@ listed in this document.
 recovered, the request was aborted, or no route matched). Exactly one per request. Level: `INFO` below
 400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. A recovered panic is `ERROR`; an error that
 arrived after the response started takes the higher of the levels of the status sent and of the
-status the error would have been answered with, so a late 5xx error is `ERROR`. `AccessLogConfig`
+status the error would have been answered with, so a late 5xx error is `ERROR` and a late 4xx error is
+`WARN` after a 2xx and `ERROR` after a 5xx. `AccessLogConfig`
 (`Disabled`, `SkipPaths`) suppresses only `http.request.completed` records below 500; an
 `http.request.failed` record is never suppressed.
 
@@ -37,7 +38,7 @@ status the error would have been answered with, so a late 5xx error is `ERROR`. 
 |-----|------|---------|
 | `http.request.method` | string | request method |
 | `http.route` | string | the matched pattern's path, such as `/users/{id}`; absent when no route matched |
-| `http.response.status_code` | number | status sent; absent for an aborted request that sent nothing |
+| `http.response.status_code` | number | final status sent (`200` when the handler wrote none, even after a `1xx`); absent for an aborted request that sent no final status |
 | `http.response.body.size` | number | body bytes written |
 | `duration_ms` | number | handling time in milliseconds |
 | `user_agent.original` | string | `User-Agent`, when sent |

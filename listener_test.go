@@ -19,8 +19,10 @@ func TestListenerOwnership(t *testing.T) {
 
 	tests := []struct {
 		name string
+		// opts are added to New's options.
+		opts []srvr.Option
 		// call registers what the row needs on srv and makes the call; it
-		// returns the call's error.
+		// returns the call's error. A nil call checks New's error instead.
 		call    func(t *testing.T, srv *srvr.Server) error
 		want    func(error) bool
 		accepts bool
@@ -76,6 +78,12 @@ func TestListenerOwnership(t *testing.T) {
 			want:    func(err error) bool { return errors.Is(err, srvr.ErrConfig) },
 			accepts: true,
 		},
+		{
+			name:    "New fails because another option is invalid",
+			opts:    []srvr.Option{srvr.WithShutdownHook(srvr.AfterDrain, nil)},
+			want:    func(err error) bool { return errors.Is(err, srvr.ErrConfig) },
+			accepts: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -83,10 +91,12 @@ func TestListenerOwnership(t *testing.T) {
 			t.Parallel()
 
 			ln := listen(t)
-			srv, err := srvr.New(srvr.WithListener(ln), srvr.WithLogOutput(&logBuffer{}))
-			mustNil(t, err)
-
-			if err := tt.call(t, srv); !tt.want(err) {
+			srv, err := srvr.New(append([]srvr.Option{srvr.WithListener(ln), srvr.WithLogOutput(&logBuffer{})}, tt.opts...)...)
+			if tt.call != nil {
+				mustNil(t, err)
+				err = tt.call(t, srv)
+			}
+			if !tt.want(err) {
 				t.Fatalf("call = %v", err)
 			}
 

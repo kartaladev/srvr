@@ -78,6 +78,7 @@ func TestLateError(t *testing.T) {
 		{"200 then error", http.StatusOK, func() error { return errors.New("late") }, "ERROR"},
 		{"200 then panic", http.StatusOK, func() error { panic("late") }, "ERROR"},
 		{"201 then conflict", http.StatusCreated, func() error { return prblm.ErrConflict }, "WARN"},
+		{"500 then conflict", http.StatusInternalServerError, func() error { return prblm.ErrConflict }, "ERROR"},
 	}
 
 	for _, tt := range tests {

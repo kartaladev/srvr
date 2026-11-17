@@ -58,7 +58,9 @@ type hook struct {
 //
 // A hook that fails does not stop the shutdown: the remaining hooks and the
 // drain still run, and the call that stopped the server returns an error
-// wrapping [ErrShutdownHook].
+// wrapping [ErrShutdownHook]. A hook fails when it returns a non-nil error
+// (a typed nil and an error whose Error method panics included; their text
+// is logged without panicking), panics or outlives its budget.
 func WithShutdownHook(phase ShutdownPhase, fn func(ctx context.Context) error) Option {
 	return func(s *settings) {
 		switch {
@@ -93,7 +95,7 @@ func (s *Server) runHooks(ctx context.Context, phase ShutdownPhase) error {
 				slog.String(keyHookPhase, phase.String()),
 				slog.Int(keyHookIndex, i),
 				slog.String(keyFunction, funcName(h.fn)),
-				slog.String(keyExceptionMsg, err.Error()),
+				slog.String(keyExceptionMsg, errorText(err)),
 			)
 			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, err))
 		}

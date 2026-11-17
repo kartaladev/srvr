@@ -149,3 +149,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** The second `core-server` verification raised C1 (`runHooks` calls a hook error's `Error()` unguarded in the stopping caller's goroutine, so a typed-nil or `Error()`-panicking hook error panics out of `Shutdown` or `Start` and every later `Shutdown` hangs), W1 (a handler writing only `103` logs `http.response.status_code` `103` although the client receives `200`), S1 (the `WithListener` wording "leaves ln open" for `ErrServerClosed`, when the listener was already closed) and S2 (ownership starts once `New` returns a server). Owner decisions kept and now stated explicitly in the specs: a late 4xx is logged at the higher of the two levels; `Shutdown` before `Start` closes the `WithListener` listener.
 - **Evidence:** RED tests of task group 10 (10.1-10.3).
 - **Suggested action:** none beyond task group 10.
+
+### One unreproduced failure of the core test suite
+- **Status:** open
+- **Target:** unassigned
+- **Context:** While verifying task group 10, one run of `GOWORK=off go test -count=1 -coverprofile=c.out ./...` (without `-race`) reported `FAIL github.com/kartaladev/srvr`; the output was cut by a `tail` filter, so the failing test is unknown. Another project's test binary was running on the machine at the time. 27 later full runs of the package (12 `-coverprofile ./...`, 15 `-coverprofile .`), 6 `-race` runs and `-count=50` of the group 10 tests all passed.
+- **Evidence:** unverified: not reproduced; no failing test name.
+- **Suggested action:** If a srvr test fails again, keep the full output (`go test -json`), name the test, and reproduce it with a targeted `-run` and a high `-count` before treating it as a defect.
+
+### Lifecycle records do not pass exception.message through the error redactor
+- **Status:** open
+- **Target:** unassigned (owner decision)
+- **Context:** Found by the /simplify altitude review of task group 10. Request failure records build `exception.message` through `errorText`, `WithErrorRedactor` and the 8 KiB message limit (`triage.go` `errorAttrs`); `server.shutdown_hook.failed` (`hooks.go` `runHooks`) and `server.failed` (`server.go` `fail`) put `errorText(err)` in a plain string attribute, so the redactor is skipped and the general `MaxAttrBytes` limit applies. `LOGGING.md` documents the redactor only in the request-event table, so whether it should apply to lifecycle records is not settled; hook errors are consumer text (for example a database close error with a connection string).
+- **Evidence:** probe `TestZZProbeHookRedaction` (not kept: the fix is outside task group 10) with `WithErrorRedactor` replacing `secret` and an `AfterDrain` hook returning `errors.New("close db: secret")`, then `Shutdown` before `Start`; `GOWORK=off go test -count=1 -run TestZZProbeHookRedaction .` failed with `unredacted: close db: secret`.
+- **Suggested action:** Owner decides whether lifecycle `exception.message` is redacted and limited like request records. If yes, add a spec row (server-lifecycle / Lifecycle events are logged), restore the probe as the RED test, and route all three sites through one helper (for example `(*Server).exceptionMessage(err) slog.Attr` in `triage.go`) so no call site builds the attribute by hand; document it in `LOGGING.md`.

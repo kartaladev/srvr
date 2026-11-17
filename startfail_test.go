@@ -74,6 +74,28 @@ func TestStart_Fails(t *testing.T) {
 			want: func(err error) bool { return errors.Is(err, context.Canceled) },
 		},
 		{
+			condition: "the Start context is done and its Err returns an error whose Error panics",
+			setup: func(t *testing.T) (*srvr.Server, context.Context) {
+				t.Helper()
+
+				return newServer(t), newDoneContext(badError{})
+			},
+			want: func(err error) bool { return errors.Is(err, badError{}) },
+		},
+		{
+			condition: "the Start context is done and its Err returns a typed-nil error",
+			setup: func(t *testing.T) (*srvr.Server, context.Context) {
+				t.Helper()
+
+				return newServer(t), newDoneContext((*derefError)(nil))
+			},
+			want: func(err error) bool {
+				var target *derefError
+
+				return errors.As(err, &target) && target == nil
+			},
+		},
+		{
 			condition: "Start(nil) is called",
 			setup: func(t *testing.T) (*srvr.Server, context.Context) {
 				t.Helper()
@@ -90,7 +112,7 @@ func TestStart_Fails(t *testing.T) {
 
 			srv, ctx := tt.setup(t)
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(ctx) }()
+			go func() { done <- recoverPanic(func() error { return srv.Start(ctx) }) }()
 
 			select {
 			case err := <-done:
@@ -109,3 +131,19 @@ func TestStart_Fails(t *testing.T) {
 		})
 	}
 }
+
+// doneContext is a done context whose Err returns err.
+type doneContext struct {
+	context.Context //nolint:containedctx // embedded only for Done, Deadline and Value.
+
+	err error
+}
+
+func newDoneContext(err error) doneContext {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	return doneContext{Context: ctx, err: err}
+}
+
+func (c doneContext) Err() error { return c.err }

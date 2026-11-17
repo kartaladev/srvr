@@ -3,6 +3,8 @@ package srvr_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -185,7 +187,7 @@ func startWith(ctx context.Context, t *testing.T, srv *srvr.Server) <-chan error
 	t.Helper()
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- recoverPanic(func() error { return srv.Start(ctx) }) }()
 	waitReady(t, srv, done)
 
 	return done
@@ -275,4 +277,30 @@ func receive[T any](t *testing.T, ch <-chan T, msg string) T {
 
 		return zero
 	}
+}
+
+// errPanicked marks an error recoverPanic made from a panic.
+var errPanicked = errors.New("panicked")
+
+// recoverPanic returns fn's result, or an error wrapping errPanicked when
+// fn panics.
+func recoverPanic(fn func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("%w: %v", errPanicked, v)
+		}
+	}()
+
+	return fn()
+}
+
+// shutdownBounded calls srv.Shutdown and fails the test when it does not
+// return within waitLimit.
+func shutdownBounded(t *testing.T, srv *srvr.Server) error {
+	t.Helper()
+
+	result := make(chan error, 1)
+	go func() { result <- srv.Shutdown(context.Background()) }()
+
+	return receive(t, result, "Shutdown did not return")
 }

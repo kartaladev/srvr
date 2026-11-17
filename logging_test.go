@@ -198,6 +198,7 @@ func TestAccessRecord(t *testing.T) {
 	}{
 		{"writes 200", status(200), "http.request.completed", "INFO", 200},
 		{"writes 304", status(304), "http.request.completed", "INFO", 304},
+		{"writes only 103 and nothing else", status(http.StatusEarlyHints), "http.request.completed", "INFO", 200},
 		{"writes 404 and returns nil", status(404), "http.request.completed", "WARN", 404},
 		{"returns ErrNotFound", func(http.ResponseWriter, *http.Request) error { return prblm.ErrNotFound }, "http.request.failed", "WARN", 404},
 		{"returns boom", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") }, "http.request.failed", "ERROR", 500},
