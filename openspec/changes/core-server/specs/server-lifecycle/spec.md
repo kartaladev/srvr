@@ -208,7 +208,7 @@ srvr SHALL call a passed listener's `Accept`, which net/http calls on a goroutin
 | a value whose `Error()` panics with itself, of type `T` | no connection | `<panic in Error(): T>` |
 
 ### Requirement: A passed listener whose Close panics never blocks the stop
-srvr SHALL call a passed listener's `Close` under `recover` and treat a panic like an error returned by `Close`, which srvr ignores: the stop sequence completes, the server closes, the call that stopped the server returns exactly what it returns when `Close` succeeds, and no record is written for it.
+srvr SHALL call a passed listener's `Close` under `recover` and treat a panic like a `Close` error, which srvr ignores: the stop sequence completes, the server closes, the call that stopped the server returns exactly what it returns when `Close` succeeds, and no record is written for it. This holds for every caller of `Close`, `http.Server.Shutdown` included.
 
 #### Scenario: A listener whose Close panics
 - **Given** a server configured with `WithListener(ln)` where `ln.Close()` panics with `"close"`
@@ -222,6 +222,18 @@ srvr SHALL call a passed listener's `Close` under `recover` and treat a panic li
 | `Shutdown` before `Start` | `nil` |
 | `Start` with an already-cancelled context | an error matching `context.Canceled` |
 | `Start`, where a route configurer panics | an error matching `srvr.ErrRouteConfig` |
+| `Shutdown` on a running server | `nil` |
+| `Start`, after its context ends while running | `nil` |
+
+#### Scenario: A listener whose Close returns an error
+- **Given** a server configured with `WithListener(ln)` and `WithLogOutput(logs)`, where `ln.Close()` closes the listener it wraps and returns an error with the text `"close: secret-dsn"`
+- **When** `<call>` returns
+- **Then** it returns `<result>`
+- **And** `logs` holds exactly one `server.stopped` record, at `INFO` and without `srvr.drain.forced`, and no record contains `secret-dsn`
+
+##### Examples:
+| call | result |
+|------|--------|
 | `Shutdown` on a running server | `nil` |
 | `Start`, after its context ends while running | `nil` |
 

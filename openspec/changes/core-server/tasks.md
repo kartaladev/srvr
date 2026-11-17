@@ -398,6 +398,17 @@ Owner decisions of 2026-11-17 on the three open `notes.md` entries left by task 
   - /simplify skipped: (1) wrapping the passed listener once at `New` so that `Addr`, `Accept` and `Close` share one guard type. It would make `Listener` errors and validation name `*srvr.guardedListener` instead of the consumer's type, and `closeListener` is already the single guard for both close paths. (2) Folding `TestListener_ClosePanics` into `TestListenerOwnership`: the project maps each scenario to one test. (3) A shared `notReady` helper and a shared recover-to-error helper: both pre-date this slice and span files outside it.
   - Follow-ups recorded in `notes.md`: a panicking `Start`/`Shutdown` context method (13.1 audit), a panicking accepted connection, and one more unnamed suite failure added to the existing flake entry.
 
+## 14. Slice: ignore passed listener Close errors on every path
+
+Confirmed defect, 2026-11-17: the listener wrapper's `Close` (`server.go`, `l.once.Do(...); return l.err`) returns the first `Close` error to every later caller. `http.Server.Shutdown` closes the listeners it still tracks and returns that error, so whether `Shutdown` on a running server returns `nil` depends on whether `Serve` has already returned; `drain` treats the error as a forced drain, `Shutdown` returns the listener's text and `server.stopped` is written at `WARN` with `srvr.drain.forced`. This breaks the group 13 row "Shutdown on a running server | nil" and is the intermittent failure recorded in `notes.md` ("One unreproduced failure of the core test suite").
+
+- [ ] 14.1 A passed listener whose `Close` returns an error never changes the stop result (server-lifecycle / Scenario: A listener whose Close returns an error, all rows); verify `go test -race -count=100 -run 'TestListener_CloseErrors|TestListener_ClosePanics|TestListener_AcceptPanics|TestGuardedListener_AcceptAllocs|TestMiddleware_ConstructorPanics' .` has zero failures
+  - RED: the rows, each repeated 200 times with a listener whose `Close` closes the real listener and returns `"close: secret-dsn"`; fails intermittently because the wrapper returns the stored error to `http.Server.Shutdown`, so `drain` reports a forced drain
+  - GREEN: the wrapper's `Close` returns nil to every caller, keeping the `sync.Once` so the consumer's `Close` runs only once; drop the stored error
+  - Godoc: the wrapper's comment and `WithListener` say an error or panic in `Close` is ignored on every path, including `http.Server.Shutdown`'s own close
+  - REFACTOR: /simplify
+- [ ] 14.2 Verify the slice: confirm `guardedListener.Close` is covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, check no `.test` process is left, and commit `fix(core): ignore passed listener Close errors on every path`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.
