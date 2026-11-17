@@ -95,7 +95,7 @@ func (s *Server) runHooks(ctx context.Context, phase ShutdownPhase) error {
 				slog.String(keyHookPhase, phase.String()),
 				slog.Int(keyHookIndex, i),
 				slog.String(keyFunction, funcName(h.fn)),
-				slog.String(keyExceptionMsg, errorText(err)),
+				s.exceptionMessage(errorText(err)),
 			)
 			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, err))
 		}

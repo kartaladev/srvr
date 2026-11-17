@@ -206,7 +206,7 @@ func (s *Server) begin() ([]RouteConfigurer[*Group], error) {
 // fail ends a Start that failed before serving: nothing was served, so
 // only the AfterDrain hooks run, and err is returned with their failures.
 func (s *Server) fail(ctx context.Context, err error) error {
-	s.logEvent(ctx, slog.LevelError, eventFailed, slog.String(keyExceptionMsg, errorText(err)))
+	s.logEvent(ctx, slog.LevelError, eventFailed, s.exceptionMessage(errorText(err)))
 	s.closeUnserved(ctx, s.settings.listener)
 
 	return errors.Join(err, s.hookErr)

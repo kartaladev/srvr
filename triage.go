@@ -26,7 +26,11 @@ const errorKindPanic = "panic"
 
 // WithErrorRedactor applies fn to exception.message and
 // exception.stacktrace before they are logged, for example to mask e-mail
-// addresses in database errors. A redactor that panics replaces the
+// addresses in database errors. It applies to request failure records and
+// to the lifecycle records server.failed and server.shutdown_hook.failed,
+// whose exception.message is consumer text too (a hook's database close
+// error may carry a connection string); the 8 KiB message limit applies
+// after it. A redactor that panics replaces the
 // attribute with "[redaction failed]", never the unredacted text. fn must
 // not be nil.
 func WithErrorRedactor(fn func(string) string) Option {
@@ -306,6 +310,16 @@ func (s *Server) redact(text string) (out string) {
 	return s.settings.redactor(text)
 }
 
+// exceptionMessage returns the exception.message attribute of every record
+// srvr builds itself, request failures and lifecycle events alike: text
+// passed through the consumer's redactor, then cut to maxMessageBytes and
+// marked as srvr's own text so MaxAttrBytes does not cut it again.
+func (s *Server) exceptionMessage(text string) slog.Attr {
+	msg, _ := cutString(s.redact(text), maxMessageBytes)
+
+	return slog.Any(keyExceptionMsg, ownText(msg))
+}
+
 // triageAttrs returns the attributes that describe a failure for triage.
 func (s *Server) triageAttrs(method string, req *request, fail *failure) []slog.Attr {
 	var attrs []slog.Attr
@@ -332,11 +346,10 @@ func (s *Server) triageAttrs(method string, req *request, fail *failure) []slog.
 // errorAttrs describes a returned error.
 func (s *Server) errorAttrs(method string, req *request, err error) []slog.Attr {
 	c := walkChain(err)
-	msg, _ := cutString(s.redact(errorText(err)), maxMessageBytes)
 
 	attrs := []slog.Attr{
 		slog.String(keyErrorType, c.innermost),
-		slog.Any(keyExceptionMsg, ownText(msg)),
+		s.exceptionMessage(errorText(err)),
 		slog.Any(keyErrorChain, c.types),
 		slog.String(keyFingerprint, fingerprint(append([]string{method, req.route}, c.types...)...)),
 	}
@@ -350,13 +363,12 @@ func (s *Server) errorAttrs(method string, req *request, err error) []slog.Attr 
 
 // panicAttrs describes a recovered panic.
 func (s *Server) panicAttrs(method string, req *request, pe *prblm.PanicError) []slog.Attr {
-	msg, _ := cutString(s.redact(valueText(pe.Value)), maxMessageBytes)
 	stack, stackCut := cutString(s.redact(string(pe.Stack)), maxStackBytes)
 	valueType := typeName(pe.Value)
 
 	return append(panicKindAttrs(),
 		slog.String(keyExceptionType, valueType),
-		slog.Any(keyExceptionMsg, ownText(msg)),
+		s.exceptionMessage(valueText(pe.Value)),
 		slog.Any(keyStacktrace, ownText(stack)),
 		slog.Bool(keyStackTruncated, stackCut),
 		slog.String(keyFingerprint, fingerprint(method, req.route, errorKindPanic, valueType, topFrame(pe.Stack))),

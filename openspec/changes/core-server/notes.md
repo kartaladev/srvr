@@ -154,7 +154,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Status:** open
 - **Target:** unassigned
 - **Context:** While verifying task group 10, one run of `GOWORK=off go test -count=1 -coverprofile=c.out ./...` (without `-race`) reported `FAIL github.com/kartaladev/srvr`; the output was cut by a `tail` filter, so the failing test is unknown. Another project's test binary was running on the machine at the time. 27 later full runs of the package (12 `-coverprofile ./...`, 15 `-coverprofile .`), 6 `-race` runs and `-count=50` of the group 10 tests all passed.
-- **Evidence:** unverified: not reproduced; no failing test name.
+- **Evidence:** unverified: not reproduced; no failing test name. Task 11.4 ran the full suite without `-race` 10 more times (`GOWORK=off go test -count=1 -json ./...`, foreground, output kept as `flake-run-1.json` to `flake-run-10.json` in the session scratchpad); all 10 passed, while another project's test binaries were running on the machine. Still unconfirmed.
 - **Suggested action:** If a srvr test fails again, keep the full output (`go test -json`), name the test, and reproduce it with a targeted `-run` and a high `-count` before treating it as a defect.
 
 ### Lifecycle records do not pass exception.message through the error redactor
