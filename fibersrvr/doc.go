@@ -57,7 +57,11 @@
 //     the configurer that mounted it, and take part in the duplicate check;
 //     its own middleware is not listed. srvr reads them from fiber's
 //     unexported fields when Start runs, so routes added to a sub-app after
-//     Start are not listed.
+//     Start are not listed. A fiber version whose fields differ fails Start
+//     with an error wrapping srvr.ErrRouteConfig naming the field and the
+//     fiber version; with no mounted sub-app the fields are not read. A
+//     sub-app must not be shared between servers that configure
+//     concurrently: fiber writes its mount path unsynchronised.
 //   - The access record's http.response.body.size for a streamed body
 //     (c.SendStream) is the stream's declared Content-Length, 0 when it has
 //     none, not the bytes written: measuring the stream would buffer it.

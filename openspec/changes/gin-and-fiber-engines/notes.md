@@ -10,11 +10,18 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** apply group 7.
 
 ### Fiber mount internals not fail-safe after a consumer's fiber upgrade
-- **Status:** open: planned as task group 8
+- **Status:** closed: fixed in task group 8 (2026-11-18); `fibersrvr/routeflag_internal_test.go` `TestWalkUnreadable`, `TestReadInternals`, `TestSubAppUnreadable`, `TestMountFieldCheck`, `TestModuleVersion`
 - **Target:** gin-and-fiber-engines
 - **Context:** The sub-app walk (design D8) reads `Route.group`, `Group.app` and `App.stack` by reflection; `TestMountFields` pins them only in srvr's CI. After a consumer's fiber upgrade a renamed field silently dropped mounted routes from the listing and the duplicate check (D8 accepted "degrade to listing nothing"), and a retyped field panicked in `Start`, because only `engine.Configure` recovers. Owner decision 2026-11-18 (rule 7): fail `Start` with `srvr.ErrRouteConfig` naming the field and fiber version.
 - **Evidence:** scratch tests in the `fibersrvr` internal package: `TestZZWalkRenamedStackIsVisible` (walk over a struct with `trees [][]*fiber.Route`) listed nothing with no way to report it; `TestZZWalkRetypedStackDoesNotPanic` (struct with `stack []*fiber.Route`) panicked with `reflect: call of reflect.Value.Len on ptr to non-array Value`.
 - **Suggested action:** task group 8; engine-support "Fiber mount internals unreadable".
+
+### Fiber route flag fields are still read with a silent fallback
+- **Status:** open
+- **Target:** unassigned (owner decision needed)
+- **Context:** Task group 8 guards `Route.group`, `Group.app` and `App.stack` once a mount is recorded, but mounts are found through the unexported bool `Route.mount` (`recordMounts`, `boolField`), and `declared` reads `Route.use` and `Route.autoHead` the same way. `boolField` returns `false` for a missing or retyped field, so after a consumer's fiber upgrade that renames `mount`, no mount is recorded, the group-8 check never runs and mounted routes drop out of the listing silently; a renamed `use` or `autoHead` lists middleware or implicit `HEAD` routes as declared routes, which can fail the duplicate check falsely. `TestRouteFlagFields` catches this only in srvr's own CI. Found by the /simplify altitude review of task group 8.
+- **Evidence:** unconfirmed end to end (a consumer's fiber with renamed fields cannot be built in this repository); by reading `fibersrvr/server.go` `boolField` (`f.IsValid() && f.Kind() == reflect.Bool && f.Bool()`).
+- **Suggested action:** owner decides whether the three bool flags are checked (`reflect.TypeFor[fiber.Route]`) whenever any route was recorded, failing `Start` with `srvr.ErrRouteConfig` like task group 8; that would change group 8's "with no mounts, nothing is checked" for apps without sub-apps.
 
 ### A fiber sub-app shared between servers races in fiber
 - **Status:** open

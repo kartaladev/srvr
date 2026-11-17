@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -213,7 +214,9 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 		s.owners.recordMounts(s.app, before)
 	}
 
-	s.owners.addMounted()
+	if err := s.owners.addMounted(mountFields); err != nil {
+		return nil, err
+	}
 
 	cfg := s.app.Config()
 	if err := s.owners.duplicate(&cfg); err != nil {
@@ -280,21 +283,125 @@ func (o *routeOwners) recordMounts(app *fiber.App, from int) {
 // addMounted adds the routes of every recorded sub-app, at its full
 // mounted path and attributed to the configurer that mounted it. Routes
 // added to a sub-app after it was mounted are included, because they are
-// read now.
-func (o *routeOwners) addMounted() {
-	for _, m := range o.mounts {
-		o.walk(subApp(m.group), m.prefix, m.configurer, map[uintptr]bool{})
+// read now. When there is a mount, it first checks fields, the fiber
+// fields the walk reads, so a fiber version that changed them fails with
+// an error wrapping srvr.ErrRouteConfig rather than listing fewer routes.
+func (o *routeOwners) addMounted(fields []mountField) error {
+	if len(o.mounts) == 0 {
+		return nil
 	}
+
+	for _, f := range fields {
+		if err := f.check(); err != nil {
+			return err
+		}
+	}
+
+	return readInternals(func() error {
+		for _, m := range o.mounts {
+			app, err := subApp(m.group)
+			if err != nil {
+				return err
+			}
+
+			if err := o.walk(app, m.prefix, m.configurer, map[uintptr]bool{}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// readInternals runs read, which reads fiber's unexported fields, under
+// recover: a panic, a fiber change the type checks missed, returns an
+// error wrapping srvr.ErrRouteConfig instead of crashing Start.
+func readInternals(read func() error) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = mountError("reading fiber's internals panicked: %s", engine.ValueText(v))
+		}
+	}()
+
+	return read()
+}
+
+// mountField is an unexported fiber field the sub-app walk reads.
+type mountField struct {
+	owner reflect.Type
+	name  string
+	want  reflect.Type
+}
+
+// The unexported fiber fields the sub-app walk reads, pinned by
+// TestMountFields.
+var (
+	routeGroup = mountField{reflect.TypeFor[fiber.Route](), "group", reflect.TypeFor[*fiber.Group]()}
+	groupApp   = mountField{reflect.TypeFor[fiber.Group](), "app", reflect.TypeFor[*fiber.App]()}
+	appStack   = mountField{reflect.TypeFor[fiber.App](), "stack", reflect.TypeFor[[][]*fiber.Route]()}
+
+	mountFields = []mountField{routeGroup, groupApp, appStack}
+)
+
+// check returns an error wrapping srvr.ErrRouteConfig when f's owner type
+// has no field f.name of type f.want.
+func (f mountField) check() error {
+	got, ok := f.owner.FieldByName(f.name)
+	if !ok {
+		return f.unreadable("is missing")
+	}
+
+	return f.typed(got.Type)
+}
+
+// read returns field f of struct value v, or an error wrapping
+// srvr.ErrRouteConfig when it is missing or not of the expected type.
+func (f mountField) read(v reflect.Value) (reflect.Value, error) {
+	got := v.FieldByName(f.name)
+	if !got.IsValid() {
+		return got, f.unreadable("is missing")
+	}
+
+	return got, f.typed(got.Type())
+}
+
+// typed returns an error wrapping srvr.ErrRouteConfig when got is not the
+// type f expects.
+func (f mountField) typed(got reflect.Type) error {
+	if got != f.want {
+		return f.unreadable("has type " + got.String() + ", want " + f.want.String())
+	}
+
+	return nil
+}
+
+// unreadable returns the error for a field the walk cannot read.
+func (f mountField) unreadable(problem string) error {
+	return mountError("field %s.%s %s", f.owner, f.name, problem)
+}
+
+// mountError returns an error wrapping srvr.ErrRouteConfig for fiber
+// internals the sub-app walk cannot read, naming the fiber version.
+func mountError(format string, args ...any) error {
+	return engine.RouteError("fiber %s: cannot list mounted sub-app routes: %s", fiberVersion(), fmt.Sprintf(format, args...))
 }
 
 // subApp returns the *fiber.App behind group, a *fiber.Group value, or
-// the zero Value when there is none; walk rejects anything not an app.
-func subApp(group reflect.Value) reflect.Value {
-	if group.Kind() != reflect.Pointer || group.IsNil() {
-		return reflect.Value{}
+// the zero Value when the group is nil.
+func subApp(group reflect.Value) (reflect.Value, error) {
+	if !group.IsValid() {
+		return reflect.Value{}, routeGroup.unreadable("is missing")
 	}
 
-	return group.Elem().FieldByName("app")
+	if err := routeGroup.typed(group.Type()); err != nil {
+		return reflect.Value{}, err
+	}
+
+	if group.IsNil() {
+		return reflect.Value{}, nil
+	}
+
+	return groupApp.read(group.Elem())
 }
 
 // walk appends the routes of app, a *fiber.App value, as fiber composes
@@ -302,18 +409,20 @@ func subApp(group reflect.Value) reflect.Value {
 // processSubAppsRoutes): paths joined to prefix, middleware and implicit
 // HEAD routes skipped, nested mounts followed. It only reads fiber's
 // unexported fields (App.stack, Route.group, Group.app, pinned by
-// TestMountFields) and stops at a missing field or a mount cycle.
-func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath map[uintptr]bool) {
+// TestMountFields), checking each one's type before using it, and stops at
+// a mount cycle. A field that is missing or of another type, as a fiber
+// upgrade can make it, returns an error wrapping srvr.ErrRouteConfig.
+func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath map[uintptr]bool) error {
 	if app.Kind() != reflect.Pointer || app.IsNil() || onPath[app.Pointer()] {
-		return
+		return nil
 	}
 
 	onPath[app.Pointer()] = true
 	defer delete(onPath, app.Pointer())
 
-	stack := app.Elem().FieldByName("stack")
-	if stack.Kind() != reflect.Slice {
-		return
+	stack, err := appStack.read(app.Elem())
+	if err != nil {
+		return err
 	}
 
 	walked := map[uintptr]bool{} // mount groups of this app: one per mount, filed in every stack
@@ -331,13 +440,64 @@ func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath 
 			case declared(r):
 				o.routes = append(o.routes, engine.Route{Method: r.FieldByName("Method").String(), Pattern: groupPath(prefix, r.FieldByName("Path").String()), Configurer: configurer})
 			case boolField(r, "mount"):
-				if g := r.FieldByName("group"); g.Kind() == reflect.Pointer && !walked[g.Pointer()] {
-					walked[g.Pointer()] = true
-					o.walk(subApp(g), groupPath(prefix, r.FieldByName("Path").String()), configurer, onPath)
+				g, err := routeGroup.read(r)
+				if err != nil {
+					return err
+				}
+
+				if g.IsNil() || walked[g.Pointer()] {
+					continue
+				}
+
+				walked[g.Pointer()] = true
+
+				sub, err := groupApp.read(g.Elem())
+				if err != nil {
+					return err
+				}
+
+				if err := o.walk(sub, groupPath(prefix, r.FieldByName("Path").String()), configurer, onPath); err != nil {
+					return err
 				}
 			}
 		}
 	}
+
+	return nil
+}
+
+// fiberModule is the module path of the fiber version srvr reads.
+const fiberModule = "github.com/gofiber/fiber/v3"
+
+// fiberVersion returns the version of fiber linked into the binary, from
+// its build information, or "unknown" when that is unavailable.
+func fiberVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+
+	return moduleVersion(info.Deps, fiberModule)
+}
+
+// moduleVersion returns the version of module path among deps, following
+// a replacement, or "unknown" when it is absent or has none.
+func moduleVersion(deps []*debug.Module, path string) string {
+	for _, m := range deps {
+		if m == nil || m.Path != path {
+			continue
+		}
+
+		if m.Replace != nil {
+			m = m.Replace
+		}
+
+		if m.Version != "" {
+			return m.Version
+		}
+	}
+
+	return "unknown"
 }
 
 // groupPath joins a mount prefix and a sub-app route path as fiber's
