@@ -159,7 +159,12 @@ func (s *Server) Start(ctx context.Context) error {
 		return s.fail(ctx, err)
 	}
 
-	r := s.serve(ctx, ln, handler)
+	addr, err := listenerAddr(ln)
+	if err != nil {
+		return s.fail(ctx, configError("Listener", typeName(ln), err.Error()))
+	}
+
+	r := s.serve(ctx, ln, addr, handler)
 	if r == nil {
 		// Shutdown was called while the server was starting.
 		return s.hookErr
@@ -282,6 +287,26 @@ func (s *Server) listen(ctx context.Context) (net.Listener, error) {
 	return new(net.ListenConfig).Listen(ctx, "tcp", s.cfg.Addr)
 }
 
+// listenerAddr returns the text of ln's address. A nil or typed-nil
+// address, or a panic in Addr or String, is an error: ln is consumer code,
+// and its address is read without trusting it.
+func listenerAddr(ln net.Listener) (addr string, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			addr, err = "", errors.New("reading its address panicked: "+valueText(v))
+		}
+	}()
+
+	switch a := ln.Addr(); {
+	case a == nil:
+		return "", errors.New("its address is nil")
+	case isNil(a):
+		return "", errors.New("its address is a nil " + typeName(a))
+	default:
+		return a.String(), nil
+	}
+}
+
 // run is the serving part of a running server.
 type run struct {
 	hs *http.Server
@@ -292,9 +317,10 @@ type run struct {
 	stopping chan struct{}
 }
 
-// serve moves the server to running and serves on ln. It returns nil, after
-// closing ln and the server, when Shutdown was called while starting.
-func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handler) *run {
+// serve moves the server to running and serves on ln, whose address is
+// addr. It returns nil, after closing ln and the server, when Shutdown was
+// called while starting. It calls no consumer code under s.mu.
+func (s *Server) serve(ctx context.Context, ln net.Listener, addr string, handler http.Handler) *run {
 	ln = &onceCloseListener{Listener: ln}
 
 	s.mu.Lock()
@@ -315,7 +341,7 @@ func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handle
 	}
 	s.run = r
 	s.state = stateRunning
-	s.addr = ln.Addr().String()
+	s.addr = addr
 	s.mu.Unlock()
 
 	s.logEvent(ctx, slog.LevelInfo, eventStarted, slog.String(keyServerAddress, s.addr))
@@ -440,7 +466,9 @@ func (s *Server) wait(ctx context.Context, first bool) error {
 
 // onceCloseListener makes Close idempotent, so that srvr can close the
 // listener before draining and http.Server.Shutdown can close it again
-// without reporting an error.
+// without reporting an error. The Once runs the consumer's Close under its
+// own lock, which guards no srvr state: a second caller waits only for the
+// same Close it would have called itself.
 type onceCloseListener struct {
 	net.Listener
 

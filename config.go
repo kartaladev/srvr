@@ -64,9 +64,10 @@ type settings struct {
 	errs []error
 }
 
-// configError returns an error wrapping ErrConfig that names field and value.
+// configError returns an error wrapping ErrConfig that names field and
+// value, whose text is read through valueText: a value may be consumer code.
 func configError(field string, value any, reason string) error {
-	return fmt.Errorf("%w: %s %v: %s", ErrConfig, field, value, reason)
+	return fmt.Errorf("%w: %s %s: %s", ErrConfig, field, valueText(value), reason)
 }
 
 // Option configures a Server. Options apply in argument order, so a later
@@ -108,10 +109,17 @@ func WithMaxHeaderBytes(n int) Option {
 // Shutdown is called before Start. Start(nil) and a Start returning
 // ErrServerStarted do not close ln; a Start returning ErrServerClosed does
 // not either (ln was closed when the server closed).
+//
+// A nil or typed-nil ln fails New. Start reads ln.Addr() before serving: a
+// nil or typed-nil address, or a panic in Addr or in the address's String,
+// fails Start with an error wrapping ErrConfig naming Listener, like any
+// other Start failure, instead of serving under an invented address.
 func WithListener(ln net.Listener) Option {
 	return func(s *settings) {
-		if ln == nil {
-			s.errs = append(s.errs, configError("Listener", "<nil>", "is nil"))
+		if isNil(ln) {
+			s.errs = append(s.errs, configError("Listener", typeName(ln), "is nil"))
+
+			return
 		}
 
 		s.listener = ln
@@ -180,7 +188,12 @@ func validateAddr(s *settings) error {
 // combined with an address.
 func validateListener(s *settings) error {
 	if s.listener != nil && s.Addr != "" {
-		return configError("Listener", s.listener.Addr(), fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
+		addr, err := listenerAddr(s.listener)
+		if err != nil {
+			addr = typeName(s.listener)
+		}
+
+		return configError("Listener", addr, fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
 	}
 
 	return nil

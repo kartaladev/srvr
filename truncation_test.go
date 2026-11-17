@@ -1,6 +1,7 @@
 package srvr_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -228,6 +229,90 @@ func TestHostileLoggedErrors(t *testing.T) {
 			}
 			if got := out.waitRecord(t, "logged")["err"]; got != tt.logged {
 				t.Fatalf("err = %v, want %q", got, tt.logged)
+			}
+		})
+	}
+}
+
+// TestDisabledLimitKinds covers structured-logging / Scenario: Text reaches
+// a consumer handler as strings when the limit is disabled.
+func TestDisabledLimitKinds(t *testing.T) {
+	t.Parallel()
+
+	logs := func(err error) srvr.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) error {
+			srvr.LoggerFromContext(r.Context()).Info("logged", slog.Any("err", err))
+			w.WriteHeader(http.StatusOK)
+
+			return nil
+		}
+	}
+
+	tests := []struct {
+		name       string
+		hook       func(context.Context) error // AfterDrain hook, run by Shutdown before Start
+		handler    srvr.HandlerFunc            // handler of GET /x
+		event, key string
+		want       func(string) bool
+	}{
+		{
+			name:  "hook error",
+			hook:  func(context.Context) error { return errors.New("flush failed") },
+			event: "server.shutdown_hook.failed", key: "exception.message",
+			want: func(s string) bool { return s == "flush failed" },
+		},
+		{
+			name:    "returned error",
+			handler: returning(errors.New("boom")),
+			event:   "http.request.failed", key: "exception.message",
+			want: func(s string) bool { return s == "boom" },
+		},
+		{
+			name:    "panic stack",
+			handler: func(http.ResponseWriter, *http.Request) error { panic("boom") },
+			event:   "http.request.failed", key: "exception.stacktrace",
+			want: func(s string) bool { return strings.Contains(s, "goroutine ") },
+		},
+		{
+			name:    "typed-nil logged error",
+			handler: logs((*derefError)(nil)),
+			event:   "logged", key: "err",
+			want: func(s string) bool { return s == "<nil *srvr_test.derefError>" },
+		},
+		{
+			name:    "logged error whose Error panics with a value whose Error panics",
+			handler: logs(selfPanicError{}),
+			event:   "logged", key: "err",
+			want: func(s string) bool { return s == "<panic in Error(): srvr_test.selfPanicError>" },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := newRecording()
+			opts := []srvr.Option{srvr.WithLogHandler(h), srvr.WithLogMaxAttrBytes(-1)}
+
+			if tt.hook != nil {
+				srv := newServer(t, append(opts, srvr.WithShutdownHook(srvr.AfterDrain, tt.hook))...)
+				_ = srv.Shutdown(context.Background())
+			} else {
+				srv := newServer(t, opts...)
+				mustNil(t, srv.Register(on("", "/x", tt.handler)))
+				get(t, startServer(t, srv)+"/x")
+			}
+
+			var v slog.Value
+			eventually(t, func() bool {
+				var ok bool
+				v, ok = h.value(tt.event, tt.key)
+
+				return ok
+			}, "no "+tt.event+" record with "+tt.key)
+
+			if v.Kind() != slog.KindString || !tt.want(v.String()) {
+				t.Fatalf("%s = %s %s, want a matching string", tt.key, v.Kind(), short(safeText(v.Any())))
 			}
 		})
 	}

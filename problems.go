@@ -2,7 +2,6 @@ package srvr
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
 	"github.com/kartaladev/prblm"
@@ -45,7 +44,7 @@ func WithErrorHook(fn ErrorHook) Option {
 func newProblems(opts []prblm.Option, own ...prblm.Option) (h *prblm.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = configError("ProblemOptions", fmt.Sprint(v), "is invalid")
+			err = configError("ProblemOptions", v, "is invalid")
 		}
 	}()
 

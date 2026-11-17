@@ -33,6 +33,10 @@ const errorKindPanic = "panic"
 // after it. A redactor that panics replaces the
 // attribute with "[redaction failed]", never the unredacted text. fn must
 // not be nil.
+//
+// srvr calls fn synchronously: in the request's access stage, after the
+// response, and in the Start or Shutdown call that writes a lifecycle
+// record. A redactor that blocks stalls that request or call.
 func WithErrorRedactor(fn func(string) string) Option {
 	return func(s *settings) {
 		if fn == nil {
@@ -146,6 +150,15 @@ func errorText(e error) (text string) {
 	return e.Error()
 }
 
+// guardedError wraps a consumer error so that fmt, which guards a
+// panicking Error method only one level deep, reads its text through
+// errorText; Unwrap keeps errors.Is and errors.As working.
+type guardedError struct{ err error }
+
+func (e *guardedError) Error() string { return errorText(e.err) }
+
+func (e *guardedError) Unwrap() error { return e.err }
+
 // valueText formats a panic value, guarded against a panicking String or
 // Error method (fmt would print its own %!v(PANIC=...) text instead).
 func valueText(v any) (text string) {
@@ -157,7 +170,7 @@ func valueText(v any) (text string) {
 
 	switch x := v.(type) {
 	case error:
-		return x.Error()
+		return errorText(x)
 	case fmt.Stringer:
 		return x.String()
 	default:

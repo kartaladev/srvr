@@ -159,7 +159,7 @@ A group SHALL accept a plain `http.Handler` through `Mount(path, handler)`, rout
 | `nil` | (none) | (none); `Start` returns an error wrapping `srvr.ErrRouteConfig` |
 
 ### Requirement: A configurer failure names the configurer
-When `Configure` panics, `Start` SHALL recover it and return an error wrapping `srvr.ErrRouteConfig` that names the configurer's type and contains the panic value, without binding the listener. The panic value's text SHALL be read without panicking; a value whose `Error()` or `String()` panics is shown as `<panic formatting value>`, and the server closes as on any other `Start` failure.
+When `Configure` panics, `Start` SHALL recover it and return an error wrapping `srvr.ErrRouteConfig` that names the configurer's type and contains the panic value, without binding the listener. The panic value's text SHALL be read without panicking; an error value whose `Error()` panics is shown as `<panic in Error(): T>` and a value whose `String()` panics as `<panic formatting value>`, and the server closes as on any other `Start` failure.
 
 #### Scenario: Configure panics
 - **Given** a registered configurer of type `<type>` whose `Configure` panics with `<value>`
@@ -171,4 +171,4 @@ When `Configure` panics, `Start` SHALL recover it and return an error wrapping `
 |------|-------|
 | `*main.UsersAPI` | `boom` |
 | `main.AdminAPI` | `runtime error: invalid memory address or nil pointer dereference` |
-| `*main.HostileAPI` | a value whose `Error()` panics with itself, shown as `<panic formatting value>`; a later `Shutdown` returns `nil` |
+| `*main.HostileAPI` | a value whose `Error()` panics with itself, `main.selfPanic`, shown as `<panic in Error(): main.selfPanic>`; a later `Shutdown` returns `nil` |

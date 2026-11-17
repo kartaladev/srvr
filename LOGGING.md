@@ -76,7 +76,10 @@ goes to logs, never to 5xx responses.
 
 Lifecycle records carry the service keys and never `trace_id`. Their `exception.message` is built
 like a request failure record's: it passes the `WithErrorRedactor` redactor (`[redaction failed]`
-when the redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`.
+when the redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`. With a negative
+`MaxAttrBytes` nothing is cut, but `exception.*` text and `error` values still reach a consumer
+handler as plain strings. A consumer handler and the redactor are called synchronously: one that
+blocks stalls the request or the `Start`/`Shutdown` call writing the record.
 
 ## Sample triage record
 

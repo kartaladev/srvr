@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/kartaladev/srvr"
@@ -106,6 +107,63 @@ func TestListenerOwnership(t *testing.T) {
 			}
 			if accepts := err == nil; accepts != tt.accepts {
 				t.Fatalf("listener accepts connections = %v, want %v (dial: %v)", accepts, tt.accepts, err)
+			}
+		})
+	}
+}
+
+// TestListener_UnusableAddress covers server-lifecycle / Scenario: A
+// listener without a usable address.
+func TestListener_UnusableAddress(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		fault string
+		addr  func() net.Addr
+	}{
+		{"returns nil", func() net.Addr { return nil }},
+		{"returns a typed-nil *net.TCPAddr", func() net.Addr { return (*net.TCPAddr)(nil) }},
+		{"panics", func() net.Addr { panic("addr") }},
+		{"returns an address whose String panics with a value whose Error panics", func() net.Addr { return hostileAddr{} }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.fault, func(t *testing.T) {
+			t.Parallel()
+
+			ln := listen(t)
+			logs := &logBuffer{}
+			srv, err := srvr.New(srvr.WithListener(addrListener{Listener: ln, addr: tt.addr}), srvr.WithLogOutput(logs))
+			mustNil(t, err)
+
+			err = bounded(t, "Start did not return", func() error { return recoverPanic(func() error { return srv.Start(context.Background()) }) })
+			if !errors.Is(err, srvr.ErrConfig) || errors.Is(err, errPanicked) || !strings.Contains(safeText(err), "Listener") {
+				t.Fatalf("Start = %s, want an error wrapping ErrConfig naming Listener, without panicking", safeText(err))
+			}
+
+			select {
+			case <-srv.Ready():
+				t.Fatal("Ready was closed")
+			default:
+			}
+
+			waitRefused(t, ln.Addr().String())
+
+			if len(logs.find(t, "server.failed")) != 1 {
+				t.Fatalf("want one server.failed record, got log %s", logs)
+			}
+
+			if err := shutdownBounded(t, srv); err != nil {
+				t.Fatalf("later Shutdown = %v, want nil", err)
+			}
+
+			if addr := bounded(t, "Addr blocked", srv.Addr); addr != "" {
+				t.Fatalf("Addr = %q, want empty", addr)
+			}
+
+			err = bounded(t, "Register blocked", func() error { return srv.Register(okRoute("/late")) })
+			if !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("Register = %v, want ErrServerClosed", err)
 			}
 		})
 	}

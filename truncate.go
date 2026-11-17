@@ -8,10 +8,14 @@ import (
 // truncatedSuffix marks a value srvr cut.
 const truncatedSuffix = "…[truncated]"
 
+// exceeds reports whether n bytes are more than maxBytes; a negative
+// maxBytes disables the limit.
+func exceeds(n, maxBytes int) bool { return maxBytes >= 0 && n > maxBytes }
+
 // cutString returns s cut to at most max bytes at a UTF-8 boundary plus
 // truncatedSuffix, and whether it cut. A negative max disables cutting.
 func cutString(s string, maxBytes int) (string, bool) {
-	if maxBytes < 0 || len(s) <= maxBytes {
+	if !exceeds(len(s), maxBytes) {
 		return s, false
 	}
 
@@ -74,10 +78,12 @@ func (t *truncator) attrs(attrs []slog.Attr) []slog.Attr {
 }
 
 // record returns r with its message and attributes cut, or r itself when
-// nothing needs cutting. The message of a record srvr writes itself (own)
-// is a fixed event name of the log schema and is never cut.
+// nothing needs rewriting. The message of a record srvr writes itself
+// (own) is a fixed event name of the log schema and is never cut. A
+// negative limit disables cutting, not the rewrite: srvr's own text and
+// error values still reach the base handler as plain strings.
 func (t *truncator) record(r slog.Record, own bool) slog.Record {
-	if t.maxBytes < 0 || (!needsCut(r, t.maxBytes) && (own || len(r.Message) <= t.maxBytes)) {
+	if !needsRewrite(r, t.maxBytes) && (own || !exceeds(len(r.Message), t.maxBytes)) {
 		return r
 	}
 
@@ -98,12 +104,12 @@ func (t *truncator) record(r slog.Record, own bool) slog.Record {
 	return out
 }
 
-// needsCut reports whether an attribute of r may need cutting: a string,
-// group, error or LogValuer value. Other kinds pass through unchanged.
-func needsCut(r slog.Record, maxBytes int) bool {
+// needsRewrite reports whether an attribute of r may need rewriting. Other
+// kinds pass through unchanged.
+func needsRewrite(r slog.Record, maxBytes int) bool {
 	found := false
 	r.Attrs(func(a slog.Attr) bool {
-		found = mayExceed(a.Value, maxBytes)
+		found = mayNeedRewrite(a.Value, maxBytes)
 
 		return !found
 	})
@@ -111,11 +117,13 @@ func needsCut(r slog.Record, maxBytes int) bool {
 	return found
 }
 
-// mayExceed reports whether v can carry text longer than maxBytes.
-func mayExceed(v slog.Value, maxBytes int) bool {
+// mayNeedRewrite reports whether v must be rewritten for the base handler:
+// a string longer than maxBytes; srvr's own text or an error, always handed
+// on as a string; or a group or LogValuer, which may hold any of these.
+func mayNeedRewrite(v slog.Value, maxBytes int) bool {
 	switch v.Kind() {
 	case slog.KindString:
-		return len(v.String()) > maxBytes
+		return exceeds(len(v.String()), maxBytes)
 	case slog.KindGroup, slog.KindLogValuer:
 		return true
 	case slog.KindAny:

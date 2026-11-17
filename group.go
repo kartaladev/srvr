@@ -307,7 +307,7 @@ func chain(h http.Handler, middleware []Middleware) (http.Handler, error) {
 func safeConfigure(c RouteConfigurer[*Group], g *Group) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = routeError("configurer %T panicked: %v", c, v)
+			err = routeError("configurer %T panicked: %s", c, valueText(v))
 		}
 	}()
 

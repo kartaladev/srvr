@@ -287,7 +287,7 @@ var errPanicked = errors.New("panicked")
 func recoverPanic(fn func() error) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("%w: %v", errPanicked, v)
+			err = fmt.Errorf("%w: %s", errPanicked, safeText(v))
 		}
 	}()
 
@@ -299,8 +299,28 @@ func recoverPanic(fn func() error) (err error) {
 func shutdownBounded(t *testing.T, srv *srvr.Server) error {
 	t.Helper()
 
-	result := make(chan error, 1)
-	go func() { result <- srv.Shutdown(context.Background()) }()
+	return bounded(t, "Shutdown did not return", func() error { return srv.Shutdown(context.Background()) })
+}
 
-	return receive(t, result, "Shutdown did not return")
+// bounded returns fn's result, failing the test when fn does not return
+// within waitLimit.
+func bounded[T any](t *testing.T, msg string, fn func() T) T {
+	t.Helper()
+
+	result := make(chan T, 1)
+	go func() { result <- fn() }()
+
+	return receive(t, result, msg)
+}
+
+// newRecovered is srvr.New with a panic returned as an error wrapping
+// errPanicked.
+func newRecovered(opts ...srvr.Option) (srv *srvr.Server, err error) {
+	err = recoverPanic(func() (err error) {
+		srv, err = srvr.New(opts...)
+
+		return err
+	})
+
+	return srv, err
 }

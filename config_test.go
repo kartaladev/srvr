@@ -3,6 +3,7 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,13 @@ func TestNew_Config(t *testing.T) {
 		{name: "MaxHeaderBytes 0 via option", opts: []srvr.Option{srvr.WithMaxHeaderBytes(0)}, message: "MaxHeaderBytes"},
 		{name: "WithListener nil", opts: []srvr.Option{srvr.WithListener(nil)}, message: "Listener"},
 		{name: "WithListener and Addr", opts: []srvr.Option{srvr.WithListener(ln), srvr.WithAddr(":9090")}, message: "Listener"},
+		{name: "WithListener typed nil", opts: []srvr.Option{srvr.WithListener((*net.TCPListener)(nil))}, message: "Listener"},
+		{name: "WithListener typed nil and Addr", opts: []srvr.Option{srvr.WithListener((*net.TCPListener)(nil)), srvr.WithAddr(":8080")}, message: "Listener"},
+		{
+			name:    "WithListener with a panicking Addr and Addr",
+			opts:    []srvr.Option{srvr.WithListener(addrListener{Listener: ln, addr: func() net.Addr { panic("addr") }}), srvr.WithAddr(":8080")},
+			message: "Listener",
+		},
 		{name: "nil shutdown hook", opts: []srvr.Option{srvr.WithShutdownHook(srvr.BeforeDrain, nil)}, message: "ShutdownHook"},
 		{name: "invalid shutdown phase", opts: []srvr.Option{srvr.WithShutdownHook(srvr.ShutdownPhase(9), hook)}, message: "ShutdownPhase"},
 		{name: "MaxHeaderBytes negative via Config", opts: []srvr.Option{srvr.WithConfig(srvr.Config{MaxHeaderBytes: -1})}, message: "MaxHeaderBytes"},
@@ -49,7 +57,7 @@ func TestNew_Config(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv, err := srvr.New(tt.opts...)
+			srv, err := newRecovered(tt.opts...)
 			if tt.message == "" {
 				if err != nil || srv == nil {
 					t.Fatalf("New = %v, %v; want a server", srv, err)

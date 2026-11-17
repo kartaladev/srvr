@@ -59,8 +59,9 @@ type hook struct {
 // A hook that fails does not stop the shutdown: the remaining hooks and the
 // drain still run, and the call that stopped the server returns an error
 // wrapping [ErrShutdownHook]. A hook fails when it returns a non-nil error
-// (a typed nil and an error whose Error method panics included; their text
-// is logged without panicking), panics or outlives its budget.
+// (including a typed nil), panics or outlives its budget. Its error text is
+// read without risk of panicking, even when Error panics, and errors.Is
+// matches both ErrShutdownHook and the hook's error.
 func WithShutdownHook(phase ShutdownPhase, fn func(ctx context.Context) error) Option {
 	return func(s *settings) {
 		switch {
@@ -97,7 +98,7 @@ func (s *Server) runHooks(ctx context.Context, phase ShutdownPhase) error {
 				slog.String(keyFunction, funcName(h.fn)),
 				s.exceptionMessage(errorText(err)),
 			)
-			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, err))
+			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, &guardedError{err}))
 		}
 	}
 
@@ -112,7 +113,7 @@ func runHook(ctx context.Context, fn func(context.Context) error) error {
 	go func() {
 		defer func() {
 			if v := recover(); v != nil {
-				result <- fmt.Errorf("panic: %v", v)
+				result <- errors.New("panic: " + valueText(v))
 			}
 		}()
 
@@ -128,7 +129,9 @@ func runHook(ctx context.Context, fn func(context.Context) error) error {
 		case err := <-result:
 			return err
 		default:
-			return fmt.Errorf("abandoned: %w", ctx.Err())
+			// For BeforeDrain hooks ctx.Err() comes from the consumer's
+			// Shutdown context.
+			return fmt.Errorf("abandoned: %w", &guardedError{ctx.Err()})
 		}
 	}
 }

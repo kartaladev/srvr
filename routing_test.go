@@ -160,6 +160,7 @@ func TestConfigurePanics(t *testing.T) {
 	}{
 		{&PanicAPI{}, "*srvr_test.PanicAPI", "boom"},
 		{NilDerefAPI{}, "srvr_test.NilDerefAPI", "runtime error: invalid memory address or nil pointer dereference"},
+		{&HostileAPI{}, "*srvr_test.HostileAPI", "<panic in Error(): srvr_test.selfPanicError>"},
 	}
 
 	for _, tt := range tests {
@@ -170,10 +171,11 @@ func TestConfigurePanics(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/ok")))
 			mustNil(t, srv.Register(tt.conf))
 
-			err := srv.Start(t.Context())
+			err := recoverPanic(func() error { return srv.Start(t.Context()) })
 			if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), tt.typ) || !strings.Contains(err.Error(), tt.value) {
 				t.Fatalf("Start = %v, want ErrRouteConfig naming %s and %q", err, tt.typ, tt.value)
 			}
+			assertErr(t, shutdownBounded(t, srv), nil, "")
 			select {
 			case <-srv.Ready():
 				t.Fatal("the listener was bound")

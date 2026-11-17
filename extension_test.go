@@ -101,13 +101,14 @@ func TestErrorExtension_Config(t *testing.T) {
 	}{
 		{"nil hook", "ErrorHook", srvr.WithErrorHook(nil)},
 		{"invalid prblm option", "ProblemOptions", srvr.WithProblemOptions(prblm.WithNamespace("not a uri"))},
+		{"prblm option panicking with a value whose Error panics", "ProblemOptions", srvr.WithProblemOptions(func(*prblm.Handler) { panic(selfPanicError{}) })},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv, err := srvr.New(tt.opt)
+			srv, err := newRecovered(tt.opt)
 			if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), tt.message) {
 				t.Fatalf("New = %v, %v; want ErrConfig naming %s", srv, err, tt.message)
 			}

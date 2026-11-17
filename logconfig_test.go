@@ -290,6 +290,33 @@ func (h *recordingHandler) record(msg string) (map[string]string, bool) {
 	return nil, false
 }
 
+// value returns the value of attribute key, kind kept, in the first record
+// with msg, if any.
+func (h *recordingHandler) value(msg, key string) (slog.Value, bool) {
+	h.store.mu.Lock()
+	defer h.store.mu.Unlock()
+
+	for _, r := range h.store.records {
+		if r.Message != msg {
+			continue
+		}
+
+		var v slog.Value
+		found := false
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == key {
+				v, found = a.Value, true
+			}
+
+			return !found
+		})
+
+		return v, found
+	}
+
+	return slog.Value{}, false
+}
+
 // TestOwnHandler covers structured-logging / Scenario: Own handler.
 func TestOwnHandler(t *testing.T) {
 	t.Parallel()

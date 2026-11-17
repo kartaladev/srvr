@@ -38,6 +38,8 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 		},
 		{fault: "returns a typed-nil error", hook: func(context.Context) error { return (*derefError)(nil) }, wantIs: []error{srvr.ErrShutdownHook}},
 		{fault: "returns an error whose Error panics", hook: func(context.Context) error { return badError{} }, wantIs: []error{srvr.ErrShutdownHook}},
+		{fault: "returns an error whose Error panics with a value whose Error panics", hook: func(context.Context) error { return selfPanicError{} }, wantIs: []error{srvr.ErrShutdownHook, selfPanicError{}}},
+		{fault: "panics with a value whose Error panics with itself", hook: func(context.Context) error { panic(selfPanicError{}) }, wantIs: []error{srvr.ErrShutdownHook}, contains: "<panic in Error(): srvr_test.selfPanicError>"},
 		{fault: "returns nil", hook: func(context.Context) error { return nil }},
 	}
 
@@ -79,17 +81,19 @@ func TestHostileHookErrors(t *testing.T) {
 
 	tests := []struct {
 		fault string
-		err   error
+		hook  func(context.Context) error
 	}{
-		{"returns a typed-nil error", (*derefError)(nil)},
-		{"returns an error whose Error panics", badError{}},
+		{"returns a typed-nil error", func(context.Context) error { return (*derefError)(nil) }},
+		{"returns an error whose Error panics", func(context.Context) error { return badError{} }},
+		{"returns an error whose Error panics with a value whose Error panics", func(context.Context) error { return selfPanicError{} }},
+		{"panics with a value whose Error panics with itself", func(context.Context) error { panic(selfPanicError{}) }},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.fault, func(t *testing.T) {
 			t.Parallel()
 
-			srv := newServer(t, srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { return tt.err }))
+			srv := newServer(t, srvr.WithShutdownHook(srvr.AfterDrain, tt.hook))
 
 			assertErr(t, recoverPanic(func() error { return srv.Shutdown(context.Background()) }), []error{srvr.ErrShutdownHook}, "")
 			assertErr(t, shutdownBounded(t, srv), nil, "")
@@ -235,5 +239,39 @@ func assertErr(t *testing.T, err error, targets []error, text string) {
 
 	if !strings.Contains(err.Error(), text) {
 		t.Fatalf("err = %v, want it to contain %q", err, text)
+	}
+}
+
+// TestShutdown_HostileContext covers server-lifecycle / Scenario: A
+// Shutdown context with a hostile Err.
+func TestShutdown_HostileContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"an error whose Error panics with a value whose Error panics", selfPanicError{}},
+		{"a typed-nil error", (*derefError)(nil)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			block := make(chan struct{})
+			t.Cleanup(func() { close(block) })
+
+			srv := newServer(t, srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error { <-block; return nil }))
+			startWith(context.Background(), t, srv)
+
+			ctx := newHostileContext(t, 50*time.Millisecond, tt.err)
+			err := bounded(t, "Shutdown did not return", func() error { return recoverPanic(func() error { return srv.Shutdown(ctx) }) })
+			if errors.Is(err, errPanicked) || !errors.Is(err, srvr.ErrShutdownHook) || !errors.Is(err, tt.err) {
+				t.Fatalf("Shutdown = %s, want ErrShutdownHook and the context error, without panicking", safeText(err))
+			}
+
+			assertErr(t, shutdownBounded(t, srv), nil, "")
+		})
 	}
 }

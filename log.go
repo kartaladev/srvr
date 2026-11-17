@@ -26,7 +26,8 @@ type LogConfig struct {
 	AddSource bool `json:"add_source" yaml:"add_source" env:"ADD_SOURCE"`
 	// MaxAttrBytes caps every string attribute, error text and message.
 	// Default 1024 bytes; a negative value disables the cap, which loosens
-	// a safety default.
+	// a safety default. Error values still reach the handler as their
+	// guarded text, a plain string, whatever the cap.
 	MaxAttrBytes int `json:"max_attr_bytes" yaml:"max_attr_bytes" env:"MAX_ATTR_BYTES"`
 }
 
@@ -89,7 +90,8 @@ func WithLogAddSource() Option {
 }
 
 // WithLogMaxAttrBytes caps string attributes at n bytes (default 1024); a
-// negative n disables the cap, which loosens a safety default.
+// negative n disables the cap, which loosens a safety default. Error values
+// still reach the handler as their guarded text, a plain string.
 func WithLogMaxAttrBytes(n int) Option {
 	return func(s *settings) { s.log.MaxAttrBytes = n }
 }
@@ -112,6 +114,11 @@ func WithLogOutput(w io.Writer) Option {
 // text handler. srvr still adds trace correlation, truncation and failure
 // containment around it. It cannot be combined with level, format, source
 // or output settings, which belong to h. h must not be nil.
+//
+// srvr calls h synchronously, on the goroutine that logs: a handler that
+// blocks stalls the request, or the Start or Shutdown call, that writes
+// the record. srvr does not bound it, because an asynchronous handler would
+// lose records on a crash.
 func WithLogHandler(h slog.Handler) Option {
 	return func(s *settings) {
 		if isNil(h) {

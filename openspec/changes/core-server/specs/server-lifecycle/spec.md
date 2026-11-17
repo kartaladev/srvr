@@ -282,7 +282,7 @@ A hook that returns an error (a typed nil or one whose `Error()` panics included
 | returns a typed-nil error `(*hookErr)(nil)` | an error matching `srvr.ErrShutdownHook` |
 | returns an error whose `Error()` panics | an error matching `srvr.ErrShutdownHook` |
 | returns an error whose `Error()` panics with a value whose `Error()` panics | an error matching `srvr.ErrShutdownHook` |
-| panics with a value whose `Error()` panics with itself | an error matching `srvr.ErrShutdownHook` whose message contains `<panic formatting value>` |
+| panics with a value whose `Error()` panics with itself | an error matching `srvr.ErrShutdownHook` whose message contains `<panic in Error(): T>`, `T` the value's Go type |
 | returns `nil` | `nil` |
 
 #### Scenario: Hostile hook errors when Shutdown is called before Start
