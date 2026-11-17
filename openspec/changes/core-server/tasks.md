@@ -253,6 +253,43 @@
 - [x] 8.9 Document the log schema (event names, keys, levels, limits, the `srvr.log.schema` change policy, `error.type` meaning per failure kind) in `LOGGING.md` and godoc, with a sample triage record; write `notes.md` carry-overs for stack capture at error creation, TLS, h2c and health endpoints (Target: `unassigned`); verify the golden schema test matches the document
 - [x] 8.10 Verify slice end to end (one failing request yields one self-contained record that links to the problem by `trace_id`), confirm builder, walk, fingerprint and redactor branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): write self-contained triage error records`
 
+## 9. Slice: verification fixes
+
+Findings of the `core-server` verification (C1, C2, W1-W4, S1-S6). Reproductions kept from the verification run are the RED tests where a defect was found; rows that pin behaviour already correct (characterization) are confirmed by a mutation check instead (break the code, see the row fail, restore).
+
+- [ ] 9.1 Faulty consumer handler methods never reach the response (structured-logging / Scenario: Own handler, the `Enabled`, `WithAttrs` and `WithGroup` rows); verify `go test -race -run TestOwnHandler` passes
+  - RED: add the three rows to `TestOwnHandler` (handler panicking in `Enabled` for request records, in `WithAttrs`, in `WithGroup`), asserting status `200`, no record and an increased `srvr.LogWriteErrors()`; fails with `EOF` because only `Handle` is guarded (`logguard.go`), `Enabled` is called unguarded from `writeAccess` and the replay of `WithAttrs`/`WithGroup` runs before the guard
+  - GREEN: guard `Enabled` (a panic counts and reports disabled) and build the replayed target handler inside the guard, so a panic there counts and skips the record
+  - REFACTOR: Extract Function for one guarded call shared by `Enabled`, replay and `Handle`, then /simplify
+- [ ] 9.2 Logging a hostile error value never fails the request (structured-logging / Scenario: Hostile logged errors, all rows); verify `go test -race -run TestHostileLoggedErrors` passes
+  - RED: table with a typed-nil error and a panicking `Error()` in the record, and a typed-nil error through `l.With`; fails with status `500` because `truncator.attr` calls `Error()` unguarded on both paths
+  - GREEN: read the text through the guarded `errorText` (`triage.go`)
+  - REFACTOR: Move Function `errorText` next to the other guarded formatting if /simplify finds it clearer, then /simplify
+- [ ] 9.3 Failed records are never suppressed and late failures keep their level (structured-logging / Scenario: Failures while the access log is suppressed, all rows; error-responses / Scenario: Late error, all rows with `level`, `srvr.response.committed` and no `problem`; triage-error-records / Scenario: Problem group, the late-panic row); verify `go test -race -run 'TestAccessLogSuppressed|TestLateError|TestTriage_Problem'` passes
+  - RED: new `TestAccessLogSuppressed` table; extend `TestLateError` to read the access record for every row (fixing its comment that pointed to `TestAccessRecord`) and drop the now-duplicate late-error subtest of `TestAccessRecord_Deferred`; add the late-panic row to `TestTriage_Problem`; fails because `writeAccess` suppresses failed records below 500 and takes the level from the status sent (a late panic is `INFO`)
+  - GREEN: suppression applies only to `http.request.completed`; a failure's level is `ERROR` for a panic, otherwise the higher of the sent status's level and its problem's status's level
+  - REFACTOR: Extract Function for the event and level choice of a finished request, then /simplify
+- [ ] 9.4 A passed listener is owned by the server (server-lifecycle / Scenario: A passed listener is owned by the server, all rows); verify `go test -race -run TestListenerOwnership` passes
+  - RED: table over every row dialling the listener after the call returns; the failure rows fail with "still accepts connections after Start failed" (verification reproduction `TestScratch_ListenerOwnership`)
+  - GREEN: close the configured listener whenever the server closes without serving (`closeUnserved`); `Start(nil)` and misuse errors never reach it
+  - REFACTOR: Consolidate Duplicate Conditional Fragments for the listener close on the unserved paths, then /simplify
+- [ ] 9.5 Nil option row (server-lifecycle / Scenario: Valid and invalid configuration, the nil `Option` row); verify `go test -race -run TestNew_Config` passes
+  - Characterization: add the row to `TestNew_Config`; it passes against the existing nil check in `newSettings`; confirm it fails when that check is removed (mutation), then restore
+- [ ] 9.6 `WithLogAddSource` row (structured-logging / Scenario: Source attribute, the `WithLogAddSource()` row); verify `go test -race -run TestAddSource` passes
+  - Characterization: add the row to `TestAddSource`; confirm it fails when `WithLogAddSource` sets nothing (mutation), then restore
+- [ ] 9.7 Build attributes on failed records through a build-info seam (triage-error-records / Scenario: Build attributes on errors, both rows); verify `go test -race -run TestTriage_Build` passes
+  - RED: make `TestTriage_Build` table-driven over both rows, injecting build information through an `export_test.go` option; fails to compile because no seam exists, then fails on the `(none)` row if the reader is ignored
+  - GREEN: settings hold the build-info reader (default `debug.ReadBuildInfo`) used by `New`; `export_test.go` exposes an option setting it for tests only
+  - REFACTOR: /simplify
+- [ ] 9.8 Option precedence covers every config struct (server-lifecycle / Scenario: Option and config precedence, the access-log and service rows that tasks 7.5 and 7.9 named); verify `go test -race -run TestOptionPrecedence` passes
+  - Characterization: add both rows to `TestOptionPrecedence`; confirm each fails when its `With<Struct>` option stops overwriting the field (mutation), then restore
+- [ ] 9.9 Deterministic stop races and recorder paths (server-lifecycle / Scenario: Shutdown misuse, the "being shut down by another goroutine" row; structured-logging / Scenario: Access record content); verify `go test -race -count=20 -run 'TestShutdown|TestResponseRecorder'` passes
+  - Shutdown race: let a `Shutdown` that finds the server running claim the stop sequence under the lock that read the state (design D1), removing the unreachable "lost the race" branch; a test stops the server through its context with a blocking `BeforeDrain` hook and calls `Shutdown` meanwhile, asserting `nil` only after the stop finishes
+  - Recorder: internal test calling `ReadFrom` before `WriteHeader`, asserting status `200`, the started flag and the byte count
+  - Bounded test: `TestShutdown_Drain` waits on every channel with a deadline and fails with a message instead of hanging until the 60s test timeout
+- [ ] 9.10 Godoc and log schema document: `AccessLogConfig` and its options (failed records are never suppressed), `LogWriteErrors` (process-wide), `WithListener` (ownership), `recordFailure` (W3 rule), `LOGGING.md` levels and suppression; verify `go doc` shows them and `TestLogSchemaGolden` still passes with `srvr.log.schema` unchanged (no key renamed or removed; a failure's level is not a key)
+- [ ] 9.11 Verify the slice: confirm the log guard, truncation, access level and suppression, listener close and stop-sequence branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, check no `.test` process is left, run /simplify on the slice and commit `fix(core): ...`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.

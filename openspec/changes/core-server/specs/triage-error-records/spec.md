@@ -36,6 +36,7 @@ A failed-request record SHALL carry a `problem` group with the `status`, `type` 
 | returns `prblm.ErrConflict` | `problem.status` `409`, `problem.type` `about:blank`, `problem.title` `Conflict` |
 | returns `errors.New("boom")` | `problem.status` `500`, `problem.title` `Internal Server Error` |
 | writes `200` then returns `errors.New("late")` | no `problem` and `srvr.response.committed` `true` |
+| writes `200` then panics with `"late"` | no `problem`, `srvr.response.committed` `true`, `error.kind` `panic` and `level` `ERROR` |
 
 ### Requirement: Records name the handler's code location
 A failed-request record SHALL carry `code.function.name`, `code.file.path` and `code.line.number` of the route's handler, resolved once at registration, so the failing code is identifiable even when the error carries no stack.
@@ -53,7 +54,7 @@ A failed-request record SHALL carry `code.function.name`, `code.file.path` and `
 | a mounted `http.Handler` of type `*main.Files` | `*main.Files.ServeHTTP` |
 
 ### Requirement: Panics are recorded with their stack
-A recovered panic SHALL produce an `http.request.failed` record at `ERROR` with `error.kind` `panic`, `error.type` `panic`, `exception.type` the panic value's Go type, `exception.message` from the panic value, and `exception.stacktrace` with the goroutine stack at the panic, capped at 32 KiB.
+A recovered panic SHALL produce an `http.request.failed` record at `ERROR`, also when the response had already started, with `error.kind` `panic`, `error.type` `panic`, `exception.type` the panic value's Go type, `exception.message` from the panic value, and `exception.stacktrace` with the goroutine stack at the panic, capped at 32 KiB.
 
 #### Scenario: Panic record
 - **Given** a handler that panics with `<value>`

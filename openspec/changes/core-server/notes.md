@@ -114,3 +114,24 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `hasCycle` used every error with a comparable type as a map key; an error struct holding a slice in an interface field is comparable by type but panics when hashed, so the guard itself would have turned a returned error into a panic record.
 - **Evidence:** `triage_internal_test.go` `TestHasCycle_Unhashable` (`go test -count=1 -run TestHasCycle_Unhashable .`) failed with `panic: hash of unhashable type: []int` before the fix and passes after it.
 - **Suggested action:** none.
+
+### Verification findings folded into the plan (task group 9)
+- **Status:** closed: applied to the plan; implemented by task group 9
+- **Target:** core-server
+- **Context:** The `core-server` verification raised C1 (a consumer handler's `Enabled`/`WithAttrs`/`WithGroup` panic kills the response), C2 (logging a typed-nil or `Error()`-panicking error fails the request), W1-W4 and S1-S6. Owner decisions: W1 - no `http.request.failed` record is ever suppressed, and recovered panics and late errors that would have been 5xx are logged at `ERROR` after the response started (the plan applies the same rule to a late 4xx: the higher level of the status sent and the status the error would have had, so a late `ErrConflict` after `201` is `WARN`); W3 - design D4 follows the code (rendering notes are dropped; the first failure with a problem is kept, a problem-less panic gives way to a later error); S4 - `LogWriteErrors()` stays process-wide and says so; S5 - a `WithListener` listener is owned by srvr and closed on every `Start` failure (the plan extends this to every path where the server closes without serving, including `Shutdown` before `Start`; `Start(nil)` and misuse errors leave it open). W2 (D5 wording) was re-checked with a probe on Go 1.27.4: `ServeMux.Handler` reports `/dir/` for `/dir` and `/a/../dir/` (307), `""` for `//nope` (307 to `/nope`), `/nope` (404) and a wrong method (405).
+- **Evidence:** reproductions kept at the verification scratchpad `kept_copy.go.txt`: `TestScratch_OwnHandlerFaultyMethods` (`Get ... EOF`), `TestScratch_HostileLoggedError` (status 500), `TestScratch_LatePanicRecord` (level `INFO`, and no record with `WithAccessLogDisabled`), `TestScratch_ListenerOwnership` (listener still accepts connections after `Start` failed); D5 probe output recorded above.
+- **Suggested action:** none beyond task group 9.
+
+### Tasks completed without a real RED step (S1)
+- **Status:** closed: recorded
+- **Target:** core-server
+- **Context:** Tasks 2.5, 3.3, 3.7, 3.9, 3.10 (partially), 5.2 and 5.3 were checked off with tests written alongside or after the code they cover, so no failing run was observed for them as AGENTS.md rule 1 requires. Mutation checks run during the verification confirmed that the tests covering these tasks fail when the code they cover is broken, so they do catch regressions. `TestShutdown_Drain` could hang until the 60s test timeout on a regression; task 9.9 bounds every wait.
+- **Evidence:** verification report (mutation checks); no defect.
+- **Suggested action:** none; future tasks keep the RED step.
+
+### A srvr.problem.note event for notes and contained hook panics
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Design D4 originally said prblm notes with no problem would be logged at `WARN` as `srvr.problem.note`; the code drops rendering notes (`ErrInvalidStatus`, `ErrInvalidType`, `ErrUndocumentedType`, `ErrEncoding`, `ErrShadowedDocumentation`) and D4 now says so (owner decision W3). These notes point at consumer configuration mistakes (an invalid status mapping, an undocumented type) that nothing reports today; the entry "A panicking consumer error hook is contained silently" has the same gap. A new event is an additive log schema change (no `srvr.log.schema` bump).
+- **Evidence:** unverified as a defect: behaviour per revised D4 (`access.go` `recordFailure`, `renderingNotes`).
+- **Suggested action:** Owner decides whether to add a `WARN` `srvr.problem.note` record (once per note kind per process, to avoid flooding) for rendering notes and contained hook panics, with a spec scenario and a golden-record row.

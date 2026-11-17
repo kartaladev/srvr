@@ -31,6 +31,7 @@ Constructing a server SHALL validate every option and config field and SHALL ret
 | `ShutdownTimeout` | `-1s` | an error wrapping `srvr.ErrConfig` | `ShutdownTimeout` |
 | `MaxHeaderBytes` | `0` via `WithMaxHeaderBytes(0)` | an error wrapping `srvr.ErrConfig` | `MaxHeaderBytes` |
 | `WithListener` | `nil` | an error wrapping `srvr.ErrConfig` | `Listener` |
+| a nil `Option` | `srvr.New(nil)` | an error wrapping `srvr.ErrConfig` | `Option` |
 | `WithListener` and `Addr` | both set | an error wrapping `srvr.ErrConfig` | `Listener` |
 | `WithShutdownHook` | `srvr.BeforeDrain` with a nil function | an error wrapping `srvr.ErrConfig` | `ShutdownHook` |
 | `WithShutdownHook` | phase `srvr.ShutdownPhase(9)` | an error wrapping `srvr.ErrConfig` | `ShutdownPhase` |
@@ -144,6 +145,24 @@ The server SHALL expose `Ready()` returning a channel closed once the listener i
 | two routes register the same pattern | `srvr.ErrRouteConfig` | is never closed |
 | the `Start` context is already cancelled | `context.Canceled` | is never closed |
 | `Start(nil)` is called | `srvr.ErrConfig` | is never closed |
+
+### Requirement: A passed listener is owned by the server
+A listener passed with `WithListener` SHALL be closed when the server closes, as `http.Server.Serve` closes its listener: after serving, on every `Start` failure after the server left its initial state, and on `Shutdown` before `Start`. `Start(nil)`, `ErrServerStarted` and `ErrServerClosed` change nothing and SHALL leave it open.
+
+#### Scenario: A passed listener is owned by the server
+- **Given** a server configured with `WithListener(ln)` where `<condition>`
+- **When** `<call>` returns
+- **Then** `ln` `<listener>`
+
+##### Examples:
+| condition | call | listener |
+|-----------|------|----------|
+| a route configurer panics | `Start`, with an error matching `srvr.ErrRouteConfig` | is closed and refuses connections |
+| two routes register the same pattern | `Start`, with an error matching `srvr.ErrRouteConfig` | is closed and refuses connections |
+| the `Start` context is already cancelled | `Start`, with an error matching `context.Canceled` | is closed and refuses connections |
+| `Shutdown` was called before `Start` | `Shutdown`, with `nil` | is closed and refuses connections |
+| the server served and was shut down | `Start`, with `nil` | is closed and refuses connections |
+| `Start(nil)` is called | `Start`, with an error matching `srvr.ErrConfig` | still accepts connections (nothing changed; the server can still start) |
 
 ### Requirement: Shutdown is graceful, bounded and idempotent
 `Shutdown(ctx)` SHALL stop accepting connections, wait for in-flight requests until `ctx` is done, then close remaining connections and return the context error. Repeated calls SHALL be safe and return nil once shut down.

@@ -98,20 +98,20 @@ A panic in a handler or middleware SHALL be recovered and answered with a `500` 
 | `http.ErrAbortHandler` | an aborted connection and no response |
 
 ### Requirement: Errors after the response started are not rendered
-When a handler returns an error or panics after the response status has been written, the server SHALL NOT write a problem or change the status; the error SHALL still be logged.
+When a handler returns an error or panics after the response status has been written, the server SHALL NOT write a problem or change the status; the error SHALL still be logged, at the level of the status it would have been answered with (a panic at `ERROR`), and never suppressed by the access log configuration.
 
 #### Scenario: Late error
 - **Given** a handler that writes status `<written>` and body `partial` and then `<fails>`
 - **When** a client sends a request to it
 - **Then** the client receives status `<written>` and a body starting with `partial`
-- **And** the access record has `srvr.response.committed` `true`
+- **And** the access record has `msg` `http.request.failed`, `level` `<level>`, `srvr.response.committed` `true` and no `problem` group
 
 ##### Examples:
-| written | fails |
-|---------|-------|
-| `200` | returns `errors.New("late")` |
-| `200` | panics with `"late"` |
-| `201` | returns `prblm.ErrConflict` |
+| written | fails | level |
+|---------|-------|-------|
+| `200` | returns `errors.New("late")` | `ERROR` |
+| `200` | panics with `"late"` | `ERROR` |
+| `201` | returns `prblm.ErrConflict` | `WARN` |
 
 ### Requirement: Consumers extend error rendering
 The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types) and an error hook. srvr's own hook, which records the error for the request's access record, SHALL always run, and the consumer's hook SHALL run after it. A panic in the consumer's hook SHALL NOT affect the response.

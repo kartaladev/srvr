@@ -83,19 +83,20 @@ With `WithLogLevelVar(*slog.LevelVar)` the server SHALL apply level changes to r
 With `AddSource` enabled, records SHALL carry a `source` attribute naming the code that called the logger, not srvr's internal handler. Access records written by srvr itself SHALL NOT carry `source`.
 
 #### Scenario: Source attribute
-- **Given** a server with `AddSource` `<add_source>`
+- **Given** a server configured with `<config>`
 - **When** a handler at `handlers.go:<line>` logs `INFO` through the request logger
 - **Then** the handler's record `source` is `<source>`
 - **And** the access record has no `source`
 
 ##### Examples:
-| add_source | line | source |
-|------------|------|--------|
-| `true` | `42` | a file ending in `handlers.go` with line `42` |
-| `false` | `42` | (none) |
+| config | line | source |
+|--------|------|--------|
+| `LogConfig{AddSource: true}` | `42` | a file ending in `handlers.go` with line `42` |
+| `WithLogAddSource()` | `42` | a file ending in `handlers.go` with line `42` |
+| (none) | `42` | (none) |
 
 ### Requirement: Consumers may supply their own handler or logger
-The consumer SHALL be able to supply a `slog.Handler` or `*slog.Logger`; srvr SHALL still add trace correlation to it. Supplying one together with level, format, source or output settings SHALL fail construction.
+The consumer SHALL be able to supply a `slog.Handler` or `*slog.Logger`; srvr SHALL still add trace correlation to it. Supplying one together with level, format, source or output settings SHALL fail construction. A consumer handler whose `Enabled`, `WithAttrs`, `WithGroup` or `Handle` fails (returns an error or panics) SHALL never affect the response: srvr counts the failure in `srvr.LogWriteErrors()` and skips that record.
 
 #### Scenario: Own handler
 - **Given** a server configured with `<config>`
@@ -111,6 +112,9 @@ The consumer SHALL be able to supply a `slog.Handler` or `*slog.Logger`; srvr SH
 | `WithLogHandler(nil)` | construction error wrapping `srvr.ErrConfig` |
 | `WithLogHandler(h)` where `h.Handle` returns an error | the response is unaffected and status is `200` |
 | `WithLogHandler(h)` where `h.Handle` panics | the response is unaffected and status is `200` |
+| `WithLogHandler(h)` where `h.Enabled` panics for request records | the response is unaffected, status is `200`, the record is skipped and `srvr.LogWriteErrors()` increases |
+| `WithLogHandler(h)` where `h.WithAttrs` panics | the response is unaffected, status is `200`, the record is skipped and `srvr.LogWriteErrors()` increases |
+| `WithLogHandler(h)` where `h.WithGroup` panics and the handler logs through `srvr.LoggerFromContext(ctx).WithGroup("db")` | the response is unaffected, status is `200`, the record is skipped and `srvr.LogWriteErrors()` increases |
 
 ### Requirement: Request records carry trace correlation
 Every record written with a request's context SHALL carry `trace_id` and `span_id`; records written without a request context SHALL carry neither key, never an empty value. Handlers SHALL get a request-scoped logger through `srvr.LoggerFromContext`.
@@ -150,7 +154,7 @@ Every record written with a request's context SHALL carry `trace_id` and `span_i
 | `slog.Default().WithGroup("db")` after `WithSetDefaultLogger()` | `"db":{"k":"v"}` |
 
 ### Requirement: One access record per request
-The server SHALL write exactly one access record per request when the response finishes or is aborted, with `msg` `http.request.completed` or, when an error was returned, a panic recovered, the request aborted or no route matched, `http.request.failed`. Its level SHALL be `INFO` below 400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. Skip paths and disabling the access log SHALL suppress only records with status below 500.
+The server SHALL write exactly one access record per request when the response finishes or is aborted, with `msg` `http.request.completed` or, when an error was returned, a panic recovered, the request aborted or no route matched, `http.request.failed`. Its level SHALL be `INFO` below 400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. Skip paths and disabling the access log SHALL suppress only `http.request.completed` records with status below 500.
 
 #### Scenario: Access record content
 - **Given** route `GET /users/{id}` whose handler `<behaviour>`
@@ -210,6 +214,23 @@ The server SHALL write exactly one access record per request when the response f
 | `WithAccessLogSkipPaths("/healthz")` | `GET /healthz` | not written |
 | `WithAccessLogDisabled()` | `GET /ping` | not written |
 | `WithAccessLogDisabled()` then `WithAccessLogConfig(AccessLogConfig{})` | `GET /ping` | written |
+
+### Requirement: Failed-request records are never suppressed
+An `http.request.failed` record SHALL be written whatever the access log configuration. A recovered panic SHALL be logged at `ERROR`, and an error that arrived after the response started at the higher of the level of the status sent and of the status the error would have been answered with.
+
+#### Scenario: Failures while the access log is suppressed
+- **Given** a server configured with `<config>`
+- **When** a client sends `<request>`
+- **Then** an `http.request.failed` record is `<written>`
+
+##### Examples:
+| config | request | written |
+|--------|---------|---------|
+| `AccessLogConfig{SkipPaths: ["/healthz"]}` | `GET /healthz` returning `prblm.ErrNotFound` | written |
+| `WithAccessLogDisabled()` | `GET /ping` returning `prblm.ErrNotFound` | written |
+| `WithAccessLogDisabled()` | `GET /nope` (no route) | written |
+| `WithAccessLogDisabled()` | `GET /late` writing `200` and then panicking | written, at `ERROR` |
+| `WithAccessLogDisabled()` | `GET /late` writing `200` and then returning `errors.New("late")` | written, at `ERROR` |
 
 ### Requirement: Sensitive data is never logged by default
 Access and error records SHALL NOT contain request or response bodies, `Authorization`, `Cookie` or `Set-Cookie` values, query strings, the raw URL path or the client address, at any log level, unless the matching named opt-in is enabled.
@@ -292,6 +313,22 @@ Logged values SHALL be JSON-escaped so control characters cannot start a new lin
 | 5000 bytes of `x` | 5000 bytes of `x` |
 | 9000 bytes of `x` | 8192 bytes of `x` followed by `…[truncated]` |
 
+### Requirement: Logging an error value never fails the request
+Reading the text of an `error` value logged through srvr's handler SHALL never fail the request: a typed nil SHALL be logged as `<nil T>` and an `Error()` that panics as `<panic in Error(): T>`, `T` being the error's Go type.
+
+#### Scenario: Hostile logged errors
+- **Given** a server with no logging configuration
+- **When** a handler logs `INFO` through the request logger with `<attribute>` set to `<value>` and writes `200`
+- **Then** the response status is `200`
+- **And** the logged value is `<logged>`
+
+##### Examples:
+| attribute | value | logged |
+|-----------|-------|--------|
+| `err` via `slog.Any("err", e)` | a typed-nil `*MyErr` whose `Error()` dereferences it | `<nil *MyErr>`, the type with its package |
+| `err` via `slog.Any("err", e)` | an error whose `Error()` panics | `<panic in Error(): T>`, `T` its Go type |
+| `err` added with `l.With(slog.Any("err", e))` | a typed-nil `*MyErr` whose `Error()` dereferences it | `<nil *MyErr>`, the type with its package |
+
 ### Requirement: The log schema is versioned
 Every record srvr writes itself (lifecycle, access and failed records, warnings) SHALL carry `srvr.log.schema` `1`; records written by consumer code SHALL NOT. Adding a key SHALL keep the version; renaming or removing a key, or changing a key's meaning or value type, SHALL increase it.
 
@@ -310,7 +347,7 @@ Every record srvr writes itself (lifecycle, access and failed records, warnings)
 | a handler's own record through `srvr.LoggerFromContext` | (none) |
 
 ### Requirement: Log write failures never fail requests
-When the log output fails or blocks briefly, the response SHALL be unaffected; write errors SHALL be counted and reported through `srvr.LogWriteErrors()` instead of being logged.
+When the log output fails or blocks briefly, the response SHALL be unaffected; write errors SHALL be counted and reported through `srvr.LogWriteErrors()` instead of being logged. The counter is process-wide: it is shared by every server in the process and never reset.
 
 #### Scenario: Broken output
 - **Given** a server whose log output `<fault>`
