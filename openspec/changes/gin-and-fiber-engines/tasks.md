@@ -10,11 +10,11 @@
 
 ## 2. Slice: engine-neutral pieces extracted, net/http unchanged
 
-Blocked until the owner decides notes.md "Where srvr's public configuration types live once engine exists" (design D1, Layering); every task below depends on where `Option`, the config structs, `Trace` and the sentinel errors are defined.
+Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `Option` (`func(*engine.Settings)`), `Trace`, `ShutdownPhase`, `ErrorHook` and the sentinels are declared in `engine` and aliased in `srvr`; every `With...` stays in `srvr`. Each move is a behaviour-preserving refactoring with the core suite green at every step.
 
 - [ ] 2.1 Shared configuration model (engine-support / Scenario: Same validation on every engine, `net/http` rows); verify `go test -race ./...` in the core passes unchanged and `go test -race -run TestEngineConfig ./engine/...` passes
-  - RED: `TestEngineConfig` in package `engine` with the `net/http` rows driving `engine.ResolveConfig`; fails because the package does not exist
-  - GREEN: move config resolution and validation from core internals to `engine`, core delegates to it
+  - RED: `TestEngineConfig` in package `engine` with the `net/http` rows driving `engine.ResolveConfig`, plus the rows of engine-support / Scenario: srvr names are the engine declarations; fails because the package does not exist
+  - GREEN: move the public types into `engine` and alias them in `srvr` (design D1); `Option` becomes `func(*engine.Settings)` with exported, engine-only fields; config resolution and validation move to `engine.ResolveConfig`, which `srvr.New` calls; an opaque engine-specific option slot whose foreign entries fail construction (engine-support / Scenario: Engine-specific option placement, `net/http` row)
   - REFACTOR: Move Function and Remove Middle Man where core only forwards, then /simplify
 - [ ] 2.2 Shared lifecycle state machine (engine-support / Scenario: Lifecycle misuse on every engine, as rows run against net/http); verify `go test -race -count=20 -run TestEngineLifecycle ./engine/...` passes
   - RED: `TestEngineLifecycle` with a fake serve/drain adapter covering every state row; fails because the state machine is internal
@@ -79,11 +79,11 @@ Blocked until the owner decides notes.md "Where srvr's public configuration type
   - RED: table including nil, panicking, `Use`-calling and route-registering hooks; fails because settings are not re-asserted and gin trusts every proxy by default
   - GREEN: `SetTrustedProxies(nil)` before the hook, `WithEngine`, re-assertion (including `RedirectTrailingSlash` off), reject hooks that add to `e.Handlers` or `e.Routes()`
   - REFACTOR: /simplify
-- [ ] 3.13 Gin config validation parity (engine-support / Scenario: Same validation on every engine, `gin` rows including option order); verify `go test -race -run TestGinConfig` passes
+- [ ] 3.13 Gin config validation parity (engine-support / Scenario: Same validation on every engine, `gin` rows including option order; Scenario: Engine-specific option placement, `gin` rows); verify `go test -race -run TestGinConfig` passes
   - RED: table; fails if any error differs
   - GREEN: delegate to `engine.ResolveConfig`
   - REFACTOR: /simplify
-- [ ] 3.14 Godoc (including the global gin mode and `GIN_MODE=release`) and a runnable `Example` with a `RegistrationHandler` whose `Register` method is mounted on `*gin.RouterGroup` (as in gin-engine / Scenario: Gin registration); verify `go test -run Example` passes
+- [ ] 3.14 Godoc (including the global gin mode and `GIN_MODE=release`, and the warning that a cyclic error chain passed to `c.Error` never returns - design D2) and a runnable `Example` with a `RegistrationHandler` whose `Register` method is mounted on `*gin.RouterGroup` (as in gin-engine / Scenario: Gin registration); verify `go test -run Example` passes
 - [ ] 3.15 Gin consumer faults (engine-support / Scenario: Consumer faults on every engine, `gin` rows except the route-check row, which task 6.2 covers; Scenario: Hooks per engine and stop path, the `gin` re-entrant row); verify `go test -race -run 'TestGinConsumerFaults|TestGinShutdownHooks'` passes
   - RED: one table over httptest and real listeners; fails on any row whose guard is not wired (for example an unguarded `c.Errors` entry or a panic logged as a returned error)
   - GREEN: wire the `engine` guards (design D10): `c.Errors` guarded before ginprblm resolves them, listener through `guardedListener`, no lock held across consumer calls
@@ -129,7 +129,7 @@ Blocked until the owner decides notes.md "Where srvr's public configuration type
   - RED: table counting open connections after `Shutdown`; fails because Fiber leaves them open
   - GREEN: tracking listener, close after drain or deadline
   - REFACTOR: /simplify
-- [ ] 4.11 Fiber config derived and hook guarded (fiber-engine / Scenario: Fiber config hook, all rows; engine-support / Scenario: Same validation on every engine, `fiber` rows); verify `go test -race -run 'TestFiberConfig|TestFiberConfigHook'` passes
+- [ ] 4.11 Fiber config derived and hook guarded (fiber-engine / Scenario: Fiber config hook, all rows; engine-support / Scenario: Same validation on every engine, `fiber` rows; Scenario: Engine-specific option placement, `fiber` rows); verify `go test -race -run 'TestFiberConfig|TestFiberConfigHook'` passes
   - RED: tables including nil hook, nulled error handler and the body-limit boundary and unlimited rows; body rows run over a real listener because `app.Test` returns a transport error for an oversized body; fails
   - GREEN: derived `fiber.Config` (unlimited body as `math.MaxInt`), `WithFiberConfig`, re-assertion, srvr-built `ListenConfig` without prefork
   - REFACTOR: /simplify
@@ -159,8 +159,9 @@ Blocked until the owner decides notes.md "Where srvr's public configuration type
   - RED: table comparing `msg`, `level`, `http.route` and exact key sets against net/http; fails on drift
   - GREEN: fix drift in the shared builders or the engine feeding them
   - REFACTOR: /simplify
-- [ ] 5.4 Pin documented exceptions (engine-parity / Scenario: Documented differences, all rows including gin `Allow` without `HEAD`, fiber `FOO`, fiber `http.ErrAbortHandler`, fiber `413` without route, fiber header cap and fiber header timeout); verify `go test -race -run TestParity_Exceptions` passes and each exception appears in that engine's godoc
+- [ ] 5.4 Pin documented exceptions (engine-parity / Scenario: Documented differences, all rows including gin `Allow` without `HEAD`, fiber `FOO`, fiber `http.ErrAbortHandler`, fiber `413` without route, fiber header cap, fiber header timeout and gin cyclic chain passed to `c.Error`); verify `go test -race -run TestParity_Exceptions` passes and each exception appears in that engine's godoc
   - RED: one test per row asserting the engine's actual behaviour; fails where the behaviour differs from the documented one
+  - The gin cyclic-chain row asserts that `c.Error` has not returned after a bounded wait; the spinning goroutine cannot be stopped, so the test runs it once, uses no `t.Parallel` and says so in a comment
   - GREEN: correct either the documentation or the engine, recording the decision
   - REFACTOR: /simplify
 - [ ] 5.5 Write `notes.md` carry-overs: public `engine` package stability before v1 (Target: `unassigned`), metrics/tracing hooks needed in both engines (Target: `otel-observability`), scrty middleware placement per engine (Target: `scrty-integration`); verify entries exist with targets

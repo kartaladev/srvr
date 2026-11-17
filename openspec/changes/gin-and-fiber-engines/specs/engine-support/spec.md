@@ -35,6 +35,23 @@ Every engine module SHALL accept the core's option functions, including the conf
 | `gin` | `WithConfig(Config{ShutdownTimeout: -1s})` | an error wrapping `srvr.ErrConfig` naming `ShutdownTimeout` |
 | `fiber` | `WithListener(nil)` | an error wrapping `srvr.ErrConfig` naming `Listener` |
 
+### Requirement: Engine-specific options share the option list
+Engine-specific options (`ginsrvr.WithEngine`, `fibersrvr.WithFiberConfig`) SHALL be `srvr.Option` values passed in the same list as the core options and read only by the engine they belong to; one given to any other engine SHALL fail construction with `srvr.ErrConfig` naming the option.
+
+#### Scenario: Engine-specific option placement
+- **Given** engine `<engine>` constructed with `<config>`
+- **When** construction runs
+- **Then** it returns `<result>`
+
+##### Examples:
+| engine | config | result |
+|--------|--------|--------|
+| `gin` | `WithLogLevel(slog.LevelDebug)` and `ginsrvr.WithEngine(hook)` in one list | a server logging at `DEBUG` whose hook ran |
+| `fiber` | `WithLogLevel(slog.LevelDebug)` and `fibersrvr.WithFiberConfig(fn)` in one list | a server logging at `DEBUG` whose `fn` ran |
+| `net/http` | an option that belongs to another engine (for example `ginsrvr.WithEngine(hook)`) | an error wrapping `srvr.ErrConfig` naming that option |
+| `gin` | an option that belongs to another engine (for example `fibersrvr.WithFiberConfig(fn)`) | an error wrapping `srvr.ErrConfig` naming that option |
+| `fiber` | an option that belongs to another engine (for example `ginsrvr.WithEngine(hook)`) | an error wrapping `srvr.ErrConfig` naming that option |
+
 ### Requirement: Engines share one lifecycle state machine
 Every engine SHALL implement `Start(ctx)`, `Shutdown(ctx)`, `Ready()` and `Addr()` with the core's states and errors: single-use `Start`, idempotent `Shutdown`, `srvr.ErrServerStarted` and `srvr.ErrServerClosed` on misuse, readiness only after the listener is bound.
 
@@ -127,6 +144,22 @@ The core SHALL expose the shared pieces in a package whose name and documentatio
 | modules |
 |---------|
 | `github.com/kartaladev/prblm` only |
+
+### Requirement: srvr re-exports the shared types
+The public types every engine shares (`Config`, `LogConfig`, `AccessLogConfig`, `TraceConfig`, `ServiceConfig`, `Trace`, `ShutdownPhase`, `ErrorHook`, `Option` and the sentinel errors) SHALL be declared in the engine-support package and re-exported by `srvr` as aliases, so code written against `srvr` compiles unchanged and `errors.Is` against `srvr` sentinels matches errors created in `engine`.
+
+#### Scenario: srvr names are the engine declarations
+- **Given** the error `<err>` produced by `<source>`
+- **When** the consumer calls `errors.Is(err, <sentinel>)`
+- **Then** the result is `true`
+
+##### Examples:
+| err | source | sentinel |
+|-----|--------|----------|
+| an invalid log level | `engine.ResolveConfig` | `srvr.ErrConfig` |
+| an invalid log level | `srvr.New` | `engine.ErrConfig` |
+| `Start` on a running server | `engine.Lifecycle` | `srvr.ErrServerStarted` |
+| `Start` on a stopped server | `engine.Lifecycle` | `srvr.ErrServerClosed` |
 
 ### Requirement: Configuration warnings are logged once
 An engine SHALL report a configuration that works but is likely unintended as one `WARN` record with `msg` `server.config.warning`, a stable snake_case `srvr.warning.code` and a human-readable `srvr.warning.message`, written once per server: at construction for engine settings, at `Start` for route-dependent ones. A warning SHALL NOT fail construction or `Start`.
