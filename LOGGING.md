@@ -73,6 +73,7 @@ goes to logs, never to 5xx responses.
 | `server.stopped` | INFO, or WARN when the drain deadline passed | `srvr.drain.duration_ms`, `srvr.drain.forced` |
 | `server.failed` | ERROR, when `Start` fails: before serving (binding, configuration, a done context) or because serving failed on its own (for example a `WithListener` listener whose `Accept` panics) | `exception.message` |
 | `server.shutdown_hook.failed` | WARN | `srvr.shutdown_hook.phase`, `srvr.shutdown_hook.index`, `code.function.name`, `exception.message` |
+| `server.config.warning` | WARN, once per server, for a configuration that works but is likely unintended: at construction for engine settings, at `Start` for route-dependent ones; it never fails either | `srvr.warning.code` (stable snake_case: `gin_debug_mode`, `fiber_header_limit_capped`), `srvr.warning.message` |
 
 Lifecycle records carry the service keys and never `trace_id`. Their `exception.message` is built
 like a request failure record's: it passes the `WithErrorRedactor` redactor (`[redaction failed]`

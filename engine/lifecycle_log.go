@@ -23,6 +23,15 @@ func (c *Core) logEvent(ctx context.Context, level slog.Level, event string, att
 	c.log.handle(ctx, r, true)
 }
 
+// Warn writes server.config.warning for a configuration that works but is
+// likely unintended: code is one of the declared [WarningCode] values and
+// message tells the consumer what to change. An engine
+// calls it once per warning, at construction for engine settings or at
+// Start for route-dependent ones; a warning never fails either.
+func (c *Core) Warn(ctx context.Context, code WarningCode, message string) {
+	c.logEvent(ctx, slog.LevelWarn, eventConfigWarning, slog.String(keyWarningCode, string(code)), slog.String(keyWarningMessage, message))
+}
+
 // newOwnRecord starts one of srvr's own records: no source (PC 0) and the
 // schema version first.
 func newOwnRecord(level slog.Level, event string) slog.Record {
@@ -35,9 +44,6 @@ func newOwnRecord(level slog.Level, event string) slog.Record {
 // millis returns d in milliseconds, for the *_ms keys of the log schema.
 func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 
-// funcName returns the qualified name of fn, or "" when unknown.
-func funcName(fn any) string { return FuncLocation(fn).function }
-
 // Location is a function's code location, for code.function.name,
 // code.file.path and code.line.number.
 type Location struct {
@@ -45,6 +51,9 @@ type Location struct {
 	file     string
 	line     int
 }
+
+// Function returns the qualified function name, or "" when unknown.
+func (l Location) Function() string { return l.function }
 
 // FuncLocation returns the Location of fn. A method value resolves to its
 // "-fm" wrapper, whose suffix is removed; an unknown PC yields the zero

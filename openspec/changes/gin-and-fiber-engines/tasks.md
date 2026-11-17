@@ -34,61 +34,61 @@ Layering decided (owner, 2026-11-18, design D1 Option A): the config structs, `O
 
 ## 3. Slice: gin engine end to end
 
-- [ ] 3.1 Module setup (first task of the first slice that needs it): create `github.com/kartaladev/srvr/ginsrvr` (go 1.27, gin v1.12.0, ginprblm, srvr core), add to `go.work`, CI job with `GOWORK=off`; verify `make test lint` passes for the empty module
-- [ ] 3.2 Gin registration and start (gin-engine / Scenario: Gin registration, accepted and rejected rows); verify `go test -race -run TestGinRegister` passes
+- [x] 3.1 Module setup (first task of the first slice that needs it): create `github.com/kartaladev/srvr/ginsrvr` (go 1.27, gin v1.12.0, ginprblm, srvr core), add to `go.work`, CI job with `GOWORK=off`; verify `make test lint` passes for the empty module
+- [x] 3.2 Gin registration and start (gin-engine / Scenario: Gin registration, accepted and rejected rows); verify `go test -race -run TestGinRegister` passes
   - RED: table including nil, typed-nil, panicking configurer, conflicting `:id`/`:name` and a route with a `nil` handler (detected from `e.Routes()` after configure, gin accepts it); fails because `ginsrvr` does not exist
   - GREEN: `ginsrvr.New`, `Register`, configure phase under recover on a `gin.New()` engine, served by `engine.Lifecycle`
   - REFACTOR: Extract Function for configurer invocation shared with core where identical, then /simplify
-- [ ] 3.3 Gin lifecycle misuse and shutdown hooks (engine-support / Scenario: Lifecycle misuse on every engine, `gin` rows; Scenario: Hooks per engine and stop path, `gin` rows); verify `go test -race -run 'TestGinLifecycle|TestGinShutdownHooks'` passes
+- [x] 3.3 Gin lifecycle misuse and shutdown hooks (engine-support / Scenario: Lifecycle misuse on every engine, `gin` rows; Scenario: Hooks per engine and stop path, `gin` rows); verify `go test -race -run 'TestGinLifecycle|TestGinShutdownHooks'` passes
   - RED: tables; fail if any state row or recorded hook sequence differs from net/http
   - GREEN: wire the shared state machine
   - REFACTOR: /simplify
-- [ ] 3.4 Gin errors become problems (gin-engine / Scenario: Gin error to problem, all rows); verify `go test -race -run TestGinErrors` passes
+- [x] 3.4 Gin errors become problems (gin-engine / Scenario: Gin error to problem, all rows); verify `go test -race -run TestGinErrors` passes
   - RED: table; fails because ginprblm is not installed or the trace member is missing
   - GREEN: ginprblm middleware with the shared option list (srvr hook and `trace_id` enricher appended last)
   - REFACTOR: /simplify
-- [ ] 3.5 Gin 404 and 405 (gin-engine / Scenario: Gin no route or wrong method, all rows including `GET /users/` and `POST` registered before `GET`); verify `go test -race -run TestGinUnmatched` passes
+- [x] 3.5 Gin 404 and 405 (gin-engine / Scenario: Gin no route or wrong method, all rows including `GET /users/` and `POST` registered before `GET`); verify `go test -race -run TestGinUnmatched` passes
   - RED: table; fails with gin's plain-text 404, no 405, `Allow` `POST, GET` and an HTML `301` for `GET /users/`
   - GREEN: `HandleMethodNotAllowed` on, `RedirectTrailingSlash` off, `ginprblm.Middleware` installed with `engine.Use` so it renders gin's recorded 404/405; the access stage rewrites `Allow` sorted before rendering (no `NoRoute`/`NoMethod` handlers)
   - REFACTOR: /simplify
-- [ ] 3.6 Gin panic recovery without gin output and the aborted-request record (gin-engine / Scenario: Gin panic; Scenario: Gin aborted request record, all rows); verify `go test -race -run 'TestGinPanic|TestGinAbortRecord'` passes
+- [x] 3.6 Gin panic recovery without gin output and the aborted-request record (gin-engine / Scenario: Gin panic; Scenario: Gin aborted request record, all rows); verify `go test -race -run 'TestGinPanic|TestGinAbortRecord'` passes
   - RED: tables; fail if `[GIN]`/`[Recovery]` lines appear, the value leaks, or the `http.ErrAbortHandler` request writes no record or a record with a `problem` group
   - GREEN: ginprblm recovery, no gin logger; the access stage's deferred recover writes the aborted record and re-raises `http.ErrAbortHandler`; gin's global mode and `DebugPrintRouteFunc` are not touched (test sets `gin.SetMode(gin.TestMode)` itself)
   - REFACTOR: /simplify
-- [ ] 3.7 Trace and logger through gin.Context (gin-engine / Scenario: Reading trace through gin.Context, all rows including `c.Copy()`); verify `go test -race -run TestGinTraceAccess` passes
+- [x] 3.7 Trace and logger through gin.Context (gin-engine / Scenario: Reading trace through gin.Context, all rows including `c.Copy()`); verify `go test -race -run TestGinTraceAccess` passes
   - RED: table; fails because `ContextWithFallback` is off
   - GREEN: set `ContextWithFallback`, srvr trace middleware stores into `c.Request` context
   - REFACTOR: /simplify
-- [ ] 3.8 Gin access record route and unmatched classification (gin-engine / Scenario: Gin route attribute, all rows; engine-support / Scenario: Request state after the chain, `gin` rows); verify `go test -race -run 'TestGinAccessRoute|TestGinRequestState'` passes
+- [x] 3.8 Gin access record route and unmatched classification (gin-engine / Scenario: Gin route attribute, all rows; engine-support / Scenario: Request state after the chain, `gin` rows); verify `go test -race -run 'TestGinAccessRoute|TestGinRequestState'` passes
   - RED: table; fails on unmatched rows, which log `http.request.completed` because `c.Errors` is empty
   - GREEN: shared access builder fed `c.FullPath()` through `engine.RequestState`; an empty `c.FullPath()` with status 404 or 405 marks the state failed
   - REFACTOR: /simplify
-- [ ] 3.9 Gin body limit (gin-engine / Scenario: Gin body limit, all rows including `4194304`/`4194305`, `10`/`11` and `-1`); verify `go test -race -run TestGinBodyLimit` passes
+- [x] 3.9 Gin body limit (gin-engine / Scenario: Gin body limit, all rows including `4194304`/`4194305`, `10`/`11` and `-1`); verify `go test -race -run TestGinBodyLimit` passes
   - RED: table posting bodies of exact sizes through httptest; fails because gin has no body limit
   - GREEN: install the shared `http.MaxBytesReader` middleware from `engine` on the gin engine
   - REFACTOR: Extract Function if net/http and gin wrap bodies differently, then /simplify
-- [ ] 3.10 Configuration warning event and gin debug mode (engine-support / Scenario: Configuration warning record, `gin` and `net/http` rows; gin-engine / Scenario: Gin mode at construction); verify `go test -race -run 'TestConfigWarning|TestGinDebugWarning'` passes
+- [x] 3.10 Configuration warning event and gin debug mode (engine-support / Scenario: Configuration warning record, `gin` and `net/http` rows; gin-engine / Scenario: Gin mode at construction); verify `go test -race -run 'TestConfigWarning|TestGinDebugWarning'` passes
   - RED: tables setting gin's mode per row (restored after each case, cases not parallel because the mode is global); fails because no warning is written
   - GREEN: `engine` writes `server.config.warning` with `srvr.warning.code` and `srvr.warning.message`; ginsrvr emits `gin_debug_mode` when `gin.IsDebugging()`; gin's mode is never changed
   - REFACTOR: /simplify
-- [ ] 3.11 Consumer middleware around srvr's pipeline (gin-engine / Scenario: Consumer middleware behaviour, all rows); verify `go test -race -run TestGinMiddleware` passes
+- [x] 3.11 Consumer middleware around srvr's pipeline (gin-engine / Scenario: Consumer middleware behaviour, all rows); verify `go test -race -run TestGinMiddleware` passes
   - RED: table counting access records; fails on double or missing records
   - GREEN: pipeline order trace -> access -> ginprblm -> recovery -> groups
   - REFACTOR: /simplify
-- [ ] 3.12 Engine hook keeps safety settings (gin-engine / Scenario: Engine hook, all rows including `RedirectTrailingSlash = true`); verify `go test -race -run TestGinEngineHook` passes
+- [x] 3.12 Engine hook keeps safety settings (gin-engine / Scenario: Engine hook, all rows including `RedirectTrailingSlash = true`); verify `go test -race -run TestGinEngineHook` passes
   - RED: table including nil, panicking, `Use`-calling and route-registering hooks; fails because settings are not re-asserted and gin trusts every proxy by default
   - GREEN: `SetTrustedProxies(nil)` before the hook, `WithEngine`, re-assertion (including `RedirectTrailingSlash` off), reject hooks that add to `e.Handlers` or `e.Routes()`
   - REFACTOR: /simplify
-- [ ] 3.13 Gin config validation parity (engine-support / Scenario: Same validation on every engine, `gin` rows including option order; Scenario: Engine-specific option placement, `gin` rows); verify `go test -race -run TestGinConfig` passes
+- [x] 3.13 Gin config validation parity (engine-support / Scenario: Same validation on every engine, `gin` rows including option order; Scenario: Engine-specific option placement, `gin` rows); verify `go test -race -run TestGinConfig` passes
   - RED: table; fails if any error differs
   - GREEN: delegate to `engine.ResolveConfig`
   - REFACTOR: /simplify
-- [ ] 3.14 Godoc (including the global gin mode and `GIN_MODE=release`, and the warning that a cyclic error chain passed to `c.Error` never returns - design D2) and a runnable `Example` with a `RegistrationHandler` whose `Register` method is mounted on `*gin.RouterGroup` (as in gin-engine / Scenario: Gin registration); verify `go test -run Example` passes
-- [ ] 3.15 Gin consumer faults (engine-support / Scenario: Consumer faults on every engine, `gin` rows except the route-check row, which task 6.2 covers; Scenario: Hooks per engine and stop path, the `gin` re-entrant row); verify `go test -race -run 'TestGinConsumerFaults|TestGinShutdownHooks'` passes
+- [x] 3.14 Godoc (including the global gin mode and `GIN_MODE=release`, and the warning that a cyclic error chain passed to `c.Error` never returns - design D2) and a runnable `Example` with a `RegistrationHandler` whose `Register` method is mounted on `*gin.RouterGroup` (as in gin-engine / Scenario: Gin registration); verify `go test -run Example` passes
+- [x] 3.15 Gin consumer faults (engine-support / Scenario: Consumer faults on every engine, `gin` rows except the route-check row, which task 6.2 covers; Scenario: Hooks per engine and stop path, the `gin` re-entrant row); verify `go test -race -run 'TestGinConsumerFaults|TestGinShutdownHooks'` passes
   - RED: one table over httptest and real listeners; fails on any row whose guard is not wired (for example an unguarded `c.Errors` entry or a panic logged as a returned error)
   - GREEN: wire the `engine` guards (design D10): `c.Errors` guarded before ginprblm resolves them, listener through `guardedListener`, no lock held across consumer calls
   - REFACTOR: /simplify
-- [ ] 3.16 Verify slice end to end with an httptest round trip (register, start, problem with `trace_id`, one access record, shutdown); confirm gin pipeline branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `ginsrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(ginsrvr): serve gin routes with srvr lifecycle, problems and logs`
+- [x] 3.16 Verify slice end to end with an httptest round trip (register, start, problem with `trace_id`, one access record, shutdown); confirm gin pipeline branches are covered in `go tool cover -func`; `GOWORK=off` `go vet`, `golangci-lint run` and `go test -race` clean in `ginsrvr` and the core; gopls diagnostics; run /simplify on the slice and commit `feat(ginsrvr): serve gin routes with srvr lifecycle, problems and logs`
 
 ## 4. Slice: fiber engine end to end
 

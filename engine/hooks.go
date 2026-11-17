@@ -62,7 +62,7 @@ func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 			c.logEvent(ctx, slog.LevelWarn, eventHookFailed,
 				slog.String(keyHookPhase, phase.String()),
 				slog.Int(keyHookIndex, i),
-				slog.String(keyFunction, funcName(h.Fn)),
+				slog.String(keyFunction, FuncLocation(h.Fn).Function()),
 				c.exceptionMessage(errorText(err)),
 			)
 			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, &guardedError{err}))

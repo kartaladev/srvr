@@ -15,6 +15,7 @@ const (
 	eventStopped          = "server.stopped"
 	eventFailed           = "server.failed"
 	eventHookFailed       = "server.shutdown_hook.failed"
+	eventConfigWarning    = "server.config.warning"
 
 	keyServerAddress  = "server.address"
 	keyDrainDuration  = "srvr.drain.duration_ms"
@@ -38,6 +39,8 @@ const (
 	keyFilePath       = "code.file.path"
 	keyLineNumber     = "code.line.number"
 	keyEnvironment    = "deployment.environment.name"
+	keyWarningCode    = "srvr.warning.code"
+	keyWarningMessage = "srvr.warning.message"
 
 	keySchema        = "srvr.log.schema"
 	keyTraceID       = "trace_id"
@@ -57,4 +60,15 @@ const (
 	keyProblemStatus = "status"
 	keyProblemType   = "type"
 	keyProblemTitle  = "title"
+)
+
+// WarningCode is the srvr.warning.code of a server.config.warning record:
+// a stable snake_case identifier and part of the log schema, so every code
+// is declared here.
+type WarningCode string
+
+// The warning codes of srvr's engines.
+const (
+	// WarnGinDebugMode: gin's process-wide mode is debug at construction.
+	WarnGinDebugMode WarningCode = "gin_debug_mode"
 )

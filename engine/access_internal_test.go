@@ -97,8 +97,8 @@ func TestFuncName(t *testing.T) {
 		{nilFunc, ""},
 		{"not a func", ""},
 	} {
-		if got := funcName(tt.fn); got != tt.want {
-			t.Errorf("funcName(%T) = %q, want %q", tt.fn, got, tt.want)
+		if got := FuncLocation(tt.fn).Function(); got != tt.want {
+			t.Errorf("FuncLocation(%T).Function() = %q, want %q", tt.fn, got, tt.want)
 		}
 	}
 }

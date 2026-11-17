@@ -72,6 +72,14 @@ func (r *RequestState) Status() int {
 // recovered panic reached srvr's problem hook, or no route matched.
 func (r *RequestState) Failed() bool { return r.failure != nil }
 
+// Panicked reports whether the request's failure is a recovered panic.
+func (r *RequestState) Panicked() bool { return r.failure != nil && r.failure.panic != nil }
+
+// ClearFailure forgets the request's failure, for an engine whose problem
+// adapter reports to srvr's hook answers that are not failures, such as
+// ginprblm for a status-only abort.
+func (r *RequestState) ClearFailure() { r.failure = nil }
+
 // StateFrom returns the request state of ctx, and false outside srvr's
 // pipeline, including for a nil ctx.
 func StateFrom(ctx context.Context) (*RequestState, bool) {

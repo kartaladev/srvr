@@ -83,9 +83,13 @@ func NewLifecycle[C any](c *Core) *Lifecycle[C] {
 }
 
 // Register keeps conf for the configure phase while the server is new,
-// and returns [ErrServerStarted] or [ErrServerClosed] otherwise. The
-// engine rejects a nil conf before calling it.
+// and returns [ErrServerStarted] or [ErrServerClosed] otherwise. A nil or
+// typed-nil conf returns an error wrapping [ErrRouteConfig] in any state.
 func (l *Lifecycle[C]) Register(conf C) error {
+	if IsNil(conf) {
+		return RouteError("configurer %T is nil", conf)
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
 

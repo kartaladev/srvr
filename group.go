@@ -82,7 +82,7 @@ type Group struct {
 // followed by mw.
 func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 	if !isPath(prefix) {
-		g.b.errs = append(g.b.errs, routeError("group prefix %q does not start with \"/\"", prefix))
+		g.b.errs = append(g.b.errs, engine.RouteError("group prefix %q does not start with \"/\"", prefix))
 	}
 
 	sub := &Group{b: g.b, prefix: collapseSlashes(g.prefix + prefix), middleware: slices.Clone(g.middleware)}
@@ -96,7 +96,7 @@ func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 func (g *Group) Use(mw ...Middleware) {
 	for i, m := range mw {
 		if m == nil {
-			g.b.errs = append(g.b.errs, routeError("middleware %d added to group %q is nil", i, g.prefix))
+			g.b.errs = append(g.b.errs, engine.RouteError("middleware %d added to group %q is nil", i, g.prefix))
 		}
 	}
 
@@ -183,7 +183,7 @@ func (g *Group) add(method, path string, h http.Handler, loc engine.Location) {
 
 	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
 	if engine.IsNil(h) {
-		g.b.errs = append(g.b.errs, routeError("%q (%s): handler is nil", rt.key(), rt.owner))
+		g.b.errs = append(g.b.errs, engine.RouteError("%q (%s): handler is nil", rt.key(), rt.owner))
 
 		return
 	}
@@ -212,7 +212,7 @@ func (g *Group) DELETE(path string, h HandlerFunc) { g.Handle(http.MethodDelete,
 // the trailing slash that gives a pattern its subtree meaning.
 func joinPattern(prefix, path string) (string, error) {
 	if !isPath(path) {
-		return "", routeError("path %q does not start with \"/\"", path)
+		return "", engine.RouteError("path %q does not start with \"/\"", path)
 	}
 
 	joined := collapseSlashes(prefix + path)
@@ -236,11 +236,6 @@ func collapseSlashes(p string) string {
 	return p
 }
 
-// routeError returns an error wrapping ErrRouteConfig.
-func routeError(format string, args ...any) error {
-	return fmt.Errorf("%w: "+format, append([]any{ErrRouteConfig}, args...)...)
-}
-
 // installRoutes registers routes on mux in order, in their middleware. A
 // pattern ServeMux rejects fails with an error wrapping ErrRouteConfig;
 // for a conflict it names both routes and the configurers that registered
@@ -249,7 +244,7 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 	for i, rt := range routes {
 		h, err := chain(rt.handler, rt.middleware)
 		if err != nil {
-			return routeError("%q (%s): %w", rt.key(), rt.owner, err)
+			return engine.RouteError("%q (%s): %w", rt.key(), rt.owner, err)
 		}
 
 		h = withRoute(rt, h)
@@ -261,11 +256,11 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 
 		for _, earlier := range routes[:i] {
 			if conflicts(earlier.key(), rt.key()) {
-				return routeError("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
+				return engine.RouteError("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
 			}
 		}
 
-		return routeError("%q (%s): %v", rt.key(), rt.owner, v)
+		return engine.RouteError("%q (%s): %v", rt.key(), rt.owner, v)
 	}
 
 	return nil
@@ -322,22 +317,6 @@ func applyMiddleware(mw Middleware, h http.Handler) (wrapped http.Handler, err e
 	}
 
 	return wrapped, nil
-}
-
-// safeConfigure runs c.Configure(g) and turns a panic into an error
-// wrapping ErrRouteConfig that names the configurer's type and the panic
-// value. The routes c registered before panicking are discarded with the
-// rest of the configuration, because Start fails.
-func safeConfigure(c RouteConfigurer[*Group], g *Group) (err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			err = routeError("configurer %T panicked: %s", c, engine.ValueText(v))
-		}
-	}()
-
-	c.Configure(g)
-
-	return nil
 }
 
 // withRoute returns h recording the route's path pattern (http.route) and

@@ -56,10 +56,6 @@ func New(opts ...Option) (*Server, error) {
 // Start was called it returns [ErrServerStarted], or [ErrServerClosed] when
 // the server has stopped.
 func (s *Server) Register(conf RouteConfigurer[*Group]) error {
-	if engine.IsNil(conf) {
-		return fmt.Errorf("%w: configurer %T is nil", ErrRouteConfig, conf)
-	}
-
 	return s.lc.Register(conf)
 }
 
@@ -112,7 +108,7 @@ func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, 
 
 	for _, c := range configurers {
 		b.owner = fmt.Sprintf("%T", c)
-		if err := safeConfigure(c, g); err != nil {
+		if err := engine.Configure(c, g); err != nil {
 			return nil, err
 		}
 	}
