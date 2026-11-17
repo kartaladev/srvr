@@ -3,6 +3,7 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -51,6 +52,8 @@ func TestNew_Config(t *testing.T) {
 		{name: "WithLogOutput nil", opts: []srvr.Option{srvr.WithLogOutput(nil)}, message: "Output"},
 		{name: "WithLogLevelVar nil", opts: []srvr.Option{srvr.WithLogLevelVar(nil)}, message: "LevelVar"},
 		{name: "nil option", opts: []srvr.Option{nil}, message: "Option"},
+		{name: "WithLogger zero Logger", opts: []srvr.Option{srvr.WithLogger(&slog.Logger{})}, message: "Logger"},
+		{name: "WithLogger typed-nil handler", opts: []srvr.Option{srvr.WithLogger(slog.New((*slog.JSONHandler)(nil)))}, message: "Logger"},
 	}
 
 	for _, tt := range tests {

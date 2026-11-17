@@ -294,12 +294,26 @@ func recoverPanic(fn func() error) (err error) {
 	return fn()
 }
 
-// shutdownBounded calls srv.Shutdown and fails the test when it does not
-// return within waitLimit.
+// shutdownBounded calls srv.Shutdown, a panic returned as an error
+// wrapping errPanicked, and fails the test when it does not return within
+// waitLimit.
 func shutdownBounded(t *testing.T, srv *srvr.Server) error {
 	t.Helper()
 
-	return bounded(t, "Shutdown did not return", func() error { return srv.Shutdown(context.Background()) })
+	return bounded(t, "Shutdown did not return", func() error {
+		return recoverPanic(func() error { return srv.Shutdown(context.Background()) })
+	})
+}
+
+// startBounded calls srv.Start with ctx, a panic returned as an error
+// wrapping errPanicked, and fails the test when it does not return within
+// waitLimit.
+func startBounded(ctx context.Context, t *testing.T, srv *srvr.Server) error {
+	t.Helper()
+
+	return bounded(t, "Start did not return", func() error {
+		return recoverPanic(func() error { return srv.Start(ctx) })
+	})
 }
 
 // bounded returns fn's result, failing the test when fn does not return

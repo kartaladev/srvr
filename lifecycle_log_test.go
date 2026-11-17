@@ -29,6 +29,14 @@ func TestLifecycleRecords(t *testing.T) {
 				t.Fatal("Start = nil")
 			}
 		}},
+		{"serving fails because the passed listener's Accept panics", "server.failed", "ERROR", "exception.message", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			srv, err := srvr.New(append(opts, srvr.WithListener(&panicListener{Listener: listen(t), acceptPanic: "accept"}))...)
+			mustNil(t, err)
+			if err := startBounded(context.Background(), t, srv); err == nil {
+				t.Fatal("Start = nil")
+			}
+		}},
 		{"the drain deadline passes", "server.stopped", "WARN", "srvr.drain.forced", func(t *testing.T, opts []srvr.Option) {
 			t.Helper()
 			started, release := make(chan struct{}, 1), make(chan struct{})

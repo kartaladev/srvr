@@ -155,7 +155,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** unassigned
 - **Context:** While verifying task group 10, one run of `GOWORK=off go test -count=1 -coverprofile=c.out ./...` (without `-race`) reported `FAIL github.com/kartaladev/srvr`; the output was cut by a `tail` filter, so the failing test is unknown. Another project's test binary was running on the machine at the time. 27 later full runs of the package (12 `-coverprofile ./...`, 15 `-coverprofile .`), 6 `-race` runs and `-count=50` of the group 10 tests all passed.
 - **Evidence:** unverified: not reproduced; no failing test name. Task 11.4 ran the full suite without `-race` 10 more times (`GOWORK=off go test -count=1 -json ./...`, foreground, output kept as `flake-run-1.json` to `flake-run-10.json` in the session scratchpad); all 10 passed, while another project's test binaries were running on the machine. Still unconfirmed.
-- **Suggested action:** If a srvr test fails again, keep the full output (`go test -json`), name the test, and reproduce it with a targeted `-run` and a high `-count` before treating it as a defect.
+- **Suggested action:** If a srvr test fails again, keep the full output (`go test -json`), name the test, and reproduce it with a targeted `-run` and a high `-count` before treating it as a defect. Task group 13 (2026-11-17): one more unnamed failure. A foreground `GOWORK=off go test -count=1 -race -run 'TestListener|TestStart_|TestShutdown' .` run printed `FAIL`, but a `tail` filter cut the test name (same mistake as before). It did not come back in 4 reruns of that command with `-json`, in `-count=50` of each of `TestListener_AcceptPanics`, `TestListener_ClosePanics` and `TestMiddleware_ConstructorPanics`, or in 2 full `-race -json ./...` runs and 1 `-json -coverprofile ./...` run. Unconfirmed; the lesson stands: always use `-json` and no output filter on the first run.
 
 ### Lifecycle records do not pass exception.message through the error redactor
 - **Status:** closed: owner decided 2026-11-17 to redact and limit lifecycle error text; planned as task group 11
@@ -195,3 +195,24 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** probe `TestProbeZeroLogger` (`zz_probe2_test.go.txt` in the session scratchpad): `New err: <nil>`.
 - **Suggested action:** Reject a Logger whose `Handler()` is nil or a typed nil in `WithLogger` with `ErrConfig` naming `Logger`; add a row to structured-logging / Own handler.
 - **Decision:** the owner decided that `WithLogger` rejects a Logger whose `Handler()` is nil or a typed nil with `ErrConfig` naming `Logger` (AGENTS rule 7). Applied: server-lifecycle Construction requirement and two rejected rows in Scenario: Valid and invalid configuration, design D7, task 13.2.
+
+### A Start or Shutdown context whose methods panic leaves the server unable to stop
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Found by task 13.1's audit of consumer callbacks invoked during `Start`. srvr guards the text of a context's `Err()` value (`errorText`), but calls the consumer context's own methods (`Err`, `Done`, `Value`, through `Start`, `context.WithoutCancel`, `net.ListenConfig.Listen` and the log handler) without `recover`. A `Start` context whose `Err()` panics makes `Start` panic after `begin` moved the server to starting; nothing closes it, so a later `Shutdown` waits until its own context ends. The same likely holds for `Done()` and `Value()` and for the `Shutdown` context (not probed). Not one of the three owner decisions of task group 13, so not changed.
+- **Evidence:** probe `TestProbeStartCtxErrPanics` (source kept as `zz_probe_ctx_test.go.txt` in the session scratchpad, not in the repository), `GOWORK=off go test -count=1 -run TestProbeStartCtxErrPanics -v .`: `Start: panicked: err`, then `Shutdown: context deadline exceeded` (1s deadline).
+- **Suggested action:** Owner decides whether srvr contains a context whose methods panic (a `context.Context` that panics breaks every stdlib API it is passed to, so documenting it as unsupported is a reasonable answer); if contained, guard `Start`'s first `ctx.Err()` and route a panic through `fail`, and add rows to server-lifecycle / Scenario: Start fails.
+
+### A connection from a WithListener listener whose methods panic crashes the process
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Task group 13 wraps only the passed listener's `Accept` and `Close`. Owner decision: connections are not wrapped, so nothing is added per connection. net/http calls an accepted connection's `Read` on a background goroutine (`(*connReader).backgroundRead`, `net/http/server.go:742` on Go 1.27.4) with no `recover`. A `net.Conn` from a consumer listener that panics in `Read` therefore ends the process. Panics in `c.serve`'s own goroutine are recovered by net/http. Not changed: wrapping every connection would add a per-connection allocation and per-call defers, against the decision.
+- **Evidence:** probe `TestProbeConnReadPanics` (source kept as `zz_probe_conn_test.go.txt` in the session scratchpad, not in the repository), `GOWORK=off go test -count=1 -run TestProbeConnReadPanics -v .`: `panic: read` from `net/http.(*connReader).backgroundRead`, `FAIL github.com/kartaladev/srvr`.
+- **Suggested action:** Owner decides between documenting it on `WithListener` (connections are the listener's responsibility, as with any `http.Server`) and an opt-in connection guard. The default should stay allocation-free.
+
+### Errors and panics from a passed listener's Close are not logged
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Owner decision for task group 13: a panicking `Close` is handled like a `Close` error. srvr ignores both on every path (`closeUnserved`, `stopRun`, http.Server's own close), so no record is written and the stop result does not change (design D1). A consumer cannot see that its listener failed to close.
+- **Evidence:** none needed; this is current, specified behaviour (server-lifecycle / Scenario: A listener whose Close panics, `TestListener_ClosePanics`).
+- **Suggested action:** If operators need it, add a `WARN` lifecycle event (for example `server.listener.close_failed` with `exception.message`, built by the lifecycle error-text helper). It is a schema addition, so no `srvr.log.schema` bump.

@@ -114,6 +114,15 @@ func WithMaxHeaderBytes(n int) Option {
 // nil or typed-nil address, or a panic in Addr or in the address's String,
 // fails Start with an error wrapping ErrConfig naming Listener, like any
 // other Start failure, instead of serving under an invented address.
+//
+// The server calls ln's Accept and Close under recover. A panic in Accept,
+// which net/http calls on a goroutine of its own where it would end the
+// process, stops serving: Start writes server.failed, stops the server in
+// order (BeforeDrain hooks, drain, AfterDrain hooks) and returns an error
+// wrapping ErrConfig naming Listener. A panic in Close is treated like an
+// error from Close, which the server ignores: the stop completes and its
+// result is the one a successful Close gives. Accepted connections are
+// used as ln returns them.
 func WithListener(ln net.Listener) Option {
 	return func(s *settings) {
 		if isNil(ln) {

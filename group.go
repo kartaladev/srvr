@@ -1,6 +1,7 @@
 package srvr
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -11,8 +12,11 @@ import (
 // which the server renders as an RFC 9457 problem.
 type HandlerFunc func(w http.ResponseWriter, r *http.Request) error
 
-// Middleware wraps a handler. It runs inside srvr's panic recovery, so a
-// panic in it is answered with a 500 problem.
+// Middleware wraps a handler. Start calls it once per route to build the
+// route's handler: a nil result or a panic there fails Start with an error
+// wrapping [ErrRouteConfig] naming the route. The handler it returns runs
+// inside srvr's panic recovery, so a panic while serving is answered with a
+// 500 problem.
 type Middleware func(next http.Handler) http.Handler
 
 // route is a route buffered by a Group until the server installs it.
@@ -289,15 +293,33 @@ func tryHandle(mux *http.ServeMux, pattern string, h http.Handler) (panicked any
 }
 
 // chain wraps h in middleware, the first outermost. A middleware that
-// returns a nil handler is an error.
+// returns a nil handler or panics is an error; the panic value's text is
+// read through valueText.
 func chain(h http.Handler, middleware []Middleware) (http.Handler, error) {
 	for i, mw := range slices.Backward(middleware) {
-		if h = mw(h); isNil(h) {
-			return nil, fmt.Errorf("middleware %d returned a nil handler", i)
+		var err error
+		if h, err = applyMiddleware(mw, h); err != nil {
+			return nil, fmt.Errorf("middleware %d %w", i, err)
 		}
 	}
 
 	return h, nil
+}
+
+// applyMiddleware returns mw(h), or an error when mw panics or returns a
+// nil handler.
+func applyMiddleware(mw Middleware, h http.Handler) (wrapped http.Handler, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			wrapped, err = nil, errors.New("panicked: "+valueText(v))
+		}
+	}()
+
+	if wrapped = mw(h); isNil(wrapped) {
+		return nil, errors.New("returned a nil handler")
+	}
+
+	return wrapped, nil
 }
 
 // safeConfigure runs c.Configure(g) and turns a panic into an error

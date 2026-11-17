@@ -120,18 +120,12 @@ func WithLogOutput(w io.Writer) Option {
 // the record. srvr does not bound it, because an asynchronous handler would
 // lose records on a crash.
 func WithLogHandler(h slog.Handler) Option {
-	return func(s *settings) {
-		if isNil(h) {
-			s.errs = append(s.errs, configError("Handler", "<nil>", "is nil"))
-
-			return
-		}
-
-		s.log.handler, s.log.handlerFrom = h, "WithLogHandler"
-	}
+	return func(s *settings) { s.setLogHandler("Handler", "WithLogHandler", h) }
 }
 
-// WithLogger is WithLogHandler(l.Handler()). l must not be nil.
+// WithLogger is WithLogHandler(l.Handler()). l must not be nil and must
+// have a handler: a zero slog.Logger, or one built on a typed-nil handler,
+// fails New instead of silently dropping every record.
 func WithLogger(l *slog.Logger) Option {
 	return func(s *settings) {
 		if l == nil {
@@ -140,8 +134,20 @@ func WithLogger(l *slog.Logger) Option {
 			return
 		}
 
-		s.log.handler, s.log.handlerFrom = l.Handler(), "WithLogger"
+		s.setLogHandler("Logger handler", "WithLogger", l.Handler())
 	}
+}
+
+// setLogHandler makes h the base handler, set by the option named from; a
+// nil or typed-nil h is an error naming field.
+func (s *settings) setLogHandler(field, from string, h slog.Handler) {
+	if isNil(h) {
+		s.errs = append(s.errs, configError(field, typeName(h), "is nil"))
+
+		return
+	}
+
+	s.log.handler, s.log.handlerFrom = h, from
 }
 
 // WithSetDefaultLogger makes the server's logger the process default

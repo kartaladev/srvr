@@ -71,7 +71,7 @@ goes to logs, never to 5xx responses.
 | `server.started` | INFO | `server.address` |
 | `server.stopping` | INFO | (common keys) |
 | `server.stopped` | INFO, or WARN when the drain deadline passed | `srvr.drain.duration_ms`, `srvr.drain.forced` |
-| `server.failed` | ERROR | `exception.message` |
+| `server.failed` | ERROR, when `Start` fails: before serving (binding, configuration, a done context) or because serving failed on its own (for example a `WithListener` listener whose `Accept` panics) | `exception.message` |
 | `server.shutdown_hook.failed` | WARN | `srvr.shutdown_hook.phase`, `srvr.shutdown_hook.index`, `code.function.name`, `exception.message` |
 
 Lifecycle records carry the service keys and never `trace_id`. Their `exception.message` is built
