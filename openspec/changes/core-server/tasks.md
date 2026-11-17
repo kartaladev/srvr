@@ -33,47 +33,47 @@
 
 ## 3. Slice: lifecycle hardening and limits
 
-- [ ] 3.1 Construction validates configuration (server-lifecycle / Scenario: Valid and invalid configuration, all rows except the `WithShutdownHook` rows, which 3.8 adds); verify `go test -race -run TestNew_Config` passes
+- [x] 3.1 Construction validates configuration (server-lifecycle / Scenario: Valid and invalid configuration, all rows except the `WithShutdownHook` rows, which 3.8 adds); verify `go test -race -run TestNew_Config` passes
   - RED: table with accepted and rejected rows; fails because no validation exists
   - GREEN: `Config` struct with tags, `WithConfig` and individual options, `ErrConfig`, validation after all options naming field and value
   - REFACTOR: Replace Conditional with Polymorphism is overkill - use Extract Function per field validator, then /simplify
-- [ ] 3.2 Effective defaults and overrides (server-lifecycle / Scenario: Effective limits, defaults and overrides, except the `ShutdownHookTimeout` rows, which 3.8 adds); verify `go test -race -run TestEffectiveLimits` passes
+- [x] 3.2 Effective defaults and overrides (server-lifecycle / Scenario: Effective limits, defaults and overrides, except the `ShutdownHookTimeout` rows, which 3.8 adds); verify `go test -race -run TestEffectiveLimits` passes
   - RED: table over every row asserting the built `http.Server` fields and body limit; fails on missing defaults
   - GREEN: defaults resolution (zero = default, negative = disabled)
   - REFACTOR: Introduce Parameter Object for resolved settings, then /simplify
-- [ ] 3.3 Options and config struct compose in argument order (server-lifecycle / Scenario: Option and config precedence, the listen-address rows; the log, access-log, service and trace rows are added in 7.1, 7.5, 7.9 and 6.3); verify `go test -race -run TestOptionPrecedence` passes
+- [x] 3.3 Options and config struct compose in argument order (server-lifecycle / Scenario: Option and config precedence, the listen-address rows; the log, access-log, service and trace rows are added in 7.1, 7.5, 7.9 and 6.3); verify `go test -race -run TestOptionPrecedence` passes
   - RED: table over the `WithConfig`/`WithAddr` rows in both orders; fails because `WithConfig` does not exist or always wins
   - GREEN: options mutate one settings value in order; `WithConfig` overwrites every `Config` field
   - REFACTOR: Combine Functions into Transform for settings resolution, then /simplify
-- [ ] 3.4 Body limit renders 413 (error-responses / Scenario: Body limit, all rows including boundary `4194304`/`4194305` and `-1`); verify `go test -race -run TestBodyLimit` passes
+- [x] 3.4 Body limit renders 413 (error-responses / Scenario: Body limit, all rows including boundary `4194304`/`4194305` and `-1`); verify `go test -race -run TestBodyLimit` passes
   - RED: table posting bodies of exact sizes; fails because no `MaxBytesReader` is installed
   - GREEN: wrap request bodies with `http.MaxBytesReader` unless disabled
   - REFACTOR: Extract Function for body limiting middleware, then /simplify
-- [ ] 3.5 Start failures (server-lifecycle / Scenario: Start fails, rows for port in use, pre-cancelled context and nil context; the configurer-panic and conflict rows are added in 4.3 and 4.7); verify `go test -race -run TestStart_Fails` passes
+- [x] 3.5 Start failures (server-lifecycle / Scenario: Start fails, rows for port in use, pre-cancelled context and nil context; the configurer-panic and conflict rows are added in 4.3 and 4.7); verify `go test -race -run TestStart_Fails` passes
   - RED: table including the `Start(nil)` row; fails because `Start` binds before checking the context and `Ready` is closed too early
   - GREEN: check context, bind, then close `Ready`
   - REFACTOR: Split Phase (configure, bind, serve), then /simplify
-- [ ] 3.6 Single-use Start (server-lifecycle / Scenario: Start twice, all rows including the concurrent row); verify `go test -race -count=50 -run TestStart_Twice` passes
+- [x] 3.6 Single-use Start (server-lifecycle / Scenario: Start twice, all rows including the concurrent row); verify `go test -race -count=50 -run TestStart_Twice` passes
   - RED: table with concurrent starts; fails with data race or double serve
   - GREEN: mutex-guarded state machine `new/starting/running/stopping/closed`, `ErrServerStarted`, `ErrServerClosed`
   - REFACTOR: Replace Type Code with State enum and transition table, then /simplify
-- [ ] 3.7 Bounded, idempotent shutdown (server-lifecycle / Scenario: Drain within and beyond the deadline; Scenario: Shutdown misuse; Scenario: Shutdown with a nil context); verify `go test -race -run TestShutdown` passes
+- [x] 3.7 Bounded, idempotent shutdown (server-lifecycle / Scenario: Drain within and beyond the deadline; Scenario: Shutdown misuse; Scenario: Shutdown with a nil context); verify `go test -race -run TestShutdown` passes
   - RED: tables with slow in-flight handler, never-started, repeated and concurrent shutdown, nil context; fails because no forced close and no idempotency
   - GREEN: `Shutdown` with `Close` on deadline, closed state reachable from `new`, nil-context guard
   - REFACTOR: Consolidate Duplicate Conditional Fragments in shutdown paths, then /simplify
-- [ ] 3.8 Shutdown hooks run once on every stop path (server-lifecycle / Scenario: Hook phases and order; Scenario: Hooks on every stop path, all rows including concurrent stop, failed bind, pre-cancelled context, and the `Start(nil)`/`ErrServerStarted`/`ErrServerClosed` rows that run no hooks; the configure-panic and route-conflict rows are added in 4.7 and 4.3); verify `go test -race -count=50 -run TestShutdownHooks` passes
+- [x] 3.8 Shutdown hooks run once on every stop path (server-lifecycle / Scenario: Hook phases and order; Scenario: Hooks on every stop path, all rows including concurrent stop, failed bind, pre-cancelled context, and the `Start(nil)`/`ErrServerStarted`/`ErrServerClosed` rows that run no hooks; the configure-panic and route-conflict rows are added in 4.7 and 4.3); verify `go test -race -count=50 -run TestShutdownHooks` passes
   - RED: tables recording hook calls and the order against a slow in-flight request; fails because `WithShutdownHook` does not exist and the `Start`-cancel path skips hooks
   - GREEN: `ShutdownPhase`, `BeforeDrain`, `AfterDrain`, `WithShutdownHook`, `Config.ShutdownHookTimeout` (default 5s, with its Effective limits and validation rows), one `sync.Once`-guarded stop sequence used by `Start` cancellation, `Shutdown`, failed bind and never-started `Shutdown`
   - REFACTOR: Extract Function for the stop sequence shared by every path (Consolidate Duplicate Conditional Fragments), then /simplify
-- [ ] 3.9 Faulty shutdown hooks never stop the shutdown (server-lifecycle / Scenario: Faulty hooks; Scenario: Faulty hook during Shutdown; Scenario: Blocking and re-entrant hooks, all rows, asserting the `server.shutdown_hook.failed` record from 7.10 on); verify `go test -race -run TestShutdownHooks_Faulty` passes, plus a test that a hook calling `Shutdown` returns after the hook budget
+- [x] 3.9 Faulty shutdown hooks never stop the shutdown (server-lifecycle / Scenario: Faulty hooks; Scenario: Faulty hook during Shutdown; Scenario: Blocking and re-entrant hooks, all rows, asserting the `server.shutdown_hook.failed` record from 7.10 on); verify `go test -race -run TestShutdownHooks_Faulty` passes, plus a test that a hook calling `Shutdown` returns after the hook budget
   - RED: tables with erroring, panicking and context-ignoring hooks; fails because one failure stops the sequence or `Start` returns `nil`
   - GREEN: per-hook goroutine with `recover` and budget, `ErrShutdownHook` joined with hook and drain errors (the `server.shutdown_hook.failed` record is added in 7.10)
   - REFACTOR: Introduce Parameter Object for the hook result, then /simplify
-- [ ] 3.10 Register misuse is rejected (route-registration / Scenario: Registration outcome, rejected rows); verify `go test -race -run TestRegister` passes
+- [x] 3.10 Register misuse is rejected (route-registration / Scenario: Registration outcome, rejected rows); verify `go test -race -run TestRegister` passes
   - RED: add the nil, typed-nil, running and stopped rows to `TestRegister`; fails because `Register` accepts them
   - GREEN: nil and typed-nil check (reflect on pointer kinds), state check returning `ErrServerStarted`/`ErrServerClosed`
   - REFACTOR: Introduce Assertion helper shared with nil option checks, then /simplify
-- [ ] 3.11 Verify slice end to end with `go test -race -count=20` over the lifecycle package, confirm every state transition, the forced-close branch and the hook runner are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): validate config and harden server lifecycle`
+- [x] 3.11 Verify slice end to end with `go test -race -count=20` over the lifecycle package, confirm every state transition, the forced-close branch and the hook runner are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` from the module directory, run gopls diagnostics, run /simplify on the slice and commit `feat(core): validate config and harden server lifecycle`
 
 ## 4. Slice: complete routing on the net/http group
 

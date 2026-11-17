@@ -3,34 +3,13 @@ package srvr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/kartaladev/prblm"
 )
-
-const (
-	// defaultShutdownTimeout bounds the drain when Start's context ends.
-	defaultShutdownTimeout = 15 * time.Second
-	// defaultReadHeaderTimeout protects against slow-header (Slowloris) clients.
-	defaultReadHeaderTimeout = 10 * time.Second
-)
-
-// Option configures a Server.
-type Option func(*settings)
-
-// settings is the configuration options build.
-type settings struct {
-	addr string
-}
-
-// WithAddr sets the TCP address the server listens on. The default is
-// ":8080", the conventional container port.
-func WithAddr(addr string) Option {
-	return func(s *settings) { s.addr = addr }
-}
 
 // Server is an HTTP server on the net/http engine.
 //
@@ -40,49 +19,71 @@ func WithAddr(addr string) Option {
 // problem by github.com/kartaladev/prblm; an unrecognised error becomes a
 // 500 problem that carries none of the error's text.
 //
-// Defaults: listens on ":8080", ReadHeaderTimeout 10s (Slowloris
-// protection) and a shutdown drain of 15s, which fits a 30s Kubernetes
-// termination grace period.
+// A Server is single-use: it starts at most once and, once stopped, stays
+// stopped. Its methods are safe for concurrent use.
+//
+// The defaults are listed on [Config]: listen on ":8080", bounded timeouts
+// and header size, request bodies limited to 4 MiB and a shutdown drain of
+// 15s, which fits a 30s Kubernetes termination grace period.
 type Server struct {
 	settings settings
+	// cfg is the server configuration with the defaults applied.
+	cfg Config
 	// problems renders every error response.
 	problems *prblm.Handler
+	// ready is closed once the listener is bound.
+	ready chan struct{}
 
 	mu          sync.Mutex
+	state       state
 	configurers []RouteConfigurer[*Group]
-	ready       chan struct{}
 	addr        string
-
-	// stopReq carries the context of a Shutdown call to Start.
-	stopReq chan context.Context
-	// stopped is closed once Start has drained; drainErr is its result.
+	// run is the serving part of a running server, nil before.
+	run *run
+	// stopped is closed when the server reaches stateClosed. hookErr and
+	// drainErr are the results of its stop sequence: Start returns hookErr,
+	// the Shutdown call that stopped the server returns both.
 	stopped  chan struct{}
+	hookErr  error
 	drainErr error
 }
 
 var _ RouteRegistrar[*Group] = (*Server)(nil)
 
 // New returns a server configured by opts. It does not open a listener.
+// Invalid configuration returns an error wrapping [ErrConfig] that names
+// every offending field and value.
 func New(opts ...Option) (*Server, error) {
-	s := settings{addr: ":8080"}
-	for _, opt := range opts {
-		opt(&s)
+	s, err := newSettings(opts)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Server{
 		settings: s,
+		cfg:      s.resolve(),
 		problems: prblm.NewHandler(),
 		ready:    make(chan struct{}),
-		stopReq:  make(chan context.Context, 1),
 		stopped:  make(chan struct{}),
 	}, nil
 }
 
 // Register adds conf to the configurers run when the server starts. Each
 // registration runs Configure once, in registration order, during Start.
+// A nil or typed-nil conf returns an error wrapping [ErrRouteConfig]. Once
+// Start was called it returns [ErrServerStarted], or [ErrServerClosed] when
+// the server has stopped.
 func (s *Server) Register(conf RouteConfigurer[*Group]) error {
+	if isNil(conf) {
+		return fmt.Errorf("%w: configurer %T is nil", ErrRouteConfig, conf)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.state.startable(); err != nil {
+		return err
+	}
 
 	s.configurers = append(s.configurers, conf)
 
@@ -90,7 +91,7 @@ func (s *Server) Register(conf RouteConfigurer[*Group]) error {
 }
 
 // Ready returns a channel closed once the listener is bound and the server
-// accepts connections.
+// accepts connections. It is never closed when Start fails.
 func (s *Server) Ready() <-chan struct{} { return s.ready }
 
 // Addr returns the bound address once the server is ready, for example the
@@ -102,13 +103,119 @@ func (s *Server) Addr() string {
 	return s.addr
 }
 
-// Start configures routes, listens and serves until ctx is done or Shutdown
-// is called, then drains in-flight requests and returns.
+// Start configures the routes, binds the listener, closes [Server.Ready]
+// and serves until ctx is done or [Server.Shutdown] is called. Then it stops
+// accepting connections, drains in-flight requests for at most
+// ShutdownTimeout and returns nil.
+//
+// Start returns an error, without closing Ready, when ctx is nil (wrapping
+// [ErrConfig]) or already done, or when binding fails. A second Start
+// returns [ErrServerStarted], or [ErrServerClosed] once the server stopped,
+// without affecting it.
 func (s *Server) Start(ctx context.Context) error {
+	if ctx == nil {
+		return configError("Start context", "<nil>", "is nil")
+	}
+
+	configurers, err := s.begin()
+	if err != nil {
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
+		return s.fail(ctx, err)
+	}
+
+	handler := s.configure(configurers)
+
+	ln, err := s.listen(ctx)
+	if err != nil {
+		return s.fail(ctx, err)
+	}
+
+	r := s.serve(ctx, ln, handler)
+	if r == nil {
+		// Shutdown was called while the server was starting.
+		return s.hookErr
+	}
+
+	var served error
+
+	select {
+	case <-ctx.Done():
+	case <-r.stopping:
+	case served = <-r.served:
+		select {
+		case <-r.stopping:
+			// Serve returned because the stop sequence closed the listener.
+			served = nil
+		default:
+			// Serving failed on its own; the server still stops in order.
+		}
+	}
+
+	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.ShutdownTimeout)
+	defer cancel()
+
+	s.stop(drainCtx)
+	<-s.stopped
+
+	return errors.Join(served, s.hookErr)
+}
+
+// begin moves a new server to starting and returns the configurers to run.
+func (s *Server) begin() ([]RouteConfigurer[*Group], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.state.startable(); err != nil {
+		return nil, err
+	}
+
+	s.state = stateStarting
+
+	return s.configurers, nil
+}
+
+// fail ends a Start that failed before serving: nothing was served, so
+// only the AfterDrain hooks run, and err is returned with their failures.
+func (s *Server) fail(ctx context.Context, err error) error {
+	s.closeUnserved(ctx)
+
+	return errors.Join(err, s.hookErr)
+}
+
+// closeUnserved closes a server that served nothing: only the AfterDrain
+// hooks run.
+func (s *Server) closeUnserved(ctx context.Context) {
+	s.finish(s.runAfterDrain(ctx), nil)
+}
+
+// runAfterDrain runs the AfterDrain hooks within their own budget.
+func (s *Server) runAfterDrain(parent context.Context) error {
+	ctx, cancel := s.afterDrainContext(parent)
+	defer cancel()
+
+	return s.runHooks(ctx, AfterDrain)
+}
+
+// finish closes the server with the results of its stop sequence.
+func (s *Server) finish(hookErr, drainErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.state = stateClosed
+	s.hookErr, s.drainErr = hookErr, drainErr
+	close(s.stopped)
+}
+
+// configure runs the configurers and returns the handler serving their
+// routes.
+func (s *Server) configure(configurers []RouteConfigurer[*Group]) http.Handler {
 	var routes []route
 	g := &Group{routes: &routes}
 
-	for _, c := range s.configurers {
+	for _, c := range configurers {
 		c.Configure(g)
 	}
 
@@ -117,44 +224,87 @@ func (s *Server) Start(ctx context.Context) error {
 		mux.Handle(rt.method+" "+rt.pattern, s.problems.Wrap(rt.handler))
 	}
 
-	ln, err := new(net.ListenConfig).Listen(ctx, "tcp", s.settings.addr)
-	if err != nil {
-		return err
+	return limitBody(s.cfg.MaxRequestBodyBytes, mux)
+}
+
+// listen returns the configured listener or binds the configured address.
+func (s *Server) listen(ctx context.Context) (net.Listener, error) {
+	if s.settings.listener != nil {
+		return s.settings.listener, nil
 	}
+
+	return new(net.ListenConfig).Listen(ctx, "tcp", s.cfg.Addr)
+}
+
+// run is the serving part of a running server.
+type run struct {
+	hs *http.Server
+	ln net.Listener
+	// served receives the result of http.Server.Serve.
+	served chan error
+	// stopping is closed when the stop sequence begins.
+	stopping chan struct{}
+}
+
+// serve moves the server to running and serves on ln. It returns nil, after
+// closing ln and the server, when Shutdown was called while starting.
+func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handler) *run {
+	ln = &onceCloseListener{Listener: ln}
 
 	s.mu.Lock()
+
+	if s.state == stateStopping {
+		// Shutdown was called while the server was starting.
+		s.mu.Unlock()
+		_ = ln.Close()
+		s.closeUnserved(ctx)
+
+		return nil
+	}
+
+	r := &run{
+		hs:       s.cfg.httpServer(handler),
+		ln:       ln,
+		served:   make(chan error, 1),
+		stopping: make(chan struct{}),
+	}
+	s.run = r
+	s.state = stateRunning
 	s.addr = ln.Addr().String()
 	s.mu.Unlock()
+
 	close(s.ready)
 
-	hs := &http.Server{Handler: mux, ReadHeaderTimeout: defaultReadHeaderTimeout}
-	errc := make(chan error, 1)
+	go func() { r.served <- r.hs.Serve(ln) }()
 
-	go func() { errc <- hs.Serve(ln) }()
+	return r
+}
 
-	//nolint:contextcheck // a Shutdown call bounds the drain with its own context, not Start's.
-	var drainCtx context.Context
+// stop runs the stop sequence of a running server once and reports whether
+// this call ran it. A call that finds the sequence already begun returns
+// false at once; it can wait on s.stopped.
+func (s *Server) stop(drainCtx context.Context) bool {
+	s.mu.Lock()
+	if s.state != stateRunning {
+		s.mu.Unlock()
 
-	select {
-	case <-ctx.Done():
-		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultShutdownTimeout)
-		defer cancel()
-
-		drainCtx = c
-	case c := <-s.stopReq:
-		drainCtx = c
-	case err := <-errc:
-		return err
+		return false
 	}
 
-	defer close(s.stopped)
+	s.state = stateStopping
+	r := s.run
+	s.mu.Unlock()
 
-	s.drainErr = drain(drainCtx, hs)
-	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
+	close(r.stopping)
+	_ = r.ln.Close()
 
-	return nil
+	beforeErr := s.runHooks(drainCtx, BeforeDrain)
+	drainErr := drain(drainCtx, r.hs)
+	afterErr := s.runAfterDrain(drainCtx)
+
+	s.finish(errors.Join(beforeErr, afterErr), drainErr)
+
+	return true
 }
 
 // drain stops accepting connections and waits for in-flight requests until
@@ -169,17 +319,87 @@ func drain(ctx context.Context, hs *http.Server) error {
 }
 
 // Shutdown stops the server gracefully: it stops accepting connections and
-// waits for in-flight requests until ctx is done.
+// waits for in-flight requests until ctx is done, then closes the remaining
+// connections and returns the context error.
+//
+// Shutdown is idempotent: on a server that was never started it closes the
+// server, so a later Start returns [ErrServerClosed]; while another call is
+// stopping the server it waits for that stop and returns nil; once stopped
+// it returns nil. A nil ctx returns an error wrapping [ErrConfig] and
+// leaves the server running.
 func (s *Server) Shutdown(ctx context.Context) error {
-	select {
-	case s.stopReq <- ctx:
-	default:
+	if ctx == nil {
+		return configError("Shutdown context", "<nil>", "is nil")
 	}
 
+	s.mu.Lock()
+	st := s.state
+
+	switch st {
+	case stateNew:
+		// Stopping, so a concurrent Start or Register is refused while the
+		// AfterDrain hooks run.
+		s.state = stateStopping
+		s.mu.Unlock()
+		s.closeUnserved(ctx)
+
+		return s.hookErr
+	case stateStarting:
+		// Start sees the stopping state before it serves and closes the
+		// server; this call reports the result.
+		s.state = stateStopping
+		s.mu.Unlock()
+
+		return s.wait(ctx, true)
+	case stateRunning:
+		s.mu.Unlock()
+
+		drainCtx, cancel := context.WithTimeout(ctx, s.cfg.ShutdownTimeout)
+		defer cancel()
+
+		if s.stop(drainCtx) {
+			return s.result()
+		}
+
+		return s.wait(ctx, false)
+	default:
+		s.mu.Unlock()
+
+		return s.wait(ctx, false)
+	}
+}
+
+// wait waits until the server is closed or ctx is done. It returns the
+// stop result when first, nil otherwise.
+func (s *Server) wait(ctx context.Context, first bool) error {
 	select {
 	case <-s.stopped:
-		return s.drainErr
+		if first {
+			return s.result()
+		}
+
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
+
+// onceCloseListener makes Close idempotent, so that srvr can close the
+// listener before draining and http.Server.Shutdown can close it again
+// without reporting an error.
+type onceCloseListener struct {
+	net.Listener
+
+	once sync.Once
+	err  error
+}
+
+func (l *onceCloseListener) Close() error {
+	l.once.Do(func() { l.err = l.Listener.Close() })
+
+	return l.err
+}
+
+// result is what the Shutdown call that stopped the server returns: the
+// hook failures and the drain error. Read it only after s.stopped closed.
+func (s *Server) result() error { return errors.Join(s.hookErr, s.drainErr) }

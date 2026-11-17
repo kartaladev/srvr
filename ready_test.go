@@ -83,11 +83,7 @@ func TestAddr_BeforeReady(t *testing.T) {
 	t.Run("failed to bind", func(t *testing.T) {
 		t.Parallel()
 
-		taken, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer taken.Close()
+		taken := listen(t)
 
 		srv, err := srvr.New(srvr.WithAddr(taken.Addr().String()))
 		if err != nil {

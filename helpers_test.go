@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -118,4 +119,93 @@ func get(t *testing.T, url string) response {
 	t.Helper()
 
 	return do(t, http.MethodGet, url, nil, nil)
+}
+
+// waitRefused waits until a new connection to addr is refused.
+func waitRefused(t *testing.T, addr string) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(context.Background(), "tcp", addr)
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatalf("connections to %s were still accepted", addr)
+}
+
+// eventually waits up to a second for cond.
+func eventually(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+
+	t.Fatal(msg)
+}
+
+// workRoute registers GET /work whose handler signals started and then
+// works for d (or until release is closed) before writing 200.
+func workRoute(d time.Duration, started chan<- struct{}, release <-chan struct{}) configFunc {
+	return func(g *srvr.Group) {
+		g.GET("/work", func(w http.ResponseWriter, _ *http.Request) error {
+			started <- struct{}{}
+			select {
+			case <-time.After(d):
+			case <-release:
+			}
+			w.WriteHeader(http.StatusOK)
+
+			return nil
+		})
+	}
+}
+
+// startBackground starts srv with a background context and returns the
+// channel Start's result arrives on.
+func startBackground(t *testing.T, srv *srvr.Server) <-chan error {
+	t.Helper()
+
+	return startWith(context.Background(), t, srv)
+}
+
+// startWith starts srv with ctx, waits until it is ready and returns the
+// channel Start's result arrives on.
+func startWith(ctx context.Context, t *testing.T, srv *srvr.Server) <-chan error {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(ctx) }()
+	waitReady(t, srv, done)
+
+	return done
+}
+
+func mustNil(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// listen opens a loopback listener on an ephemeral port, closed when the
+// test ends.
+func listen(t *testing.T) net.Listener {
+	t.Helper()
+
+	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	return ln
 }

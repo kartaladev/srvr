@@ -1,6 +1,8 @@
 package srvr_test
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -190,6 +192,46 @@ func TestGroupMethods(t *testing.T) {
 		t.Run(m, func(t *testing.T) {
 			if got := do(t, m, base+"/"+strings.ToLower(m), nil, nil).status; got != http.StatusNoContent {
 				t.Fatalf("%s = %d, want 204", m, got)
+			}
+		})
+	}
+}
+
+// ptrConfigurer is a pointer configurer, to register as a typed nil.
+type ptrConfigurer struct{}
+
+func (*ptrConfigurer) Configure(*srvr.Group) {}
+
+// TestRegister_Rejected covers route-registration / Scenario: Registration
+// outcome, rejected rows.
+func TestRegister_Rejected(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state string
+		// prepare brings srv into state.
+		prepare func(t *testing.T, srv *srvr.Server)
+		conf    srvr.RouteConfigurer[*srvr.Group]
+		want    error
+	}{
+		{"not started, nil", func(*testing.T, *srvr.Server) {}, nil, srvr.ErrRouteConfig},
+		{"not started, typed nil", func(*testing.T, *srvr.Server) {}, (*ptrConfigurer)(nil), srvr.ErrRouteConfig},
+		{"running", func(t *testing.T, srv *srvr.Server) { t.Helper(); startServer(t, srv) }, okRoute("/late"), srvr.ErrServerStarted},
+		{"stopped", func(t *testing.T, srv *srvr.Server) {
+			t.Helper()
+			mustNil(t, srv.Shutdown(context.Background()))
+		}, okRoute("/late"), srvr.ErrServerClosed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newServer(t)
+			tt.prepare(t, srv)
+
+			if err := srv.Register(tt.conf); !errors.Is(err, tt.want) {
+				t.Fatalf("Register = %v, want %v", err, tt.want)
 			}
 		})
 	}

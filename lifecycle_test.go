@@ -9,20 +9,6 @@ import (
 	"github.com/kartaladev/srvr"
 )
 
-// blockingRoute registers GET path whose handler signals started, waits
-// until release is closed and writes 200.
-func blockingRoute(path string, started chan<- struct{}, release <-chan struct{}) configFunc {
-	return func(g *srvr.Group) {
-		g.GET(path, func(w http.ResponseWriter, _ *http.Request) error {
-			started <- struct{}{}
-			<-release
-			w.WriteHeader(http.StatusOK)
-
-			return nil
-		})
-	}
-}
-
 // inFlight sends GET url in the background and returns a channel with the
 // status, or -1 when the request failed.
 func inFlight(url string) <-chan int {
@@ -87,16 +73,14 @@ func TestStart_Stop(t *testing.T) {
 
 			started, release := make(chan struct{}, 1), make(chan struct{})
 			srv := newServer(t)
-			if err := srv.Register(blockingRoute("/ping", started, release)); err != nil {
+			if err := srv.Register(workRoute(time.Hour, started, release)); err != nil {
 				t.Fatal(err)
 			}
 
 			ctx, trigger := tt.run(t, srv)
-			done := make(chan error, 1)
-			go func() { done <- srv.Start(ctx) }()
-			waitReady(t, srv, done)
+			done := startWith(ctx, t, srv)
 
-			status := inFlight("http://" + srv.Addr() + "/ping")
+			status := inFlight("http://" + srv.Addr() + "/work")
 			<-started
 			trigger()
 			// Start must still be draining: the request is in flight.
