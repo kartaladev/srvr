@@ -203,13 +203,19 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 
 	for _, c := range configurers {
 		s.owners.current = fmt.Sprintf("%T", c)
+		before := len(firstStack(s.app))
 
 		if err := engine.Configure[fiber.Router](c, s.app); err != nil {
 			return nil, err
 		}
+
+		s.owners.recordMounts(s.app, before)
 	}
 
-	if err := s.owners.duplicate(); err != nil {
+	s.owners.addMounted()
+
+	cfg := s.app.Config()
+	if err := s.owners.duplicate(&cfg); err != nil {
 		return nil, err
 	}
 
@@ -221,7 +227,7 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 		}
 	}
 
-	return engine.CollapseMethods(s.owners.routes, s.app.Config().RequestMethods), nil
+	return engine.CollapseMethods(s.owners.routes, cfg.RequestMethods), nil
 }
 
 // handlerKey identifies a route handler by its function pointer.
@@ -230,41 +236,157 @@ func handlerKey(h fiber.Handler) uintptr { return engine.FuncPointer(h) }
 // routeOwners records every route registration made during the configure
 // phase with the configurer that made it, through fiber's OnRoute hook,
 // which also fires for a registration fiber merges into an earlier route.
+// fiber does not fire OnRoute for a mounted sub-app, so mounts are found in
+// the app's stack after each configurer (recordMounts) and their routes
+// read once the configure phase is over (addMounted).
 type routeOwners struct {
 	// current is the type of the configurer running, "" outside the
 	// configure phase.
 	current string
 	routes  engine.Routes
+	mounts  []mount
+}
+
+// mount is a sub-app mounted by a configurer.
+type mount struct {
+	// group is the mount route's *fiber.Group, read through reflection.
+	group      reflect.Value
+	prefix     string
+	configurer string
+}
+
+// firstStack returns app's first method stack, nil when it has none.
+func firstStack(app *fiber.App) []*fiber.Route {
+	if st := app.Stack(); len(st) > 0 {
+		return st[0]
+	}
+
+	return nil
+}
+
+// recordMounts attributes the mount routes appended to app's first method
+// stack since it had length from to the configurer running. fiber files a
+// mount in every method stack, so one stack sees each mount once, and a
+// configurer only appends to it.
+func (o *routeOwners) recordMounts(app *fiber.App, from int) {
+	for _, r := range firstStack(app)[from:] {
+		if v := reflect.ValueOf(r).Elem(); boolField(v, "mount") {
+			o.mounts = append(o.mounts, mount{group: v.FieldByName("group"), prefix: r.Path, configurer: o.current})
+		}
+	}
+}
+
+// addMounted adds the routes of every recorded sub-app, at its full
+// mounted path and attributed to the configurer that mounted it. Routes
+// added to a sub-app after it was mounted are included, because they are
+// read now.
+func (o *routeOwners) addMounted() {
+	for _, m := range o.mounts {
+		o.walk(subApp(m.group), m.prefix, m.configurer, map[uintptr]bool{})
+	}
+}
+
+// subApp returns the *fiber.App behind group, a *fiber.Group value, or
+// the zero Value when there is none; walk rejects anything not an app.
+func subApp(group reflect.Value) reflect.Value {
+	if group.Kind() != reflect.Pointer || group.IsNil() {
+		return reflect.Value{}
+	}
+
+	return group.Elem().FieldByName("app")
+}
+
+// walk appends the routes of app, a *fiber.App value, as fiber composes
+// them when it flattens mounted apps at startup (mount.go
+// processSubAppsRoutes): paths joined to prefix, middleware and implicit
+// HEAD routes skipped, nested mounts followed. It only reads fiber's
+// unexported fields (App.stack, Route.group, Group.app, pinned by
+// TestMountFields) and stops at a missing field or a mount cycle.
+func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath map[uintptr]bool) {
+	if app.Kind() != reflect.Pointer || app.IsNil() || onPath[app.Pointer()] {
+		return
+	}
+
+	onPath[app.Pointer()] = true
+	defer delete(onPath, app.Pointer())
+
+	stack := app.Elem().FieldByName("stack")
+	if stack.Kind() != reflect.Slice {
+		return
+	}
+
+	walked := map[uintptr]bool{} // mount groups of this app: one per mount, filed in every stack
+
+	for i := range stack.Len() {
+		for j := range stack.Index(i).Len() {
+			rp := stack.Index(i).Index(j)
+			if rp.IsNil() {
+				continue
+			}
+
+			r := rp.Elem()
+
+			switch {
+			case declared(r):
+				o.routes = append(o.routes, engine.Route{Method: r.FieldByName("Method").String(), Pattern: groupPath(prefix, r.FieldByName("Path").String()), Configurer: configurer})
+			case boolField(r, "mount"):
+				if g := r.FieldByName("group"); g.Kind() == reflect.Pointer && !walked[g.Pointer()] {
+					walked[g.Pointer()] = true
+					o.walk(subApp(g), groupPath(prefix, r.FieldByName("Path").String()), configurer, onPath)
+				}
+			}
+		}
+	}
+}
+
+// groupPath joins a mount prefix and a sub-app route path as fiber's
+// getGroupPath (helpers.go) does.
+func groupPath(prefix, path string) string {
+	if path == "" {
+		return prefix
+	}
+
+	if path[0] != '/' {
+		path = "/" + path
+	}
+
+	return strings.TrimRight(prefix, "/") + path
 }
 
 // record is the app's OnRoute hook.
 func (o *routeOwners) record(r fiber.Route) error {
-	if o.current != "" && !routeFlag(r, "use") && !routeFlag(r, "mount") && !routeFlag(r, "autoHead") {
+	if o.current != "" && declared(reflect.ValueOf(r)) {
 		o.routes = append(o.routes, engine.Route{Method: r.Method, Pattern: r.Path, Configurer: o.current})
 	}
 
 	return nil
 }
 
-// routeFlag reads one of fiber.Route's unexported flags (use, mount,
-// autoHead), which fiber v3 does not export but which tell a middleware or
-// implicit registration from a route the consumer declared. Reading an
-// unexported bool through reflect is allowed; the fiber version is pinned
-// and the registration tests fail if the field disappears.
-func routeFlag(r fiber.Route, name string) bool {
-	f := reflect.ValueOf(r).FieldByName(name)
+// declared reports whether r, a fiber.Route value, is a route the consumer
+// declared rather than middleware (use), a mounted sub-app (mount) or an
+// implicit HEAD route (autoHead). fiber v3 does not export these flags;
+// reading an unexported bool through reflect is allowed, the fiber version
+// is pinned and TestRouteFlagFields fails if a field disappears.
+func declared(r reflect.Value) bool {
+	return !boolField(r, "use") && !boolField(r, "mount") && !boolField(r, "autoHead")
+}
+
+// boolField reports whether struct value v has a bool field name that is
+// true.
+func boolField(v reflect.Value, name string) bool {
+	f := v.FieldByName(name)
 
 	return f.IsValid() && f.Kind() == reflect.Bool && f.Bool()
 }
 
 // duplicate returns an error wrapping srvr.ErrRouteConfig for the first
-// route whose method and path, with parameter names normalised (":id" and
-// ":name" are the same segment), repeat an earlier one.
-func (o *routeOwners) duplicate() error {
+// route whose method and path, compared as fiber with cfg matches them
+// (see matchKey), repeat an earlier one.
+func (o *routeOwners) duplicate(cfg *fiber.Config) error {
 	first := map[string]engine.Route{}
 
 	for _, r := range o.routes {
-		key := r.Method + " " + normalise(r.Pattern)
+		key := r.Method + " " + matchKey(r.Pattern, cfg)
 		if earlier, dup := first[key]; dup {
 			return engine.RouteError("%q (%s) duplicates %q (%s); fiber would serve only the first",
 				r.Method+" "+r.Pattern, r.Configurer, earlier.Method+" "+earlier.Pattern, earlier.Configurer)
@@ -276,8 +398,54 @@ func (o *routeOwners) duplicate() error {
 	return nil
 }
 
-// normalise replaces every parameter name in a fiber path with ":".
-func normalise(path string) string {
+// matchKey returns the key fiber compares a route path by: the clean form
+// of fiber v3.7.0's normalizeRoutePattern for a non-Use route (a leading
+// "/" added, ASCII letters lowercased unless cfg.CaseSensitive, trailing
+// slashes trimmed to at least "/" unless cfg.StrictRouting, escape
+// characters removed), with every parameter name dropped first, because
+// ":id" and ":name" match the same requests.
+func matchKey(path string, cfg *fiber.Config) string {
+	if path == "" || path[0] != '/' {
+		path = "/" + path
+	}
+
+	path = dropParamNames(path)
+
+	if !cfg.CaseSensitive {
+		path = asciiLower(path)
+	}
+
+	if !cfg.StrictRouting && len(path) > 1 {
+		if path = strings.TrimRight(path, "/"); path == "" {
+			path = "/"
+		}
+	}
+
+	return fiber.RemoveEscapeChar(path)
+}
+
+// asciiLower lowercases ASCII letters only, as fiber's router does.
+func asciiLower(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return 'A' <= r && r <= 'Z' }) {
+		return s
+	}
+
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+
+	return string(b)
+}
+
+// dropParamNames replaces every parameter name in a fiber path with ":".
+func dropParamNames(path string) string {
+	if !strings.Contains(path, ":") {
+		return path
+	}
+
 	segments := strings.Split(path, "/")
 	for i, seg := range segments {
 		if strings.HasPrefix(seg, ":") {

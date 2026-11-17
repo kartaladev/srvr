@@ -7,7 +7,11 @@
 // registered with [Server.Register]; handlers return errors, which srvr
 // renders as problems with the request's trace_id (a *fiber.Error code is
 // a status hint; its message is never sent). Duplicate routes, which fiber
-// accepts silently, fail Start.
+// accepts silently and of which it serves only the first, fail Start. They
+// are compared as fiber matches them: parameter names ignored, letter case
+// ignored unless the app's CaseSensitive is on, a trailing slash ignored
+// unless its StrictRouting is on (both as set through [WithFiberConfig]),
+// and routes of mounted sub-apps at their full mounted path.
 //
 // srvr derives fiber's configuration from its own (error handler, body
 // limit, read, write and idle timeouts, header buffer) and owns the
@@ -47,5 +51,11 @@
 //     the problem instead of that body; a streaming body that has started
 //     is kept.
 //   - A path-scoped Use (for example Use("/assets", static)) is middleware
-//     to fiber and is not a declared route.
+//     to fiber and is not a declared route. A sub-app mounted with
+//     Use(prefix, subApp) is different: its routes, at any mount depth, are
+//     listed for route checks at their full mounted path and attributed to
+//     the configurer that mounted it, and take part in the duplicate check;
+//     its own middleware is not listed. srvr reads them from fiber's
+//     unexported fields when Start runs, so routes added to a sub-app after
+//     Start are not listed.
 package fibersrvr
