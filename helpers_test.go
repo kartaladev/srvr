@@ -245,3 +245,34 @@ type (
 func (*PanicAPI) Configure(*srvr.Group) { panic("boom") }
 
 func (c NilDerefAPI) Configure(g *srvr.Group) { g.GET("/"+c.db.name, status(http.StatusOK)) }
+
+// late returns a handler that writes status and the body "partial", then
+// fails with fail: an error or a panic after the response started.
+func late(status int, fail func() error) srvr.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) error {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("partial"))
+
+		return fail()
+	}
+}
+
+// waitLimit bounds every wait in the tests, so a regression fails with a
+// message instead of hanging until the test binary's timeout.
+const waitLimit = 10 * time.Second
+
+// receive returns the next value from ch, failing with msg after waitLimit.
+func receive[T any](t *testing.T, ch <-chan T, msg string) T {
+	t.Helper()
+
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(waitLimit):
+		t.Fatalf("after %s: %s", waitLimit, msg)
+
+		var zero T
+
+		return zero
+	}
+}

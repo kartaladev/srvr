@@ -135,3 +135,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Design D4 originally said prblm notes with no problem would be logged at `WARN` as `srvr.problem.note`; the code drops rendering notes (`ErrInvalidStatus`, `ErrInvalidType`, `ErrUndocumentedType`, `ErrEncoding`, `ErrShadowedDocumentation`) and D4 now says so (owner decision W3). These notes point at consumer configuration mistakes (an invalid status mapping, an undocumented type) that nothing reports today; the entry "A panicking consumer error hook is contained silently" has the same gap. A new event is an additive log schema change (no `srvr.log.schema` bump).
 - **Evidence:** unverified as a defect: behaviour per revised D4 (`access.go` `recordFailure`, `renderingNotes`).
 - **Suggested action:** Owner decides whether to add a `WARN` `srvr.problem.note` record (once per note kind per process, to avoid flooding) for rendering notes and contained hook panics, with a spec scenario and a golden-record row.
+
+### Start's "Serve returned because the stop closed the listener" branch is covered only by timing
+- **Status:** open
+- **Target:** unassigned
+- **Context:** In `server.go` `Start`, when `http.Server.Serve` returns and the stop sequence has already begun, `served` is reset to nil (`case <-r.stopping: served = nil`, about line 183). Whether a test reaches it depends on which `select` case wins, so `go tool cover -func` reports `Start` at 96% on some runs. Found while verifying task group 9; not part of its findings, so not changed.
+- **Evidence:** unverified as a defect (coverage only): `GOWORK=off go test -count=1 -coverprofile=c.out ./...` listed `server.go:183.4,183.16 1 0`.
+- **Suggested action:** Decide whether to make the branch deterministic (a seam closing the listener before `Serve` returns, or restructuring so the stop sequence's own error result is the only source) and add a test, or accept the timing-dependent coverage.

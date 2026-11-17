@@ -43,21 +43,23 @@ func TestShutdown_Drain(t *testing.T) {
 			var status <-chan int
 			if tt.work > 0 {
 				status = inFlight("http://" + srv.Addr() + "/work")
-				<-started
+				receive(t, started, "the in-flight request did not reach its handler")
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
 			defer cancel()
 
-			if err := srv.Shutdown(ctx); !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
+			shutdown := make(chan error, 1)
+			go func() { shutdown <- srv.Shutdown(ctx) }()
+			if err := receive(t, shutdown, "Shutdown did not return"); !errors.Is(err, tt.wantErr) || (tt.wantErr == nil && err != nil) {
 				t.Fatalf("Shutdown = %v, want %v", err, tt.wantErr)
 			}
 			if status != nil {
-				if got := <-status; got != tt.outcome {
+				if got := receive(t, status, "the in-flight request did not finish"); got != tt.outcome {
 					t.Fatalf("in-flight = %d, want %d", got, tt.outcome)
 				}
 			}
-			if err := <-done; err != nil {
+			if err := receive(t, done, "Start did not return"); err != nil {
 				t.Fatalf("Start = %v, want nil", err)
 			}
 		})
@@ -164,5 +166,43 @@ func TestShutdown_NilContext(t *testing.T) {
 	}
 	if got := get(t, base+"/ping").status; got != http.StatusOK {
 		t.Fatalf("GET /ping = %d, want 200: the server must keep serving", got)
+	}
+}
+
+// TestShutdown_DuringContextStop covers the "is being shut down by another
+// goroutine" row of server-lifecycle / Scenario: Shutdown misuse when the
+// other stop is Start's context ending: a BeforeDrain hook holds that stop
+// sequence while Shutdown is called, so the order is deterministic.
+func TestShutdown_DuringContextStop(t *testing.T) {
+	t.Parallel()
+
+	inHook, release := make(chan struct{}), make(chan struct{})
+	srv := newServer(t, srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error {
+		close(inHook)
+		<-release
+
+		return nil
+	}))
+	ctx, stop := context.WithCancel(context.Background())
+	done := startWith(ctx, t, srv)
+
+	stop()
+	receive(t, inHook, "the BeforeDrain hook did not run")
+
+	shutdown := make(chan error, 1)
+	go func() { shutdown <- srv.Shutdown(context.Background()) }()
+
+	select {
+	case err := <-shutdown:
+		t.Fatalf("Shutdown returned %v while the stop sequence was still running", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	if err := receive(t, shutdown, "Shutdown did not return after the stop finished"); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+	if err := receive(t, done, "Start did not return"); err != nil {
+		t.Fatalf("Start = %v, want nil", err)
 	}
 }

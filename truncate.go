@@ -51,8 +51,9 @@ func (t *truncator) attr(a slog.Attr) slog.Attr {
 		case ownText:
 			return slog.String(a.Key, string(x))
 		case error:
-			// The handler would format the error again; the text is ready.
-			s, cut := cutString(x.Error(), t.maxBytes)
+			// The handler would format the error again; the text is ready,
+			// read guarded against a typed nil and a panicking Error.
+			s, cut := cutString(errorText(x), t.maxBytes)
 			t.cut = t.cut || cut
 
 			return slog.String(a.Key, s)

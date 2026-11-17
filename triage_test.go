@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -95,17 +96,41 @@ func TestTriage_OwnLimits(t *testing.T) {
 func TestTriage_Problem(t *testing.T) {
 	t.Parallel()
 
-	rec := failedRecord(t, returning(prblm.ErrConflict))
-	p, _ := rec["problem"].(map[string]any)
-	if p["status"] != float64(409) || p["type"] != "about:blank" || p["title"] != "Conflict" {
-		t.Fatalf("problem = %v", p)
+	tests := []struct {
+		name    string
+		handler srvr.HandlerFunc
+		problem map[string]any // nil: no problem group, committed true
+		want    map[string]any // further attributes
+	}{
+		{"conflict", returning(prblm.ErrConflict), map[string]any{"status": float64(409), "type": "about:blank", "title": "Conflict"}, nil},
+		{"boom", returning(errors.New("boom")), map[string]any{"status": float64(500), "title": "Internal Server Error"}, nil},
+		{"late error", late(http.StatusOK, func() error { return errors.New("late") }), nil, nil},
+		{"late panic", late(http.StatusOK, func() error { panic("late") }), nil, map[string]any{"error.kind": "panic", "level": "ERROR"}},
 	}
 
-	p, _ = failedRecord(t, returning(errors.New("boom")))["problem"].(map[string]any)
-	if p["status"] != float64(500) || p["title"] != "Internal Server Error" {
-		t.Fatalf("problem = %v", p)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := failedRecord(t, tt.handler)
+			p, hasProblem := rec["problem"].(map[string]any)
+			if tt.problem == nil {
+				if hasProblem || rec["srvr.response.committed"] != true {
+					t.Fatalf("record = %v, want no problem and srvr.response.committed", rec)
+				}
+			}
+			for k, v := range tt.problem {
+				if p[k] != v {
+					t.Fatalf("problem = %v, want %s %v", p, k, v)
+				}
+			}
+			for k, v := range tt.want {
+				if rec[k] != v {
+					t.Fatalf("record = %v, want %s %v", rec, k, v)
+				}
+			}
+		})
 	}
-	// The committed row is covered by TestAccessRecord_Deferred.
 }
 
 // RegistrationHandler has a method used as a handler.
@@ -352,16 +377,48 @@ func TestTriage_Hostile(t *testing.T) {
 	}
 }
 
-// TestTriage_Build covers triage-error-records / Scenario: Build attributes on errors.
+// TestTriage_Build covers triage-error-records / Scenario: Build
+// attributes on errors, with build information injected through
+// srvr.WithBuildInfo (export_test.go).
 func TestTriage_Build(t *testing.T) {
 	t.Parallel()
 
-	rec := failedRecord(t, returning(errors.New("boom")), srvr.WithServiceConfig(srvr.ServiceConfig{Name: "registration-api", Version: "1.4.2"}))
-	if rec["service.name"] != "registration-api" || rec["service.version"] != "1.4.2" {
-		t.Fatalf("record = %v", rec)
+	tests := []struct {
+		name     string
+		revision string // empty: no vcs.revision in the build information
+	}{
+		{"revision 9c1e2ab", "9c1e2ab"},
+		{"no revision", ""},
 	}
-	// vcs.revision comes from build information; its presence and absence
-	// are covered by TestServiceAttributes.
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			build := func() (*debug.BuildInfo, bool) {
+				info := &debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}
+				if tt.revision != "" {
+					info.Settings = []debug.BuildSetting{{Key: "vcs.revision", Value: tt.revision}}
+				}
+
+				return info, true
+			}
+
+			rec := failedRecord(t, returning(errors.New("boom")),
+				srvr.WithServiceConfig(srvr.ServiceConfig{Name: "registration-api", Version: "1.4.2"}),
+				srvr.WithBuildInfo(build))
+			if rec["service.name"] != "registration-api" || rec["service.version"] != "1.4.2" {
+				t.Fatalf("record = %v, want service registration-api 1.4.2", rec)
+			}
+			got, has := rec["vcs.revision"]
+			if tt.revision == "" && has {
+				t.Fatalf("vcs.revision = %v, want none", got)
+			}
+			if tt.revision != "" && got != tt.revision {
+				t.Fatalf("vcs.revision = %v, want %s", got, tt.revision)
+			}
+		})
+	}
 }
 
 // TestTriage_Redactor covers triage-error-records / Scenario: Redacting error text.

@@ -183,3 +183,52 @@ func short(v any) string {
 
 	return string(b)
 }
+
+// derefError dereferences its receiver, so a typed nil panics in Error.
+type derefError struct{ msg string }
+
+func (e *derefError) Error() string { return e.msg }
+
+// TestHostileLoggedErrors covers structured-logging / Scenario: Hostile
+// logged errors.
+func TestHostileLoggedErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		err    error
+		with   bool // bound with l.With instead of passed with the record
+		logged string
+	}{
+		{"typed nil in the record", (*derefError)(nil), false, "<nil *srvr_test.derefError>"},
+		{"panicking Error in the record", badError{}, false, "<panic in Error(): srvr_test.badError>"},
+		{"typed nil through With", (*derefError)(nil), true, "<nil *srvr_test.derefError>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, out := loggedServer(t, func(g *srvr.Group) {
+				g.GET("/log", func(w http.ResponseWriter, r *http.Request) error {
+					l := srvr.LoggerFromContext(r.Context())
+					if tt.with {
+						l.With(slog.Any("err", tt.err)).Info("logged")
+					} else {
+						l.Info("logged", slog.Any("err", tt.err))
+					}
+					w.WriteHeader(http.StatusOK)
+
+					return nil
+				})
+			})
+
+			if got := get(t, base+"/log").status; got != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (logging must never fail the request)", got)
+			}
+			if got := out.waitRecord(t, "logged")["err"]; got != tt.logged {
+				t.Fatalf("err = %v, want %q", got, tt.logged)
+			}
+		})
+	}
+}

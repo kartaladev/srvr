@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"runtime/debug"
 	"sync"
 	"time"
 
@@ -78,7 +77,7 @@ func New(opts ...Option) (*Server, error) {
 		return nil, err
 	}
 
-	srv.serviceAttrs = s.service.attrs(debug.ReadBuildInfo)
+	srv.serviceAttrs = s.service.attrs(s.readBuild)
 
 	if s.log.setDefault {
 		slog.SetDefault(slog.New(srv.log))
@@ -208,14 +207,19 @@ func (s *Server) begin() ([]RouteConfigurer[*Group], error) {
 // only the AfterDrain hooks run, and err is returned with their failures.
 func (s *Server) fail(ctx context.Context, err error) error {
 	s.logEvent(ctx, slog.LevelError, eventFailed, slog.String(keyExceptionMsg, err.Error()))
-	s.closeUnserved(ctx)
+	s.closeUnserved(ctx, s.settings.listener)
 
 	return errors.Join(err, s.hookErr)
 }
 
-// closeUnserved closes a server that served nothing: only the AfterDrain
-// hooks run.
-func (s *Server) closeUnserved(ctx context.Context) {
+// closeUnserved closes a server that served nothing: it closes ln, the
+// listener the server owns (nil when there is none), and runs only the
+// AfterDrain hooks.
+func (s *Server) closeUnserved(ctx context.Context, ln net.Listener) {
+	if ln != nil {
+		_ = ln.Close()
+	}
+
 	s.finish(s.runAfterDrain(ctx), nil)
 }
 
@@ -298,8 +302,7 @@ func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handle
 	if s.state == stateStopping {
 		// Shutdown was called while the server was starting.
 		s.mu.Unlock()
-		_ = ln.Close()
-		s.closeUnserved(ctx)
+		s.closeUnserved(ctx, ln)
 
 		return nil
 	}
@@ -323,21 +326,26 @@ func (s *Server) serve(ctx context.Context, ln net.Listener, handler http.Handle
 	return r
 }
 
-// stop runs the stop sequence of a running server once and reports whether
-// this call ran it. A call that finds the sequence already begun returns
-// false at once; it can wait on s.stopped.
-func (s *Server) stop(drainCtx context.Context) bool {
+// stop runs the stop sequence of a running server, unless it has already
+// begun; a caller that finds it begun can wait on s.stopped.
+func (s *Server) stop(drainCtx context.Context) {
 	s.mu.Lock()
 	if s.state != stateRunning {
 		s.mu.Unlock()
 
-		return false
+		return
 	}
 
 	s.state = stateStopping
 	r := s.run
 	s.mu.Unlock()
 
+	s.stopRun(drainCtx, r)
+}
+
+// stopRun is the stop sequence of a running server: stop accepting
+// connections, BeforeDrain hooks, drain, AfterDrain hooks.
+func (s *Server) stopRun(drainCtx context.Context, r *run) {
 	close(r.stopping)
 	_ = r.ln.Close()
 	s.logEvent(drainCtx, slog.LevelInfo, eventStopping)
@@ -349,8 +357,6 @@ func (s *Server) stop(drainCtx context.Context) bool {
 	afterErr := s.runAfterDrain(drainCtx)
 
 	s.finish(errors.Join(beforeErr, afterErr), drainErr)
-
-	return true
 }
 
 // drain stops accepting connections and waits for in-flight requests until
@@ -387,7 +393,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		// AfterDrain hooks run.
 		s.state = stateStopping
 		s.mu.Unlock()
-		s.closeUnserved(ctx)
+		s.closeUnserved(ctx, s.settings.listener)
 
 		return s.hookErr
 	case stateStarting:
@@ -398,16 +404,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 		return s.wait(ctx, true)
 	case stateRunning:
+		// Claimed under the lock that read the state, so no other stop can
+		// begin in between.
+		s.state = stateStopping
+		r := s.run
 		s.mu.Unlock()
 
 		drainCtx, cancel := context.WithTimeout(ctx, s.cfg.ShutdownTimeout)
 		defer cancel()
 
-		if s.stop(drainCtx) {
-			return s.result()
-		}
+		s.stopRun(drainCtx, r)
 
-		return s.wait(ctx, false)
+		return s.result()
 	default:
 		s.mu.Unlock()
 

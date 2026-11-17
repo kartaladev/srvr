@@ -252,7 +252,17 @@ type step struct {
 	attrs []slog.Attr
 }
 
-func (h *logHandler) Enabled(ctx context.Context, l slog.Level) bool {
+// Enabled asks the base handler; a panic there is counted like a failed
+// write and the record is skipped.
+func (h *logHandler) Enabled(ctx context.Context, l slog.Level) (enabled bool) {
+	defer func() {
+		if recover() != nil {
+			logWriteErrors.Add(1)
+
+			enabled = false
+		}
+	}()
+
 	return h.base.Enabled(ctx, l)
 }
 
@@ -300,8 +310,16 @@ func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 // handle writes r; own marks a record srvr built itself, whose message is
-// a schema event name and is not cut.
+// a schema event name and is not cut. An error or a panic in the base
+// handler, while the recorded steps are replayed or in Handle, is counted
+// instead of passed on, and the record is skipped.
 func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
+	defer func() {
+		if recover() != nil {
+			logWriteErrors.Add(1)
+		}
+	}()
+
 	t := truncator{maxBytes: h.maxBytes}
 	r = t.record(r, own)
 
@@ -314,6 +332,14 @@ func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
 		top = append(top, slog.Bool(keyAttrTruncated, true))
 	}
 
+	if err := h.target(top).Handle(ctx, r); err != nil {
+		logWriteErrors.Add(1)
+	}
+}
+
+// target returns the base handler with the top-level attributes and the
+// recorded steps replayed after them.
+func (h *logHandler) target(top []slog.Attr) slog.Handler {
 	target := h.base
 	if len(top) > 0 {
 		target = target.WithAttrs(top)
@@ -327,7 +353,7 @@ func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
 		}
 	}
 
-	handleGuarded(ctx, target, r)
+	return target
 }
 
 // traceOf returns the bound trace, or the trace of ctx.

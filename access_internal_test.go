@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/kartaladev/prblm"
@@ -97,5 +100,44 @@ func TestFuncName(t *testing.T) {
 		if got := funcName(tt.fn); got != tt.want {
 			t.Errorf("funcName(%T) = %q, want %q", tt.fn, got, tt.want)
 		}
+	}
+}
+
+// TestResponseRecorder_ReadFrom covers the sendfile path of the access
+// recorder: ReadFrom before WriteHeader starts the response with 200 and
+// counts the bytes copied.
+func TestResponseRecorder_ReadFrom(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		header     int // 0: ReadFrom first
+		wantStatus int
+	}{
+		{"ReadFrom before WriteHeader", 0, http.StatusOK},
+		{"ReadFrom after WriteHeader", http.StatusCreated, http.StatusCreated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			w := httptest.NewRecorder()
+			rec := &responseRecorder{ResponseWriter: w}
+			if tt.header != 0 {
+				rec.WriteHeader(tt.header)
+			}
+
+			n, err := rec.ReadFrom(strings.NewReader("hello"))
+			if err != nil || n != 5 {
+				t.Fatalf("ReadFrom = %d, %v; want 5, nil", n, err)
+			}
+			if !rec.wroteHeader || rec.statusCode() != tt.wantStatus || rec.bytes != 5 {
+				t.Fatalf("recorder started=%v status=%d bytes=%d; want true %d 5", rec.wroteHeader, rec.statusCode(), rec.bytes, tt.wantStatus)
+			}
+			if w.Code != tt.wantStatus || w.Body.String() != "hello" {
+				t.Fatalf("response = %d %q", w.Code, w.Body.String())
+			}
+		})
 	}
 }

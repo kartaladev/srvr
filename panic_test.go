@@ -64,8 +64,8 @@ func TestPanicRecovery(t *testing.T) {
 	}
 }
 
-// TestLateError covers error-responses / Scenario: Late error. The access
-// record assertion (srvr.response.committed) is in TestAccessRecord.
+// TestLateError covers error-responses / Scenario: Late error, the client
+// response and the access record.
 func TestLateError(t *testing.T) {
 	t.Parallel()
 
@@ -73,26 +73,20 @@ func TestLateError(t *testing.T) {
 		name    string
 		written int
 		fail    func() error
+		level   string
 	}{
-		{"200 then error", http.StatusOK, func() error { return errors.New("late") }},
-		{"200 then panic", http.StatusOK, func() error { panic("late") }},
-		{"201 then conflict", http.StatusCreated, func() error { return prblm.ErrConflict }},
+		{"200 then error", http.StatusOK, func() error { return errors.New("late") }, "ERROR"},
+		{"200 then panic", http.StatusOK, func() error { panic("late") }, "ERROR"},
+		{"201 then conflict", http.StatusCreated, func() error { return prblm.ErrConflict }, "WARN"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv := newServer(t)
-			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
-				g.GET("/late", func(w http.ResponseWriter, _ *http.Request) error {
-					w.WriteHeader(tt.written)
-					_, _ = w.Write([]byte("partial"))
-
-					return tt.fail()
-				})
-			})))
-			base := startServer(t, srv)
+			base, out := loggedServer(t, func(g *srvr.Group) {
+				g.GET("/late", late(tt.written, tt.fail))
+			})
 
 			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/late", nil)
 			res, err := http.DefaultClient.Do(req)
@@ -104,6 +98,11 @@ func TestLateError(t *testing.T) {
 			n, _ := res.Body.Read(body)
 			if res.StatusCode != tt.written || !strings.HasPrefix(string(body[:n]), "partial") {
 				t.Fatalf("got %d %q, want %d starting with partial", res.StatusCode, body[:n], tt.written)
+			}
+
+			rec := out.waitRecord(t, "http.request.failed")
+			if _, hasProblem := rec["problem"]; hasProblem || rec["srvr.response.committed"] != true || rec["level"] != tt.level {
+				t.Fatalf("record = %v, want level %s, srvr.response.committed and no problem", rec, tt.level)
 			}
 		})
 	}

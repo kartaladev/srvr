@@ -9,16 +9,19 @@ import (
 // AccessLogConfig configures the access record written for every request.
 // Pass it with [WithAccessLogConfig]; zero values are the defaults.
 //
-// Suppression (Disabled, SkipPaths) applies only to records with a status
-// below 500: errors are the triage record and are always written. The
+// Suppression (Disabled, SkipPaths) applies only to http.request.completed
+// records with a status below 500: http.request.failed records (a returned
+// error, a recovered panic, an aborted or unmatched request) are the triage
+// record and are always written, whatever their status. The
 // Include fields each loosen a privacy default: by default the access
 // record holds the route pattern but not the path, the query string or the
 // client address, which may carry personal data or credentials.
 type AccessLogConfig struct {
-	// Disabled suppresses access records below status 500.
+	// Disabled suppresses http.request.completed records below status 500.
 	Disabled bool `json:"disabled" yaml:"disabled" env:"DISABLED"`
-	// SkipPaths suppresses access records below status 500 for requests
-	// whose path equals one of these exactly, such as "/healthz".
+	// SkipPaths suppresses http.request.completed records below status 500
+	// for requests whose path equals one of these exactly, such as
+	// "/healthz".
 	SkipPaths []string `json:"skip_paths" yaml:"skip_paths" env:"SKIP_PATHS"`
 	// IncludePath adds the request path as url.path.
 	IncludePath bool `json:"include_path" yaml:"include_path" env:"INCLUDE_PATH"`
@@ -33,13 +36,15 @@ func WithAccessLogConfig(c AccessLogConfig) Option {
 	return func(s *settings) { s.access = c }
 }
 
-// WithAccessLogDisabled suppresses access records below status 500.
+// WithAccessLogDisabled suppresses http.request.completed records below
+// status 500; failed records are still written.
 func WithAccessLogDisabled() Option {
 	return func(s *settings) { s.access.Disabled = true }
 }
 
-// WithAccessLogSkipPaths suppresses access records below status 500 for
-// requests to exactly these paths, added to earlier ones.
+// WithAccessLogSkipPaths suppresses http.request.completed records below
+// status 500 for requests to exactly these paths, added to earlier ones;
+// failed records are still written.
 func WithAccessLogSkipPaths(paths ...string) Option {
 	return func(s *settings) { s.access.SkipPaths = slices.Concat(s.access.SkipPaths, paths) }
 }
@@ -62,8 +67,8 @@ func WithAccessLogIncludeClientAddress() Option {
 	return func(s *settings) { s.access.IncludeClientAddress = true }
 }
 
-// suppressed reports whether the access record of a request to path with
-// status is suppressed.
+// suppressed reports whether the http.request.completed record of a
+// request to path with status is suppressed.
 func (c *AccessLogConfig) suppressed(path string, status int) bool {
 	return status < http.StatusInternalServerError && (c.Disabled || slices.Contains(c.SkipPaths, path))
 }

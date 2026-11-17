@@ -30,9 +30,11 @@ var renderingNotes = []error{
 }
 
 // recordFailure keeps the failure of the request in ctx. The first failure
-// with a problem wins; a failure without one (a panic in consumer mapper
-// code, or a panic after the response started) is kept only until one
-// with a problem arrives. Notes about rendering mistakes are not failures.
+// with a problem wins and later ones are dropped; a failure without one (a
+// panic after the response started, on a broken connection, or while
+// answering) is kept only until one with a problem arrives, which replaces
+// it. Notes about rendering mistakes are not failures and are dropped
+// without a record (design D4).
 func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 	req := requestFrom(ctx)
 	if req == nil {
@@ -88,18 +90,11 @@ func (s *Server) writeAccess(r *http.Request, req *request, rec *responseRecorde
 	aborted := req.aborted
 	fail := req.failure
 
-	msg, level := eventRequestCompleted, levelFor(status)
+	msg, level := outcome(status, aborted, fail)
 
-	switch {
-	case aborted:
-		// The client lost the connection by design; the server did not fail.
-		msg, level = eventRequestFailed, slog.LevelWarn
-	case fail != nil:
-		msg = eventRequestFailed
-	}
-
+	// Failed records are the triage record: suppression never applies.
 	ctx := r.Context()
-	if (!aborted && s.settings.access.suppressed(r.URL.Path, status)) || !s.log.Enabled(ctx, level) {
+	if (msg == eventRequestCompleted && s.settings.access.suppressed(r.URL.Path, status)) || !s.log.Enabled(ctx, level) {
 		return
 	}
 
@@ -151,6 +146,37 @@ func addFailure(record *slog.Record, fail *failure) {
 		slog.String(keyProblemType, p.EffectiveType()),
 		slog.String(keyProblemTitle, p.Title),
 	))
+}
+
+// outcome returns the event and level of the access record of a request
+// that sent status.
+func outcome(status int, aborted bool, fail *failure) (string, slog.Level) {
+	switch {
+	case aborted:
+		// The client lost the connection by design; the server did not fail.
+		return eventRequestFailed, slog.LevelWarn
+	case fail != nil:
+		return eventRequestFailed, fail.level(status)
+	default:
+		return eventRequestCompleted, levelFor(status)
+	}
+}
+
+// level returns the level of the failed record of a request that sent
+// status: ERROR for a panic, otherwise the higher of the levels of the
+// status sent and of the problem the error resolved to, which a response
+// that had already started did not get.
+func (f *failure) level(status int) slog.Level {
+	if _, isPanic := f.err.(*prblm.PanicError); isPanic { //nolint:errorlint // srvr's hook receives prblm's own value.
+		return slog.LevelError
+	}
+
+	level := levelFor(status)
+	if f.problem != nil {
+		level = max(level, levelFor(f.problem.Status))
+	}
+
+	return level
 }
 
 // levelFor returns INFO below 400, WARN for 4xx and ERROR for 5xx.

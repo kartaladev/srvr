@@ -175,17 +175,22 @@ func TestLogLevelVar(t *testing.T) {
 func TestAddSource(t *testing.T) {
 	t.Parallel()
 
-	for name, opt := range map[string]srvr.Option{
-		"on":               srvr.WithLogConfig(srvr.LogConfig{AddSource: true}),
-		"WithLogAddSource": srvr.WithLogAddSource(),
-		"off":              srvr.WithLogConfig(srvr.LogConfig{AddSource: false}),
-	} {
-		add := name != "off"
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []srvr.Option
+		add  bool
+	}{
+		{"LogConfig AddSource", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{AddSource: true})}, true},
+		{"WithLogAddSource", []srvr.Option{srvr.WithLogAddSource()}, true},
+		{"none", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			out := &logBuffer{}
-			srv := newServer(t, srvr.WithLogOutput(out), opt)
+			srv := newServer(t, append([]srvr.Option{srvr.WithLogOutput(out)}, tt.opts...)...)
 			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
 				g.GET("/log", func(_ http.ResponseWriter, r *http.Request) error {
 					srvr.LoggerFromContext(r.Context()).Info("handler") // sourceLine
@@ -197,8 +202,8 @@ func TestAddSource(t *testing.T) {
 
 			rec := out.waitRecord(t, "handler")
 			src, _ := rec["source"].(map[string]any)
-			if add != (src != nil) || (add && !strings.HasSuffix(src["file"].(string), "logconfig_test.go")) {
-				t.Fatalf("source = %v, want present %v and pointing at the handler", rec["source"], add)
+			if tt.add != (src != nil) || (tt.add && !strings.HasSuffix(src["file"].(string), "logconfig_test.go")) {
+				t.Fatalf("source = %v, want present %v and pointing at the handler", rec["source"], tt.add)
 			}
 			if _, has := out.waitRecord(t, "http.request.completed")["source"]; has {
 				t.Fatal("the access record carries source")
@@ -215,6 +220,9 @@ type recordingHandler struct {
 	attrs  []slog.Attr
 	fail   error
 	panics bool
+	// panicsIn names a method that panics: "Enabled" (for request records
+	// only, so the server still starts), "WithAttrs" or "WithGroup".
+	panicsIn string
 }
 
 type recordStore struct {
@@ -222,10 +230,27 @@ type recordStore struct {
 	records []slog.Record
 }
 
-func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h *recordingHandler) WithGroup(string) slog.Handler            { return h }
+func (h *recordingHandler) Enabled(ctx context.Context, _ slog.Level) bool {
+	if _, request := srvr.TraceFromContext(ctx); request && h.panicsIn == "Enabled" {
+		panic("Enabled")
+	}
+
+	return true
+}
+
+func (h *recordingHandler) WithGroup(string) slog.Handler {
+	if h.panicsIn == "WithGroup" {
+		panic("WithGroup")
+	}
+
+	return h
+}
 
 func (h *recordingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if h.panicsIn == "WithAttrs" {
+		panic("WithAttrs")
+	}
+
 	c := *h
 	c.attrs = append(slices.Clip(h.attrs), attrs...)
 
@@ -314,6 +339,51 @@ func TestOwnHandler(t *testing.T) {
 			eventually(t, func() bool { var ok bool; attrs, ok = tt.h.record("http.request.completed"); return ok }, "no access record")
 			if len(attrs["trace_id"]) != 32 {
 				t.Fatalf("access record %v lacks trace_id", attrs)
+			}
+		})
+	}
+}
+
+// TestOwnHandler_FaultyMethods covers the rows of structured-logging /
+// Scenario: Own handler whose consumer handler panics in Enabled, WithAttrs
+// or WithGroup: the response is unaffected, the record is skipped and the
+// failure is counted.
+func TestOwnHandler_FaultyMethods(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		method  string
+		skipped []string // records that go through the failing method
+	}{
+		{"Enabled", []string{"query", "http.request.completed"}},
+		{"WithAttrs", []string{"query", "http.request.completed"}},
+		{"WithGroup", []string{"query"}}, // only the grouped logger calls WithGroup
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" panics", func(t *testing.T) {
+			t.Parallel()
+
+			h := newRecording()
+			h.panicsIn = tt.method
+			srv := newServer(t, srvr.WithLogHandler(h))
+			mustNil(t, srv.Register(on("", "/log", func(w http.ResponseWriter, r *http.Request) error {
+				srvr.LoggerFromContext(r.Context()).WithGroup("db").InfoContext(r.Context(), "query")
+				w.WriteHeader(http.StatusOK)
+
+				return nil
+			})))
+			base := startServer(t, srv)
+
+			before := srvr.LogWriteErrors()
+			if got := get(t, base+"/log").status; got != http.StatusOK {
+				t.Fatalf("status = %d, want 200", got)
+			}
+			eventually(t, func() bool { return srvr.LogWriteErrors() > before }, "the failure was not counted")
+			for _, msg := range tt.skipped {
+				if _, ok := h.record(msg); ok {
+					t.Fatalf("record %q was written through a failing handler", msg)
+				}
 			}
 		})
 	}

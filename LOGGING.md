@@ -27,7 +27,11 @@ listed in this document.
 
 `http.request.completed` (no error) and `http.request.failed` (an error was returned, a panic was
 recovered, the request was aborted, or no route matched). Exactly one per request. Level: `INFO` below
-400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx.
+400, `WARN` for 4xx and aborted requests, `ERROR` for 5xx. A recovered panic is `ERROR`; an error that
+arrived after the response started takes the higher of the levels of the status sent and of the
+status the error would have been answered with, so a late 5xx error is `ERROR`. `AccessLogConfig`
+(`Disabled`, `SkipPaths`) suppresses only `http.request.completed` records below 500; an
+`http.request.failed` record is never suppressed.
 
 | Key | Type | Meaning |
 |-----|------|---------|

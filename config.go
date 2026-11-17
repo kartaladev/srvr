@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"time"
@@ -47,13 +48,16 @@ type Config struct {
 type settings struct {
 	Config
 
-	listener       net.Listener
-	hooks          []hook
-	trace          TraceConfig
-	log            logSettings
-	access         AccessLogConfig
-	service        ServiceConfig
-	redactor       func(string) string
+	listener net.Listener
+	hooks    []hook
+	trace    TraceConfig
+	log      logSettings
+	access   AccessLogConfig
+	service  ServiceConfig
+	redactor func(string) string
+	// readBuild reads the binary's build information: debug.ReadBuildInfo,
+	// replaced in tests (export_test.go).
+	readBuild      func() (*debug.BuildInfo, bool)
 	problemOptions []prblm.Option
 	errorHook      ErrorHook
 	// errs collects mistakes options detect while they are applied.
@@ -97,6 +101,11 @@ func WithMaxHeaderBytes(n int) Option {
 // WithListener makes the server serve on ln instead of listening on Addr,
 // for example a listener from socket activation or a test. It cannot be
 // combined with an address.
+//
+// The server owns ln, as http.Server.Serve does: it closes ln whenever the
+// server closes, whether it served or not. Calls that leave the server
+// unchanged (Start(nil), a Start returning ErrServerStarted or
+// ErrServerClosed) leave ln open.
 func WithListener(ln net.Listener) Option {
 	return func(s *settings) {
 		if ln == nil {
@@ -109,7 +118,7 @@ func WithListener(ln net.Listener) Option {
 
 // newSettings applies opts and validates the result.
 func newSettings(opts []Option) (settings, error) {
-	var s settings
+	s := settings{readBuild: debug.ReadBuildInfo}
 
 	for i, opt := range opts {
 		if opt == nil {

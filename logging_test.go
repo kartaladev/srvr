@@ -251,29 +251,11 @@ func TestAccessRecord_Unmatched(t *testing.T) {
 	}
 }
 
-// TestAccessRecord_Deferred holds the access-record assertions deferred
-// from tasks 5.3 (late error) and 5.4 (panicking consumer hook).
+// TestAccessRecord_Deferred holds the access-record assertion deferred
+// from task 5.4 (panicking consumer hook); the late-error assertions of
+// task 5.3 are in TestLateError.
 func TestAccessRecord_Deferred(t *testing.T) {
 	t.Parallel()
-
-	t.Run("late error is committed", func(t *testing.T) {
-		t.Parallel()
-
-		base, out := loggedServer(t, func(g *srvr.Group) {
-			g.GET("/late", func(w http.ResponseWriter, _ *http.Request) error {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("partial"))
-
-				return errors.New("late")
-			})
-		})
-		get(t, base+"/late")
-
-		rec := out.waitRecord(t, "http.request.failed")
-		if _, hasProblem := rec["problem"]; rec["srvr.response.committed"] != true || hasProblem {
-			t.Fatalf("record = %v, want committed and no problem", rec)
-		}
-	})
 
 	t.Run("panicking consumer hook", func(t *testing.T) {
 		t.Parallel()

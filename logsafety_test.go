@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 )
 
@@ -168,6 +169,45 @@ func TestRedaction(t *testing.T) {
 			}
 			if v, ok := rec[tt.allowedKey]; !ok || (tt.allowedValue != "" && v != tt.allowedValue) {
 				t.Fatalf("%s = %v, want %q", tt.allowedKey, v, tt.allowedValue)
+			}
+		})
+	}
+}
+
+// TestAccessLogSuppressed covers structured-logging / Scenario: Failures
+// while the access log is suppressed: failed records are always written.
+func TestAccessLogSuppressed(t *testing.T) {
+	t.Parallel()
+
+	routes := func(g *srvr.Group) {
+		g.GET("/healthz", returning(prblm.ErrNotFound))
+		g.GET("/ping", returning(prblm.ErrNotFound))
+		g.GET("/late/panic", late(http.StatusOK, func() error { panic("late") }))
+		g.GET("/late/error", late(http.StatusOK, func() error { return errors.New("late") }))
+	}
+
+	tests := []struct {
+		name  string
+		opts  []srvr.Option
+		path  string
+		level string
+	}{
+		{"skip path returning not found", []srvr.Option{srvr.WithAccessLogConfig(srvr.AccessLogConfig{SkipPaths: []string{"/healthz"}})}, "/healthz", "WARN"},
+		{"disabled returning not found", []srvr.Option{srvr.WithAccessLogDisabled()}, "/ping", "WARN"},
+		{"disabled with no route", []srvr.Option{srvr.WithAccessLogDisabled()}, "/nope", "WARN"},
+		{"disabled with a late panic", []srvr.Option{srvr.WithAccessLogDisabled()}, "/late/panic", "ERROR"},
+		{"disabled with a late error", []srvr.Option{srvr.WithAccessLogDisabled()}, "/late/error", "ERROR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, out := loggedServer(t, routes, tt.opts...)
+			get(t, base+tt.path)
+
+			if rec := out.waitRecord(t, "http.request.failed"); rec["level"] != tt.level {
+				t.Fatalf("record = %v, want level %s", rec, tt.level)
 			}
 		})
 	}
