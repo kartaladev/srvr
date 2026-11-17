@@ -82,7 +82,8 @@ func TestMiddleware_ConstructorPanics(t *testing.T) {
 
 // panicListener delegates to a real listener; its Accept panics with
 // acceptPanic after accepted connections, once gate (if any) is closed,
-// and its Close panics with closePanic when that is not nil.
+// and its Close panics with closePanic when that is not nil, or else
+// returns closeErr after closing the real listener.
 type panicListener struct {
 	net.Listener
 
@@ -91,6 +92,7 @@ type panicListener struct {
 	gate        chan struct{}
 	calls       atomic.Int32
 	closePanic  any
+	closeErr    error
 }
 
 func (l *panicListener) Accept() (net.Conn, error) {
@@ -112,7 +114,34 @@ func (l *panicListener) Close() error {
 		panic(l.closePanic)
 	}
 
-	return l.Listener.Close()
+	err := l.Listener.Close()
+	if l.closeErr != nil {
+		return l.closeErr
+	}
+
+	return err
+}
+
+// shutdownWhileRunning starts srv, shuts it down and returns Shutdown's
+// result; Start must return nil.
+func shutdownWhileRunning(t *testing.T, srv *srvr.Server) error {
+	done := startBackground(t, srv)
+	err := shutdownBounded(t, srv)
+	if startErr := receive(t, done, "Start did not return"); startErr != nil {
+		t.Errorf("Start = %s, want nil", safeText(startErr))
+	}
+
+	return err
+}
+
+// cancelWhileRunning starts srv, cancels its context and returns Start's
+// result.
+func cancelWhileRunning(t *testing.T, srv *srvr.Server) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startWith(ctx, t, srv)
+	cancel()
+
+	return receive(t, done, "Start did not return")
 }
 
 // TestListener_AcceptPanics covers server-lifecycle / Scenario: A listener
@@ -200,22 +229,8 @@ func TestListener_ClosePanics(t *testing.T) {
 
 			return startBounded(context.Background(), t, srv)
 		}, srvr.ErrRouteConfig},
-		{"Shutdown on a running server", func(t *testing.T, srv *srvr.Server) error {
-			done := startBackground(t, srv)
-			err := shutdownBounded(t, srv)
-			if startErr := receive(t, done, "Start did not return"); startErr != nil {
-				t.Errorf("Start = %s, want nil", safeText(startErr))
-			}
-
-			return err
-		}, nil},
-		{"Start, after its context ends while running", func(t *testing.T, srv *srvr.Server) error {
-			ctx, cancel := context.WithCancel(context.Background())
-			done := startWith(ctx, t, srv)
-			cancel()
-
-			return receive(t, done, "Start did not return")
-		}, nil},
+		{"Shutdown on a running server", shutdownWhileRunning, nil},
+		{"Start, after its context ends while running", cancelWhileRunning, nil},
 	}
 
 	for _, tt := range tests {
@@ -236,6 +251,54 @@ func TestListener_ClosePanics(t *testing.T) {
 
 			if err := startBounded(context.Background(), t, srv); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("later Start = %s, want ErrServerClosed", safeText(err))
+			}
+		})
+	}
+}
+
+// TestListener_CloseErrors covers server-lifecycle / Scenario: A listener
+// whose Close returns an error. Whether http.Server.Shutdown still tracks
+// the listener depends on whether Serve has returned, so each row repeats
+// the stop to reach both orders.
+func TestListener_CloseErrors(t *testing.T) {
+	t.Parallel()
+
+	const runs = 200
+
+	tests := []struct {
+		call string
+		run  func(t *testing.T, srv *srvr.Server) error
+	}{
+		{"Shutdown on a running server", shutdownWhileRunning},
+		{"Start, after its context ends while running", cancelWhileRunning},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.call, func(t *testing.T) {
+			t.Parallel()
+
+			for i := range runs {
+				logs := &logBuffer{}
+				ln := &panicListener{Listener: listen(t), closeErr: errors.New("close: secret-dsn")}
+				srv, err := srvr.New(srvr.WithListener(ln), srvr.WithLogOutput(logs))
+				mustNil(t, err)
+
+				if err := tt.run(t, srv); err != nil {
+					t.Fatalf("run %d: %s = %s, want <nil>", i, tt.call, safeText(err))
+				}
+
+				stopped := logs.find(t, "server.stopped")
+				if len(stopped) != 1 {
+					t.Fatalf("run %d: want one server.stopped record, got log %s", i, logs)
+				}
+
+				if _, forced := stopped[0]["srvr.drain.forced"]; forced || stopped[0]["level"] != "INFO" {
+					t.Fatalf("run %d: server.stopped = %v, want INFO without srvr.drain.forced", i, stopped[0])
+				}
+
+				if text := logs.String(); strings.Contains(text, "secret-dsn") {
+					t.Fatalf("run %d: log contains the Close error text: %s", i, text)
+				}
 			}
 		})
 	}

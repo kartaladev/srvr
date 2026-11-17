@@ -119,9 +119,11 @@ func WithMaxHeaderBytes(n int) Option {
 // which net/http calls on a goroutine of its own where it would end the
 // process, stops serving: Start writes server.failed, stops the server in
 // order (BeforeDrain hooks, drain, AfterDrain hooks) and returns an error
-// wrapping ErrConfig naming Listener. A panic in Close is treated like an
-// error from Close, which the server ignores: the stop completes and its
-// result is the one a successful Close gives. Accepted connections are
+// wrapping ErrConfig naming Listener. The server calls ln's Close once and
+// ignores its error or panic on every path, including
+// http.Server.Shutdown's own close: the stop completes, its result is the
+// one a successful Close gives, and the drain is never reported as forced
+// because of it. Accepted connections are
 // used as ln returns them.
 func WithListener(ln net.Listener) Option {
 	return func(s *settings) {

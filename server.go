@@ -230,7 +230,7 @@ func (s *Server) logFailed(ctx context.Context, err error) {
 // AfterDrain hooks.
 func (s *Server) closeUnserved(ctx context.Context, ln net.Listener) {
 	if ln != nil {
-		_ = closeListener(ln)
+		closeListener(ln)
 	}
 
 	s.finish(s.runAfterDrain(ctx), nil)
@@ -394,7 +394,9 @@ func (s *Server) stopRun(drainCtx context.Context, r *run) {
 }
 
 // drain stops accepting connections and waits for in-flight requests until
-// ctx is done, then closes the remaining connections.
+// ctx is done, then closes the remaining connections. Any Shutdown error
+// counts as a forced drain: the listener's Close never returns one
+// (guardedListener), so only ctx's error is left.
 func drain(ctx context.Context, hs *http.Server) error {
 	err := hs.Shutdown(ctx)
 	if err != nil {
@@ -472,15 +474,16 @@ func (s *Server) wait(ctx context.Context, first bool) error {
 	}
 }
 
-// guardedListener is the listener the server serves on. It makes Close
-// idempotent, so that srvr can close the listener before draining and
-// http.Server.Shutdown can close it again without reporting an error. The
-// Once runs the consumer's Close under its own lock, which guards no srvr
-// state: a second caller waits only for the same Close it would have called
-// itself.
+// guardedListener is the listener the server serves on. Its Close runs the
+// consumer's Close once and returns nil to every caller, the first
+// included: srvr ignores Close errors and panics on every path, and
+// http.Server.Shutdown, which closes the listeners it still tracks and
+// returns that error, would otherwise report a forced drain depending on
+// whether Serve had already returned. The Once runs the consumer's Close
+// under its own lock, which guards no srvr state: a second caller waits
+// only for the same Close it would have called itself.
 //
-// Close and Accept run the consumer's methods under recover. A panic in
-// Close is an error like a Close error, which srvr ignores. Serve calls
+// Close and Accept run the consumer's methods under recover. Serve calls
 // Accept on a goroutine of its own, where a panic would end the process:
 // the panic becomes an error that is not a net.Error, so Serve returns it
 // and Start stops the server. Nothing else is added per accepted
@@ -489,7 +492,6 @@ type guardedListener struct {
 	net.Listener
 
 	once sync.Once
-	err  error
 }
 
 func (l *guardedListener) Accept() (conn net.Conn, err error) {
@@ -503,21 +505,17 @@ func (l *guardedListener) Accept() (conn net.Conn, err error) {
 }
 
 func (l *guardedListener) Close() error {
-	l.once.Do(func() { l.err = closeListener(l.Listener) })
+	l.once.Do(func() { closeListener(l.Listener) })
 
-	return l.err
+	return nil
 }
 
-// closeListener closes ln, a panic in its Close becoming an error like any
-// other Close error, which srvr ignores: the stop sequence still completes.
-func closeListener(ln net.Listener) (err error) {
-	defer func() {
-		if v := recover(); v != nil {
-			err = errors.New("closing the listener panicked: " + valueText(v))
-		}
-	}()
+// closeListener closes ln, ignoring an error or a panic from its Close, so
+// the stop sequence still completes.
+func closeListener(ln net.Listener) {
+	defer func() { _ = recover() }()
 
-	return ln.Close()
+	_ = ln.Close()
 }
 
 // result is what the Shutdown call that stopped the server returns: the
