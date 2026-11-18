@@ -214,3 +214,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Second cross-change audit and owner decisions A3/A4. Applied: `engine.RequestState` is created by the outermost (trace context) stage per gin-and-fiber-engines D7; core config structs referenced as separate structs (`TraceConfig.IgnoreIncoming` via `WithTraceConfig`/`WithIgnoreIncomingTraceContext()`, `AccessLogConfig.IncludePath`), with a `WithTraceConfig` Parent extraction row; blocking end function and `http.ErrAbortHandler` end-panic observer rows; `http.ErrAbortHandler` metric (`error.type` `panic`, no status code) and span rows (A3, consistent with core's `srvr.response.aborted`); otelsetup's `AfterDrain` hook runs once on every `Start` failure after leaving the initial state and never for `Start(nil)`/misuse (A4), scenario renamed "Server that never served"; this file's task reference corrected. Tasks 3.x-7.6 updated.
 - **Evidence:** unverified: planning-artifact inconsistencies found by the audit; the metric `*net.OpError` row was confirmed correct by audit probe `semconv/TestErrorTypeRows`.
 - **Suggested action:** none.
+
+### engine-support "Engines share one per-request state" exceeds the 500-character requirement limit
+- **Status:** open
+- **Target:** unassigned (next change that touches engine-support)
+- **Context:** archiving otel-observability merged its MODIFIED requirement verbatim into `openspec/specs/engine-support/spec.md`. The added trace-source clause pushes the requirement text past 500 characters, so `openspec validate engine-support --type spec --strict` reports a length warning; non-strict validation passes. The sync rules forbid trimming MODIFIED text only to meet the limit.
+- **Evidence:** `openspec validate engine-support --type spec --strict` → `requirements[9]: Requirement text is very long (>500 characters)`.
+- **Suggested action:** split the requirement in a later delta: keep the per-request state holder, and move "an observer's trace source replaces the trace for loggers, problem trace_id and access record" into its own requirement with its existing scenarios.

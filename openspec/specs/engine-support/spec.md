@@ -202,7 +202,7 @@ An engine SHALL report a configuration that works but is likely unintended as on
 | `net/http` | (none) | `0` | (none) |
 
 ### Requirement: Engines share one per-request state
-Every engine SHALL keep one `engine.RequestState` per request, reachable through `engine.StateFrom(ctx)` from any stage inside srvr's pipeline, holding the matched route, whether a route matched, the response status, the failure (returned error or recovered panic) and the trace context. Later stages SHALL read and extend this one state instead of adding their own per-request holders.
+Every engine SHALL keep one `engine.RequestState` per request, reachable through `engine.StateFrom(ctx)` from any stage inside srvr's pipeline, holding the matched route, whether a route matched, the response status, the failure (returned error or recovered panic), the trace context and the trace an observer's trace source supplied, which `srvr.TraceFromContext`, request loggers, the problem `trace_id` and the access record read in place of the trace context when it is valid. Later stages SHALL read and extend this one state instead of adding their own per-request holders.
 
 #### Scenario: Request state after the chain
 - **Given** engine `<engine>` with route `GET /users/{id}` in that engine's syntax
