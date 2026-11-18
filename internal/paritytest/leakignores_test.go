@@ -3,7 +3,6 @@ package paritytest
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -39,8 +38,8 @@ func TestLeakIgnores(t *testing.T) {
 		reported bool
 	}{
 		{"fasthttp Date refresher", runFiber, fasthttpServerDate, false},
-		{"fasthttp idle-worker cleaner", runFiber, fasthttpWorkerCleaner, false},
 		{"a gin handler blocked on a channel never closed", runBlockedGin, "paritytest.blockedHandler", true},
+		{"fasthttp idle-worker cleaner at the default duration", runFiberDefaultIdle, fasthttpWorkerCleaner, true},
 	}
 
 	for _, tt := range tests {
@@ -58,12 +57,12 @@ func TestLeakIgnores(t *testing.T) {
 				}()
 			}
 
-			if err := goleak.Find(); err == nil || !strings.Contains(err.Error(), tt.fn) {
+			if err := goleak.Find(); !names(err, tt.fn) {
 				t.Fatalf("without leakOptions the check = %v, want a report naming %s", err, tt.fn)
 			}
 
 			if tt.reported {
-				if err := findLeaks(before); err == nil || !strings.Contains(err.Error(), tt.fn) {
+				if err := findLeaks(before); !names(err, tt.fn) {
 					t.Fatalf("with leakOptions the check = %v, want a report naming %s", err, tt.fn)
 				}
 
@@ -76,7 +75,7 @@ func TestLeakIgnores(t *testing.T) {
 
 			// Without IgnoreCurrent: the Date refresher starts once per
 			// process and may predate this test.
-			if err := findLeaks(); err != nil && strings.Contains(err.Error(), tt.fn) {
+			if err := findLeaks(); names(err, tt.fn) {
 				t.Fatalf("with leakOptions the check still reports %s: %v", tt.fn, err)
 			}
 		})
@@ -85,16 +84,53 @@ func TestLeakIgnores(t *testing.T) {
 
 // runFiber serves GET /ok on a fiber server, which t's cleanup stops.
 func runFiber(t *testing.T) func() {
-	base, _ := fiberServer(t, func(r fiber.Router) { r.Get("/ok", func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }) })
+	base, _ := fiberServer(t, okFiber)
+	getOK(t, base)
+
+	return nil
+}
+
+// okFiber registers GET /ok answering 200.
+func okFiber(r fiber.Router) {
+	r.Get("/ok", func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) })
+}
+
+// getOK sends GET /ok to base and fails t unless it answers 200.
+func getOK(t *testing.T, base string) {
+	t.Helper()
 
 	res, _, err := send(t, http.MethodGet, base+"/ok", nil)
 	must(t, err)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("GET /ok = %d", res.StatusCode)
 	}
-
-	return nil
 }
+
+// runFiberDefaultIdle serves GET /ok, as runFiber does, on a fiber server
+// left at fasthttp's default MaxIdleWorkerDuration (10s), whose idle-worker
+// cleaner outlives the Shutdown t's cleanup runs. The returned function
+// waits until the cleaner's next wake-up has ended it, so the test
+// binary's own check does not report it.
+func runFiberDefaultIdle(t *testing.T) func() {
+	base, _ := fiberServerIdle(t, 0, okFiber)
+	getOK(t, base)
+
+	return func() {
+		for deadline := time.Now().Add(cleanerWait); time.Now().Before(deadline); {
+			if !names(findLeaks(), fasthttpWorkerCleaner) {
+				return
+			}
+		}
+	}
+}
+
+const (
+	// fasthttpWorkerCleaner is fasthttp's idle-worker cleaner (v1.78.0).
+	fasthttpWorkerCleaner = "github.com/valyala/fasthttp.(*workerPool).Start.func2"
+	// cleanerWait bounds the wait for a cleaner at fasthttp's default
+	// MaxIdleWorkerDuration (10s) to end: one full sleep plus a margin.
+	cleanerWait = 10*time.Second + 2*time.Second
+)
 
 // runBlockedGin sends GET /block to a gin server whose handler blocks until
 // the returned function is called; the request gives up once the handler

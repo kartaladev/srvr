@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -111,13 +112,37 @@ func ginServer(t *testing.T, conf func(*gin.RouterGroup), opts ...srvr.Option) (
 	return run(t, srv), logs
 }
 
+// idleWorkerDuration is the fasthttp MaxIdleWorkerDuration of fiberServer's
+// servers. fasthttp's idle-worker cleaner sleeps that long between checks
+// of its stop channel (10s by default), so with this value it ends within
+// goleak's retry window after Shutdown and the test binary needs no ignore
+// for it.
+const idleWorkerDuration = 20 * time.Millisecond
+
 func fiberServer(t *testing.T, conf func(fiber.Router), opts ...srvr.Option) (string, *logBuffer) {
+	t.Helper()
+
+	return fiberServerIdle(t, idleWorkerDuration, conf, opts...)
+}
+
+// fiberServerIdle is fiberServer with fasthttp's MaxIdleWorkerDuration set
+// to idle; 0 keeps fasthttp's default. Every fiber server of this module
+// is built here, so none keeps the default cleaner by accident.
+func fiberServerIdle(t *testing.T, idle time.Duration, conf func(fiber.Router), opts ...srvr.Option) (string, *logBuffer) {
 	t.Helper()
 
 	logs := &logBuffer{}
 	srv, err := fibersrvr.New(options(logs, opts)...)
 	must(t, err)
-	must(t, srv.Register(fiberConfig(conf)))
+	// Set while configuring, before fasthttp's Serve reads the value.
+	must(t, srv.Register(fiberConfig(func(r fiber.Router) {
+		app, ok := r.(*fiber.App)
+		if !ok {
+			panic(fmt.Sprintf("paritytest: fiber configurer got %T, want *fiber.App to set MaxIdleWorkerDuration", r))
+		}
+		app.Server().MaxIdleWorkerDuration = idle
+		conf(r)
+	})))
 
 	return run(t, srv), logs
 }

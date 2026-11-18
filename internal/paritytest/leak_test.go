@@ -9,27 +9,19 @@ import (
 )
 
 // leakOptions are the goleak options of the paritytest test binary: the
-// two goroutines fasthttp (observed with v1.78.0) keeps running after a
-// fiber server stopped, as in fibersrvr. Each ignore names one function;
-// IgnoreAnyFunction, because both goroutines have time.Sleep on top, which
-// IgnoreTopFunction could only match by ignoring every sleeping goroutine.
-// No gin handler is ignored here: the stuck cyclic c.Error handler runs in
-// package gincycle, its own test binary.
+// Date refresher fasthttp (observed with v1.78.0) starts once per process
+// and never stops, as in fibersrvr. It is ignored with IgnoreAnyFunction,
+// because the goroutine has time.Sleep on top, which IgnoreTopFunction
+// could only match by ignoring every sleeping goroutine. fasthttp's
+// idle-worker cleaner is not ignored here: fiberServer shortens its sleep
+// so it ends after Shutdown. No gin handler is ignored here: the stuck
+// cyclic c.Error handler runs in package gincycle, its own test binary.
 var leakOptions = []goleak.Option{
-	// fasthttp refreshes its Date header in a goroutine started once per
-	// process that never stops.
 	goleak.IgnoreAnyFunction(fasthttpServerDate),
-	// fasthttp's idle-worker cleaner sleeps MaxIdleWorkerDuration (10s by
-	// default) between checks of its stop channel, so it outlives Stop by
-	// up to 10s.
-	goleak.IgnoreAnyFunction(fasthttpWorkerCleaner),
 }
 
-// The functions leakOptions ignores.
-const (
-	fasthttpServerDate    = "github.com/valyala/fasthttp.updateServerDate.func1"
-	fasthttpWorkerCleaner = "github.com/valyala/fasthttp.(*workerPool).Start.func2"
-)
+// fasthttpServerDate is the function leakOptions ignores.
+const fasthttpServerDate = "github.com/valyala/fasthttp.updateServerDate.func1"
 
 // TestMain fails the test binary when a goroutine is still running after
 // its tests passed.
@@ -40,6 +32,9 @@ func TestMain(m *testing.M) { goleak.VerifyTestMain(m, leakOptions...) }
 func findLeaks(extra ...goleak.Option) error {
 	return goleak.Find(slices.Concat(leakOptions, extra)...)
 }
+
+// names reports whether err is a leak report naming fn.
+func names(err error, fn string) bool { return err != nil && strings.Contains(err.Error(), fn) }
 
 // blockUntil blocks until ch is closed. It is a named function so a leak
 // report names it.
@@ -85,7 +80,7 @@ func TestLeakCheck(t *testing.T) {
 			switch {
 			case tt.want == "" && err != nil:
 				t.Fatalf("leak reported: %v", err)
-			case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+			case tt.want != "" && !names(err, tt.want):
 				t.Fatalf("leak report = %v, want one naming %s", err, tt.want)
 			}
 		})
