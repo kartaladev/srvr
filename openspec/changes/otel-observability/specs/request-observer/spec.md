@@ -105,7 +105,7 @@ A nil observer SHALL fail construction. An observer whose `Begin` panics, return
 | panics in the end function | status `200` and one `srvr.observer.fault` record with `srvr.observer.fault.kind` `end_panic` |
 | panics in `Begin` on 1000 requests | status `200` for all and exactly one `srvr.observer.fault` record |
 | blocks in `Begin` for `50ms` | status `200` after at least `50ms` and no `srvr.observer.fault` record (blocking is documented, not detected) |
-| blocks in the end function for `50ms` | status `200` received by the client before the end function returns, the access record written after it returns, and no `srvr.observer.fault` record |
+| blocks in the end function for `50ms` | status `200` after at least `50ms`, the access record written after the end function returns, and no `srvr.observer.fault` record (observers run on the request path, as `Begin` does) |
 | panics in the end function with `http.ErrAbortHandler` | status `200` and one `srvr.observer.fault` record with `srvr.observer.fault.kind` `end_panic` (the observer's panic is never re-raised) |
 
 ### Requirement: Observers may supply the trace context
