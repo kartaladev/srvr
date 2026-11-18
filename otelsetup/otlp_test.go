@@ -328,3 +328,69 @@ func TestExportFailure(t *testing.T) {
 		})
 	}
 }
+
+// TestOTLPHeadersCopied covers telemetry-setup / Scenario: Caller mutates
+// headers after New: exports keep the header New saw, with no race, while
+// the caller changes its map and metrics and spans are flushed repeatedly.
+func TestOTLPHeadersCopied(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(m map[string]string)
+	}{
+		{"set to another value", func(m map[string]string) { m["X-Api-Key"] = "two" }},
+		{"deleted", func(m map[string]string) { delete(m, "X-Api-Key") }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := newHTTPCollector(t, false)
+			m := map[string]string{"X-Api-Key": "one"}
+			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{Endpoint: c.url, Metrics: true, Traces: true, Headers: m}))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			done, mutated := make(chan struct{}), make(chan struct{})
+			go func() {
+				defer close(mutated)
+				for {
+					select {
+					case <-done:
+						return
+					default:
+						tt.mutate(m)
+					}
+				}
+			}()
+
+			for range 5 {
+				emit(t, s)
+				if err := s.MeterProvider().ForceFlush(context.Background()); err != nil {
+					t.Fatalf("meter ForceFlush: %v", err)
+				}
+				if err := s.TracerProvider().ForceFlush(context.Background()); err != nil {
+					t.Fatalf("tracer ForceFlush: %v", err)
+				}
+			}
+			close(done)
+			<-mutated
+			shutdown(t, s)
+
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
+			if len(c.apiKeys) < 10 {
+				t.Fatalf("%d exports, want at least 10", len(c.apiKeys))
+			}
+			for i, k := range c.apiKeys {
+				if k != "one" {
+					t.Fatalf("X-Api-Key of export %d = %q, want one (all: %v)", i, k, c.apiKeys)
+				}
+			}
+		})
+	}
+}

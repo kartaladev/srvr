@@ -464,3 +464,43 @@ func flatKeys(r map[string]any) []string {
 
 	return keys
 }
+
+// TestZeroObserver covers otel-metrics / Scenario: Zero observer: an
+// otelsrvr.Observer not built by New answers requests unchanged and
+// writes no srvr.observer.fault record.
+func TestZeroObserver(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		engine  engineCase
+		outcome outcome
+		status  int
+	}{
+		{engines[0], succeeds, http.StatusOK},
+		{engines[1], failsBoom, http.StatusInternalServerError},
+		{engines[2], failsNotFound, http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.engine.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, logs := tt.engine.start(t, tt.outcome, srvr.WithObserver(&otelsrvr.Observer{}))
+			res, _, err := send(t, http.MethodGet, base+"/items/42", nil)
+			must(t, err)
+			if res.StatusCode != tt.status {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tt.status)
+			}
+
+			if len(logs.access(t)) != 1 {
+				t.Fatal("want one access record")
+			}
+			logs.mu.Lock()
+			text := logs.buf.String()
+			logs.mu.Unlock()
+			if n := strings.Count(text, "srvr.observer.fault\""); n != 0 {
+				t.Fatalf("%d srvr.observer.fault records, want 0:\n%s", n, text)
+			}
+		})
+	}
+}

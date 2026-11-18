@@ -72,3 +72,33 @@ func TestLogSchemaGolden(t *testing.T) {
 		t.Errorf("record = %v, want keys %v", rec, want)
 	}
 }
+
+// TestExportError_Redacted covers telemetry-setup / Scenario: Export error
+// with a secret: the handler setup installs with SetGlobal writes the
+// error text through srvr's default redactor.
+func TestExportError_Redacted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ text, message string }{
+		{`Post "https://otlp.local/v1/metrics?token=abc": dial tcp: refused`, `Post "https://otlp.local/v1/metrics?token=***": dial tcp: refused`},
+		{"exporter: authorization: Bearer xyz rejected", "exporter: authorization: *** rejected"},
+		{"context deadline exceeded", "context deadline exceeded"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.text, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			newExportErrorHandler(slog.New(slog.NewJSONHandler(&buf, nil))).Handle(errors.New(tt.text))
+
+			var rec map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+				t.Fatalf("record %q: %v", buf.String(), err)
+			}
+			if got := rec["exception.message"]; got != tt.message {
+				t.Fatalf("exception.message = %v, want %q", got, tt.message)
+			}
+		})
+	}
+}

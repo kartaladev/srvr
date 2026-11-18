@@ -35,27 +35,37 @@ type Setup struct {
 
 	metricsHandler http.Handler
 	metricsServer  *http.Server
-	metricsLn      net.Listener
-	metricsAddr    string
+	// metricsServed is closed when the metrics server's Serve returned.
+	metricsServed chan struct{}
+	metricsLn     net.Listener
+	metricsAddr   string
 
 	shutdownOnce sync.Once
 }
 
 // New builds the providers and exporters opts configure and, with
 // Prometheus listening, binds the metrics listener. Invalid configuration
-// returns an error wrapping [ErrConfig]; a failure after providers were
+// (a nil option is named by its position) returns an error wrapping
+// [ErrConfig]; a failure after providers were
 // built shuts them down, and nothing global is changed unless the whole
 // setup succeeded.
 func New(ctx context.Context, opts ...Option) (*Setup, error) {
-	var st settings
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&st)
+	var (
+		st      settings
+		nilOpts []error
+	)
+	for i, opt := range opts {
+		if opt == nil {
+			nilOpts = append(nilOpts, fmt.Errorf("%w: Option %d is nil", ErrConfig, i))
+
+			continue
 		}
+
+		opt(&st)
 	}
 
 	cfg := st.resolve()
-	if err := cfg.validate(); err != nil {
+	if err := errors.Join(append(nilOpts, cfg.validate())...); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +167,11 @@ func (s *Setup) listen(ctx context.Context) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	go func() { _ = s.metricsServer.Serve(ln) }()
+	s.metricsServed = make(chan struct{})
+	go func() {
+		defer close(s.metricsServed)
+		_ = s.metricsServer.Serve(ln)
+	}()
 
 	return nil
 }
@@ -263,12 +277,15 @@ func (s *Setup) shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// stopListener stops the metrics server and closes its listener.
+// stopListener stops the metrics server and closes its listener. When ctx
+// ends while a scrape is still served, it closes the remaining
+// connections; either way it returns only after Serve has.
 func (s *Setup) stopListener(ctx context.Context) error {
 	var errs []error
 
 	if err := s.metricsServer.Shutdown(ctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		errs = append(errs, err)
+		_ = s.metricsServer.Close() // the deadline passed: drop what is still open
 	}
 
 	// Serve may not have started yet, and http.Server only closes the
@@ -277,6 +294,8 @@ func (s *Setup) stopListener(ctx context.Context) error {
 	if err := s.metricsLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 		errs = append(errs, err)
 	}
+
+	<-s.metricsServed
 
 	return errors.Join(errs...)
 }
@@ -327,12 +346,13 @@ func (h *exportErrorHandler) Handle(err error) {
 
 	defer func() { _ = recover() }() // a faulty consumer slog.Handler
 
-	// The error text is read through ValueText: an Error method that
-	// panics gives a placeholder.
+	// The error text is read through ValueText (an Error method that
+	// panics gives a placeholder) and masked by srvr's default redactor:
+	// exporter errors quote collector URLs, whose query may hold a token.
 	h.logger.LogAttrs(context.Background(), slog.LevelWarn, "otel.export.failed",
 		slog.Int("srvr.log.schema", engine.LogSchemaVersion), // adding this event kept the version
 		slog.String("error.type", kind),
-		slog.String("exception.message", engine.ValueText(err)),
+		slog.String("exception.message", engine.RedactSecrets(engine.ValueText(err))),
 	)
 }
 

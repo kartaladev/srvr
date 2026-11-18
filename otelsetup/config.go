@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strconv"
@@ -99,7 +100,8 @@ type OTLPConfig struct {
 	Endpoint string `json:"endpoint" yaml:"endpoint" env:"ENDPOINT"`
 	// Protocol is "http/protobuf" (default) or "grpc".
 	Protocol string `json:"protocol" yaml:"protocol" env:"PROTOCOL"`
-	// Headers are sent with every export, for example an API key.
+	// Headers are sent with every export, for example an API key. New
+	// copies the map.
 	Headers map[string]string `json:"headers" yaml:"headers" env:"HEADERS"`
 	// Metrics exports metrics through a periodic reader (interval
 	// OTEL_METRIC_EXPORT_INTERVAL, default 60s).
@@ -189,6 +191,11 @@ func (c Config) resolve() Config {
 	if c.OTLP.enabled() && c.OTLP.Protocol == "" {
 		c.OTLP.Protocol = ProtocolHTTPProtobuf
 	}
+
+	// The exporters keep the map they are given and read it on every
+	// export, so a caller changing its map after New would change, and
+	// race with, the exports.
+	c.OTLP.Headers = maps.Clone(c.OTLP.Headers)
 
 	return c
 }
