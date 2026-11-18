@@ -6,9 +6,9 @@ import (
 	"slices"
 )
 
-// RouteError returns an error wrapping [ErrRouteConfig] with the message
+// RouteErrorf returns an error wrapping [ErrRouteConfig] with the message
 // format and args describe.
-func RouteError(format string, args ...any) error {
+func RouteErrorf(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{ErrRouteConfig}, args...)...)
 }
 
@@ -19,7 +19,7 @@ func RouteError(format string, args ...any) error {
 func Configure[G any](c interface{ Configure(G) }, g G) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = RouteError("configurer %T panicked: %s", c, ValueText(v))
+			err = RouteErrorf("configurer %T panicked: %s", c, ValueText(v))
 		}
 	}()
 
@@ -87,7 +87,7 @@ func runCheck(waitCtx, checkCtx context.Context, i int, check RouteCheck, routes
 	case abandoned:
 		return waitCtx.Err()
 	case panicked:
-		return RouteError("route check %d panicked: %s", i, pe.value)
+		return RouteErrorf("route check %d panicked: %s", i, pe.value)
 	case err != nil:
 		return fmt.Errorf("%w: route check %d: %w", ErrRouteConfig, i, guard(err))
 	default:

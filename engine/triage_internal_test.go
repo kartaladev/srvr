@@ -142,7 +142,7 @@ func TestFailure_PanicThroughWrapper(t *testing.T) {
 			}
 
 			attrs := map[string]string{}
-			for _, a := range core.triageAttrs("GET", &RequestState{Route: "/x"}, f) {
+			for _, a := range core.triageAttrs("GET", &RequestState{route: "/x"}, f) {
 				attrs[a.Key] = a.Value.String()
 			}
 			if attrs[keyErrorKind] != errorKindPanic || attrs[keyExceptionType] != "string" || attrs[keyFingerprint] == "" {

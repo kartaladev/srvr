@@ -295,7 +295,7 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 		{"nothing else", nil, ""},
 		{"a nil WithFiberConfig hook", fibersrvr.WithFiberConfig(nil), "WithFiberConfig"},
 		{"a WithFiberConfig hook that panics", fibersrvr.WithFiberConfig(func(*fiber.Config) { panic("boom") }), "boom"},
-		{"an option of another engine", engine.ForEngine("gin", "ginsrvr.WithEngine", func() {}), "ginsrvr.WithEngine"},
+		{"an option of another engine", engine.Only("gin", "ginsrvr.WithGinEngine", func() {}), "ginsrvr.WithGinEngine"},
 	}
 
 	for _, tt := range tests {

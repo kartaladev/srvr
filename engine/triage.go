@@ -437,7 +437,7 @@ func (c *Core) triageAttrs(method string, req *RequestState, fail *failure) []sl
 		attrs = c.errorAttrs(method, req, fail.err)
 	}
 
-	if loc := req.Location; loc.function != "" {
+	if loc := req.location; loc.function != "" {
 		attrs = append(attrs, slog.String(keyFunction, loc.function))
 		if loc.file != "" {
 			attrs = append(attrs, slog.String(keyFilePath, loc.file), slog.Int(keyLineNumber, loc.line))
@@ -455,7 +455,7 @@ func (c *Core) errorAttrs(method string, req *RequestState, err error) []slog.At
 		slog.String(keyErrorType, chain.innermost),
 		c.exceptionMessage(errorText(err)),
 		ownAttr(keyErrorChain, slog.AnyValue(chain.types)),
-		slog.String(keyFingerprint, fingerprint(append([]string{MethodLabel(method), req.Route}, chain.types...)...)),
+		slog.String(keyFingerprint, fingerprint(append([]string{MethodLabel(method), req.route}, chain.types...)...)),
 	}
 
 	if chain.truncated {
@@ -475,7 +475,7 @@ func (c *Core) panicAttrs(method string, req *RequestState, pe *prblm.PanicError
 		c.exceptionMessage(ValueText(pe.Value)),
 		ownAttr(keyStacktrace, slog.StringValue(stack)),
 		slog.Bool(keyStackTruncated, stackCut),
-		slog.String(keyFingerprint, fingerprint(MethodLabel(method), req.Route, errorKindPanic, valueType, topFrame(pe.Stack))),
+		slog.String(keyFingerprint, fingerprint(MethodLabel(method), req.route, errorKindPanic, valueType, topFrame(pe.Stack))),
 	)
 }
 

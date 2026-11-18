@@ -34,7 +34,7 @@ func TestGinConfig(t *testing.T) {
 			{"none", nil, false},
 			{"debug level", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "debug"})}, true},
 			{"config then level", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "warn"}), srvr.WithLogLevel(slog.LevelDebug)}, true},
-			{"level and WithEngine in one list", []srvr.Option{srvr.WithLogLevel(slog.LevelDebug), ginsrvr.WithEngine(func(*gin.Engine) { hookRan = true })}, true},
+			{"level and WithGinEngine in one list", []srvr.Option{srvr.WithLogLevel(slog.LevelDebug), ginsrvr.WithGinEngine(func(*gin.Engine) { hookRan = true })}, true},
 		}
 
 		for _, tt := range tests {
@@ -58,7 +58,7 @@ func TestGinConfig(t *testing.T) {
 		}
 
 		if !hookRan {
-			t.Fatal("WithEngine hook did not run")
+			t.Fatal("WithGinEngine hook did not run")
 		}
 	})
 
@@ -90,7 +90,7 @@ func TestGinConfig(t *testing.T) {
 	}{
 		{"invalid level", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "verbose"})}, "Level"},
 		{"negative ShutdownTimeout", []srvr.Option{srvr.WithConfig(srvr.Config{ShutdownTimeout: -time.Second})}, "ShutdownTimeout"},
-		{"an option of another engine", []srvr.Option{engine.ForEngine("fiber", "fibersrvr.WithFiberConfig", func() {})}, "fibersrvr.WithFiberConfig"},
+		{"an option of another engine", []srvr.Option{engine.Only("fiber", "fibersrvr.WithFiberConfig", func() {})}, "fibersrvr.WithFiberConfig"},
 	}
 
 	for _, tt := range rejected {

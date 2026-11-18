@@ -72,7 +72,7 @@ func New(opts ...srvr.Option) (*Server, error) {
 		return nil, err
 	}
 
-	if set := core.Settings().MaxHeaderBytes; set > maxReadBufferSize {
+	if set := core.MaxHeaderBytesSet(); set > maxReadBufferSize {
 		core.Warn(context.Background(), engine.WarnFiberHeaderLimitCapped, fmt.Sprintf(
 			"MaxHeaderBytes %d is above the %d bytes fiber can buffer per connection; requests with larger headers get 431", set, maxReadBufferSize))
 	}
@@ -94,7 +94,7 @@ func New(opts ...srvr.Option) (*Server, error) {
 // c.IP() then trusts a client-supplied header. A nil hook or a hook that
 // panics fails New with an error wrapping srvr.ErrConfig.
 func WithFiberConfig(hook func(*fiber.Config)) srvr.Option {
-	return engine.ForEngine(engineName, "fibersrvr.WithFiberConfig", hook)
+	return engine.Only(engineName, "fibersrvr.WithFiberConfig", hook)
 }
 
 // maxReadBufferSize caps fiber's ReadBufferSize, the header limit, because
@@ -141,12 +141,12 @@ func bodyLimit(n int64) int {
 func applyHook(cfg *fiber.Config, h any) (err error) {
 	hook, _ := h.(func(*fiber.Config))
 	if hook == nil {
-		return engine.ConfigError("WithFiberConfig", "<nil>", "hook is nil")
+		return engine.NewConfigError("WithFiberConfig", "<nil>", "hook is nil")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = engine.ConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(), "hook panicked: "+engine.ValueText(v))
+			err = engine.NewConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(), "hook panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -399,7 +399,7 @@ func (f fiberField) unreadable(problem string) error {
 // internalsError returns an error wrapping srvr.ErrRouteConfig for fiber
 // internals srvr cannot read, naming the fiber version.
 func internalsError(format string, args ...any) error {
-	return engine.RouteError("fiber %s: cannot read fiber's internals for the route listing: %s", fiberVersion(), fmt.Sprintf(format, args...))
+	return engine.RouteErrorf("fiber %s: cannot read fiber's internals for the route listing: %s", fiberVersion(), fmt.Sprintf(format, args...))
 }
 
 // subApp returns the *fiber.App behind group, a *fiber.Group value, or
@@ -566,7 +566,7 @@ func (o *routeOwners) duplicate(cfg *fiber.Config) error {
 	for _, r := range o.routes {
 		key := r.Method + " " + matchKey(r.Pattern, cfg)
 		if earlier, dup := first[key]; dup {
-			return engine.RouteError("%q (%s) duplicates %q (%s); fiber would serve only the first",
+			return engine.RouteErrorf("%q (%s) duplicates %q (%s); fiber would serve only the first",
 				r.Method+" "+r.Pattern, r.Configurer, earlier.Method+" "+earlier.Pattern, earlier.Configurer)
 		}
 
@@ -674,9 +674,9 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 
 	if c.Matched() {
 		route := c.Route()
-		state.Route = route.Path // the app's registered string, never a pooled buffer
+		state.SetRoute(route.Path) // the app's registered string, never a pooled buffer
 		if n := len(route.Handlers); n > 0 {
-			state.Location = s.locations[handlerKey(route.Handlers[n-1])]
+			state.SetLocation(s.locations[handlerKey(route.Handlers[n-1])])
 		}
 	}
 

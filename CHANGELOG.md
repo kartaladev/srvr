@@ -11,8 +11,23 @@ once tagged.
 - `srvr.WithoutErrorRedaction()` writes error text unredacted, an explicit loosening of the new
   default redaction.
 - `engine.RedactSecrets`, srvr's default error redactor, and `engine.MethodLabel`.
+- `srvr.ConfigError` (alias of the new type `*engine.ConfigError{Field, Value, Reason}`): every
+  construction error is one, so `errors.As` reads the offending field; it still matches
+  `errors.Is(err, srvr.ErrConfig)` and its text is unchanged.
+- `srvr.RouteCheck`, `srvr.Routes` and `srvr.Route` aliases: a route check needs no `engine` import.
+  `WithRouteCheck` takes `srvr.RouteCheck` (the same type).
 
 ### Changed
+
+- **Breaking (API, pre-v1):** `ginsrvr.WithEngine` is renamed `ginsrvr.WithGinEngine`; construction
+  errors about the hook name `WithGinEngine`.
+- **Breaking (API, `engine`, unstable before v1):** `engine.ConfigError(field, value, reason)` is
+  replaced by `engine.NewConfigError` returning `*engine.ConfigError`; `engine.RouteError` is
+  renamed `engine.RouteErrorf`; `engine.ForEngine` is renamed `engine.Only`; `Core.Settings()` is
+  replaced by `Core.MaxHeaderBytesSet()`, the only value an engine read; `RequestState.Route` and
+  `RequestState.Location` are read with `Route()` and `Location()` and set with `SetRoute` and
+  `SetLocation`.
+- An invalid `LogConfig.Level` and `Format` are both reported, `Level` first; only the first was.
 
 - **Breaking (default log content):** with no redactor configured, `exception.message` and
   `exception.stacktrace` now mask URL query values and the values of secret-looking `key=value`,

@@ -67,9 +67,10 @@ func (c *Core) SetDefaultLogger() {
 	}
 }
 
-// Settings returns a copy of the applied settings; they cannot change
-// after ResolveConfig validated them.
-func (c *Core) Settings() Settings { return c.settings }
+// MaxHeaderBytesSet returns the MaxHeaderBytes the consumer set, or 0 when
+// it was left to the default; an engine with its own header buffer limit
+// warns when a set value exceeds it.
+func (c *Core) MaxHeaderBytesSet() int { return c.settings.MaxHeaderBytes }
 
 // Config returns the server configuration with the defaults applied.
 func (c *Core) Config() Config { return c.cfg }
@@ -96,7 +97,7 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 
 	for _, o := range c.settings.engineOpts {
 		if o.engine != engine {
-			errs = append(errs, ConfigError("Option", o.name, "belongs to the "+o.engine+" engine, not "+engine))
+			errs = append(errs, NewConfigError("Option", o.name, "belongs to the "+o.engine+" engine, not "+engine))
 
 			continue
 		}
@@ -146,7 +147,7 @@ type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
 func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = ConfigError("ProblemOptions", v, "is invalid")
+			err = NewConfigError("ProblemOptions", v, "is invalid")
 		}
 	}()
 

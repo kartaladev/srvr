@@ -61,9 +61,9 @@ func TestGinRequestState(t *testing.T) {
 			if state == nil {
 				t.Fatal("no state")
 			}
-			if state.Route != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
+			if state.Route() != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
 				t.Fatalf("state route %q matched %v status %d failed %v; want %q %v %d %v",
-					state.Route, state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
+					state.Route(), state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
 			}
 		})
 	}
@@ -135,7 +135,7 @@ func TestGinEngineHook(t *testing.T) {
 
 			opts := []srvr.Option{srvr.WithLogOutput(io.Discard)}
 			if tt.hook != nil {
-				opts = append(opts, WithEngine(tt.hook))
+				opts = append(opts, WithGinEngine(tt.hook))
 			}
 
 			srv, err := New(opts...)
@@ -159,7 +159,7 @@ func TestGinEngineHook(t *testing.T) {
 		hook func(*gin.Engine)
 		want string
 	}{
-		{"nil", nil, "WithEngine"},
+		{"nil", nil, "WithGinEngine"},
 		{"Use", func(e *gin.Engine) { e.Use(gin.Logger()) }, "TestGinEngineHook"},
 		{"route", func(e *gin.Engine) { e.GET("/x", func(*gin.Context) {}) }, "TestGinEngineHook"},
 		{"panics", func(*gin.Engine) { panic("hook boom") }, "hook boom"},
@@ -169,7 +169,7 @@ func TestGinEngineHook(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			srv, err := New(srvr.WithLogOutput(io.Discard), WithEngine(tt.hook))
+			srv, err := New(srvr.WithLogOutput(io.Discard), WithGinEngine(tt.hook))
 			if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig containing %q", srv, err, tt.want)
 			}

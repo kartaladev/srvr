@@ -421,3 +421,44 @@ func TestUpstream_PrblmOnErrorComposes(t *testing.T) {
 		t.Fatalf("OnError hooks called: first=%v second=%v, want both", first, second)
 	}
 }
+
+// TestConfigError covers engine-support / Scenario: Configuration errors
+// name their field.
+func TestConfigError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		opts  []srvr.Option
+		found bool
+		field string
+		texts []string // also named in err.Error()
+	}{
+		{"invalid level", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "loud"})}, true, "Level", nil},
+		{"nil output", []srvr.Option{srvr.WithLogOutput(nil)}, true, "Output", nil},
+		{"nil route check", []srvr.Option{srvr.WithRouteCheck(nil)}, true, "RouteCheck", nil},
+		{"two invalid fields", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "loud", Format: "xml"})}, true, "Level", []string{"Level", "Format"}},
+		{"none", nil, false, "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := srvr.New(tt.opts...)
+
+			var ce *srvr.ConfigError
+			if found := errors.As(err, &ce); found != tt.found {
+				t.Fatalf("errors.As(%v) = %v, want %v", err, found, tt.found)
+			}
+			if tt.found && ce.Field != tt.field {
+				t.Fatalf("Field = %q, want %q (error %v)", ce.Field, tt.field, err)
+			}
+			for _, text := range tt.texts {
+				if !strings.Contains(err.Error(), text) {
+					t.Fatalf("error %q does not name %s", err, text)
+				}
+			}
+		})
+	}
+}

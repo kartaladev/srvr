@@ -382,9 +382,9 @@ func TestFiberRequestState(t *testing.T) {
 			if state == nil {
 				t.Fatal("no state")
 			}
-			if state.Route != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
+			if state.Route() != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
 				t.Fatalf("state route %q matched %v status %d failed %v; want %q %v %d %v",
-					state.Route, state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
+					state.Route(), state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
 			}
 		})
 	}

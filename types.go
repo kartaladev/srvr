@@ -18,6 +18,19 @@ type (
 	// Option configures a server of any engine. Options apply in argument
 	// order, so a later option wins over an earlier one.
 	Option = engine.Option
+	// ConfigError is the error New returns for one invalid field;
+	// errors.As reads its Field, Value and Reason, and it matches
+	// [ErrConfig]. Several invalid fields are joined, the first found
+	// first.
+	ConfigError = engine.ConfigError
+	// Route is one route a configurer declared: method ("" for every
+	// method), pattern in the engine's syntax and the configurer's Go type.
+	Route = engine.Route
+	// Routes is the route listing a [RouteCheck] receives.
+	Routes = engine.Routes
+	// RouteCheck checks the route listing after the configure phase and
+	// before the listener is bound; pass it with [WithRouteCheck].
+	RouteCheck = engine.RouteCheck
 	// Config holds the server settings that a configuration loader can
 	// fill; see [engine.Config] for its fields and defaults. Pass it with
 	// [WithConfig].

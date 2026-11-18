@@ -20,7 +20,7 @@ import (
 func TestEngineConfig(t *testing.T) {
 	t.Parallel()
 
-	foreign := engine.ForEngine("gin", "ginsrvr.WithEngine", func() {})
+	foreign := engine.Only("gin", "ginsrvr.WithGinEngine", func() {})
 
 	tests := []struct {
 		name    string
@@ -58,24 +58,24 @@ func TestEngineConfig(t *testing.T) {
 		t.Parallel()
 
 		srv, err := srvr.New(srvr.WithLogLevel(slog.LevelDebug), foreign)
-		if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "ginsrvr.WithEngine") {
-			t.Fatalf("New = %v, %v; want an error wrapping ErrConfig naming ginsrvr.WithEngine", srv, err)
+		if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "ginsrvr.WithGinEngine") {
+			t.Fatalf("New = %v, %v; want an error wrapping ErrConfig naming ginsrvr.WithGinEngine", srv, err)
 		}
 	})
 
 	t.Run("engine options are read by their engine only", func(t *testing.T) {
 		t.Parallel()
 
-		core, err := engine.ResolveConfig([]engine.Option{foreign, engine.ForEngine("fiber", "fibersrvr.WithFiberConfig", 7)})
+		core, err := engine.ResolveConfig([]engine.Option{foreign, engine.Only("fiber", "fibersrvr.WithFiberConfig", 7)})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if _, err := core.EngineOptions("fiber"); err == nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "ginsrvr.WithEngine") {
-			t.Fatalf("EngineOptions(fiber) error = %v, want one naming ginsrvr.WithEngine", err)
+		if _, err := core.EngineOptions("fiber"); err == nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "ginsrvr.WithGinEngine") {
+			t.Fatalf("EngineOptions(fiber) error = %v, want one naming ginsrvr.WithGinEngine", err)
 		}
 
-		core, err = engine.ResolveConfig([]engine.Option{engine.ForEngine("fiber", "fibersrvr.WithFiberConfig", 7)})
+		core, err = engine.ResolveConfig([]engine.Option{engine.Only("fiber", "fibersrvr.WithFiberConfig", 7)})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -49,11 +49,11 @@ type RequestState struct {
 	// status is the response status an engine without rec reported to
 	// WriteAccess.
 	status int
-	// Route is the route pattern the router matched, in the engine's own
+	// route is the route pattern the router matched, in the engine's own
 	// syntax, empty when unmatched.
-	Route string
-	// Location is the code location of the matched route's handler.
-	Location Location
+	route string
+	// location is the code location of the matched route's handler.
+	location Location
 	// aborted is set when the request was aborted with http.ErrAbortHandler.
 	aborted bool
 	// failure is the error the request failed with, as srvr's prblm hook
@@ -64,8 +64,21 @@ type RequestState struct {
 	ends []endFunc
 }
 
+// Route returns the route pattern the router matched, in the engine's own
+// syntax, or "" when no route matched.
+func (r *RequestState) Route() string { return r.route }
+
+// SetRoute records the route pattern the engine's router matched.
+func (r *RequestState) SetRoute(pattern string) { r.route = pattern }
+
+// Location returns the code location of the matched route's handler.
+func (r *RequestState) Location() Location { return r.location }
+
+// SetLocation records the code location of the matched route's handler.
+func (r *RequestState) SetLocation(loc Location) { r.location = loc }
+
 // Matched reports whether a route matched the request.
-func (r *RequestState) Matched() bool { return r.Route != "" }
+func (r *RequestState) Matched() bool { return r.route != "" }
 
 // Status returns the final status of the response so far: the status the
 // access stage recorded, or 200 when nothing was written yet, as net/http
