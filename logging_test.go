@@ -15,6 +15,7 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // logBuffer is a concurrency-safe log output.
@@ -357,5 +358,146 @@ func TestUnwrap(t *testing.T) {
 	})
 	if got := get(t, base+"/deadline").status; got != http.StatusOK {
 		t.Fatalf("status = %d, want 200", got)
+	}
+}
+
+// TestLifecycleRecords covers server-lifecycle / Scenario: Lifecycle records.
+func TestLifecycleRecords(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		action, event, level, attribute string
+		run                             func(t *testing.T, opts []srvr.Option)
+	}{
+		{"the server becomes ready", "server.started", "INFO", "server.address", stopByContext},
+		{"shutdown begins", "server.stopping", "INFO", "service.name", stopByContext},
+		{"shutdown completes", "server.stopped", "INFO", "srvr.drain.duration_ms", stopByContext},
+		{"binding fails", "server.failed", "ERROR", "exception.message", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			taken := listen(t)
+			srv, err := srvr.New(append(opts, srvr.WithAddr(taken.Addr().String()))...)
+			mustNil(t, err)
+			if err := srv.Start(context.Background()); err == nil {
+				t.Fatal("Start = nil")
+			}
+		}},
+		{"serving fails because the passed listener's Accept panics", "server.failed", "ERROR", "exception.message", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			srv, err := srvr.New(append(opts, srvr.WithListener(&panicListener{Listener: listen(t), acceptPanic: "accept"}))...)
+			mustNil(t, err)
+			if err := startBounded(context.Background(), t, srv); err == nil {
+				t.Fatal("Start = nil")
+			}
+		}},
+		{"the drain deadline passes", "server.stopped", "WARN", "srvr.drain.forced", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			started, release := make(chan struct{}, 1), make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			srv := newServer(t, opts...)
+			mustNil(t, srv.Register(workRoute(time.Hour, started, release)))
+			done := startBackground(t, srv)
+			status := inFlight("http://" + srv.Addr() + "/work")
+			<-started
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			_ = srv.Shutdown(ctx)
+			<-status
+			mustNil(t, <-done)
+		}},
+		{"a shutdown hook returns an error", "server.shutdown_hook.failed", "WARN", "srvr.shutdown_hook.phase", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			stopByContext(t, append(opts, srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { return errors.New("flush failed") })))
+		}},
+		{"a shutdown hook panics", "server.shutdown_hook.failed", "WARN", "exception.message", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			stopByContext(t, append(opts, srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error { panic("boom") })))
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.action, func(t *testing.T) {
+			t.Parallel()
+
+			out := &logBuffer{}
+			tt.run(t, []srvr.Option{srvr.WithLogOutput(out), srvr.WithServiceName("registration-api")})
+
+			var rec map[string]any
+			for _, r := range out.find(t, tt.event) {
+				if r["level"] == tt.level {
+					rec = r
+				}
+			}
+			if rec == nil {
+				t.Fatalf("no %s %s record:\n%s", tt.level, tt.event, out.String())
+			}
+			_, hasTrace := rec["trace_id"]
+			if _, ok := rec[tt.attribute]; !ok || hasTrace || rec["service.name"] != "registration-api" || rec["srvr.log.schema"] != float64(1) {
+				t.Fatalf("record %v lacks %s or service attributes, or has trace_id", rec, tt.attribute)
+			}
+		})
+	}
+}
+
+// stopByContext starts a server with opts and stops it by cancelling Start.
+func stopByContext(t *testing.T, opts []srvr.Option) {
+	t.Helper()
+
+	srv, err := srvr.New(append(opts, srvr.WithAddr("127.0.0.1:0"))...)
+	mustNil(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startWith(ctx, t, srv)
+	cancel()
+	if err := <-done; err != nil && !errors.Is(err, srvr.ErrShutdownHook) {
+		t.Fatalf("Start = %v", err)
+	}
+}
+
+// TestDefaultLoggerAfterConstruction covers engine-support / Scenario:
+// Default logger after construction, net/http rows: a construction that
+// fails leaves slog.Default() unchanged.
+//
+//nolint:paralleltest // slog.SetDefault is process-wide.
+func TestDefaultLoggerAfterConstruction(t *testing.T) {
+	tests := []struct {
+		name    string
+		opt     srvr.Option // nil adds nothing
+		wantErr string      // "" when construction succeeds
+	}{
+		{"nothing else", nil, ""},
+		{"invalid prblm option", srvr.WithProblemOptions(prblm.WithNamespace("not a uri")), "ProblemOptions"},
+		{"an option of another engine", engine.ForEngine("gin", "ginsrvr.WithEngine", func() {}), "ginsrvr.WithEngine"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := slog.Default()
+			t.Cleanup(func() { slog.SetDefault(before) })
+
+			var buf bytes.Buffer
+
+			opts := []srvr.Option{srvr.WithSetDefaultLogger(), srvr.WithLogHandler(slog.NewJSONHandler(&buf, nil))}
+			if tt.opt != nil {
+				opts = append(opts, tt.opt)
+			}
+
+			_, err := srvr.New(opts...)
+
+			wantOK := tt.wantErr == ""
+
+			switch {
+			case wantOK && err != nil:
+				t.Fatalf("New = %v", err)
+			case !wantOK && (!errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("New = %v, want an ErrConfig containing %s", err, tt.wantErr)
+			}
+
+			buf.Reset()
+			slog.Info("probe")
+
+			reached := strings.Contains(buf.String(), "probe")
+			if reached != wantOK {
+				t.Fatalf("a record through slog.Default() reached the server's handler: %v; New error: %v", reached, err)
+			}
+		})
 	}
 }

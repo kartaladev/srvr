@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,8 +15,11 @@ import (
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/otelsrvr"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // resultObserver keeps the ResultInfo of every request.
@@ -279,4 +283,184 @@ func startFiberStreamLate(t *testing.T, _ outcome, opts ...srvr.Option) (string,
 			return errors.New("late")
 		})
 	}, opts...)
+}
+
+// TestSpanShape covers otel-tracing "Span shape per engine", the gin and
+// fiber rows, on every engine (the harness route is /items/{id} in each
+// engine's syntax), and that the span continues an incoming traceparent
+// and supplies the access record's ids.
+func TestSpanShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		outcome   outcome
+		path      string
+		route     bool
+		status    codes.Code
+		exception string // exception.type of the exception event, "" for none
+	}{
+		{"writes 200", succeeds, "/items/42", true, codes.Unset, ""},
+		{"returns boom", failsBoom, "/items/42", true, codes.Error, ""},
+		{"unmatched", succeeds, "/nope", false, codes.Unset, ""},
+		{"panics", panicsBoom, "/items/42", true, codes.Error, "string"},
+	}
+
+	for _, e := range engines {
+		for _, tt := range tests {
+			t.Run(e.name+"/"+tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				rec := tracetest.NewSpanRecorder()
+				obs, err := otelsrvr.New(otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))))
+				must(t, err)
+
+				base, logs := e.start(t, tt.outcome, srvr.WithObserver(obs))
+				header := map[string]string{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+				if _, _, err := send(t, http.MethodGet, base+tt.path, header); err != nil {
+					t.Fatal(err)
+				}
+
+				access := logs.access(t)
+
+				want := "GET"
+				if tt.route {
+					want += " " + e.route
+				}
+
+				spans := rec.Ended()
+				if len(spans) != 1 || spans[0].Name() != want || spans[0].Status().Code != tt.status {
+					for _, s := range spans {
+						t.Logf("span %q status %v", s.Name(), s.Status().Code)
+					}
+
+					t.Fatalf("want one span %q with status %v", want, tt.status)
+				}
+
+				if got := exceptionType(spans[0]); got != tt.exception {
+					t.Errorf("exception.type = %q, want %q (events %v)", got, tt.exception, spans[0].Events())
+				}
+
+				// The span continues the incoming trace, and the access
+				// record carries the span's ids, on every engine.
+				sc := spans[0].SpanContext()
+				if sc.TraceID().String() != "4bf92f3577b34da6a3ce929d0e0e4736" || spans[0].Parent().SpanID().String() != "00f067aa0ba902b7" {
+					t.Errorf("span trace %s parent %s, want the incoming ones", sc.TraceID(), spans[0].Parent().SpanID())
+				}
+
+				if access[0]["trace_id"] != sc.TraceID().String() || access[0]["span_id"] != sc.SpanID().String() {
+					t.Errorf("access record %v/%v, span %s/%s", access[0]["trace_id"], access[0]["span_id"], sc.TraceID(), sc.SpanID())
+				}
+			})
+		}
+	}
+}
+
+// exceptionType returns the exception.type of span's exception event, or
+// "" without one.
+func exceptionType(span sdktrace.ReadOnlySpan) string {
+	for _, ev := range span.Events() {
+		if ev.Name != "exception" {
+			continue
+		}
+
+		for _, kv := range ev.Attributes {
+			if kv.Key == "exception.type" {
+				return kv.Value.AsString()
+			}
+		}
+	}
+
+	return ""
+}
+
+// TestParity_Log covers engine-parity / Scenario: Log parity: msg, level
+// and http.route per engine, and the flattened key set equal to net/http's
+// for the same outcome.
+func TestParity_Log(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		outcome outcome
+		method  string
+		path    string
+		msg     string
+		level   string
+		routed  bool
+		skip    string // an engine the row does not cover
+	}{
+		{"succeeds", succeeds, http.MethodGet, "/items/7", "http.request.completed", "INFO", true, ""},
+		{"fails with boom", failsBoom, http.MethodGet, "/items/7", "http.request.failed", "ERROR", true, ""},
+		{"fails with ErrNotFound", failsNotFound, http.MethodGet, "/items/7", "http.request.failed", "WARN", true, ""},
+		{"GET /nope", succeeds, http.MethodGet, "/nope", "http.request.failed", "WARN", false, ""},
+		{"DELETE /items/7", succeeds, http.MethodDelete, "/items/7", "http.request.failed", "WARN", false, ""},
+		// fiber recovers http.ErrAbortHandler as an ordinary panic: a
+		// documented exception, pinned in TestParity_Exceptions.
+		{"panics with http.ErrAbortHandler", panicsAbort, http.MethodGet, "/items/7", "http.request.failed", "WARN", true, "fiber"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var reference []string
+
+			for _, e := range engines {
+				if e.name == tt.skip {
+					continue
+				}
+
+				base, logs := e.start(t, tt.outcome)
+				_, _, _ = send(t, tt.method, base+tt.path, map[string]string{"User-Agent": "parity"})
+
+				recs := logs.access(t)
+				if len(recs) != 1 {
+					t.Fatalf("%s: %d access records, want 1", e.name, len(recs))
+				}
+
+				r := recs[0]
+				wantRoute := any(nil)
+				if tt.routed {
+					wantRoute = e.route
+				}
+
+				if r["msg"] != tt.msg || r["level"] != tt.level || r["http.route"] != wantRoute {
+					t.Errorf("%s: msg %v level %v route %v, want %s %s %v", e.name, r["msg"], r["level"], r["http.route"], tt.msg, tt.level, wantRoute)
+				}
+
+				keys := flatKeys(r)
+				if reference == nil {
+					reference = keys
+
+					continue
+				}
+
+				if !slices.Equal(keys, reference) {
+					t.Errorf("%s: keys %v\nnet/http: %v", e.name, keys, reference)
+				}
+			}
+		})
+	}
+}
+
+// flatKeys returns the sorted keys of r, groups flattened with ".".
+func flatKeys(r map[string]any) []string {
+	var keys []string
+
+	for k, v := range r {
+		if g, ok := v.(map[string]any); ok {
+			for _, sub := range flatKeys(g) {
+				keys = append(keys, k+"."+sub)
+			}
+
+			continue
+		}
+
+		keys = append(keys, k)
+	}
+
+	slices.Sort(keys)
+
+	return keys
 }

@@ -8,6 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
+	"net/url"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -336,4 +341,228 @@ func newRecovered(opts ...srvr.Option) (srv *srvr.Server, err error) {
 	})
 
 	return srv, err
+}
+
+// clients holds the HTTP client of every server the helpers started, by
+// address. Each server has its own, so a test's cleanup closes only its
+// own idle connections: closing those of http.DefaultClient, shared by
+// parallel tests, broke another test's request in flight ("http:
+// CloseIdleConnections called").
+var clients sync.Map // string -> *http.Client
+
+// registerClient gives the server at addr a client of its own; when the
+// test ends, before the server stops (cleanups run last-in first-out), it
+// closes that client's idle connections, which would otherwise hold the
+// drain for up to 5s.
+func registerClient(t *testing.T, addr string) {
+	t.Helper()
+
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
+	c := &http.Client{Transport: tr}
+	clients.Store(addr, c)
+
+	t.Cleanup(func() {
+		c.CloseIdleConnections()
+		clients.CompareAndDelete(addr, c)
+	})
+}
+
+// clientFor returns the client of the server rawURL points at, or
+// http.DefaultClient for a server the helpers did not start.
+func clientFor(rawURL string) *http.Client {
+	if u, err := url.Parse(rawURL); err == nil {
+		if c, ok := clients.Load(u.Host); ok {
+			return c.(*http.Client)
+		}
+	}
+
+	return http.DefaultClient
+}
+
+// selfPanicError is an error whose Error method panics with itself, so fmt's
+// own guard, which formats the panic value, panics again.
+type selfPanicError struct{}
+
+func (selfPanicError) Error() string { panic(selfPanicError{}) }
+
+// safeText formats v for a test message, guarded against a value whose
+// formatting panics at any depth.
+func safeText(v any) (text string) {
+	defer func() {
+		if recover() != nil {
+			text = fmt.Sprintf("<unprintable %T>", v)
+		}
+	}()
+
+	return fmt.Sprint(v)
+}
+
+// addrListener is a listener whose Addr method is replaced by addr.
+type addrListener struct {
+	net.Listener
+
+	addr func() net.Addr
+}
+
+func (l addrListener) Addr() net.Addr { return l.addr() }
+
+// hostileAddr is a net.Addr whose String panics with selfPanicError.
+type hostileAddr struct{}
+
+func (hostileAddr) Network() string { return "tcp" }
+func (hostileAddr) String() string  { panic(selfPanicError{}) }
+
+// HostileAPI panics in Configure with a value whose Error panics with
+// itself.
+type HostileAPI struct{}
+
+func (*HostileAPI) Configure(*srvr.Group) { panic(selfPanicError{}) }
+
+// hostileContext is a context that is done after a delay and whose Err
+// then returns err.
+type hostileContext struct {
+	context.Context
+
+	done chan struct{}
+	err  error
+}
+
+func newHostileContext(t *testing.T, after time.Duration, err error) hostileContext {
+	t.Helper()
+
+	c := hostileContext{Context: context.Background(), done: make(chan struct{}), err: err}
+	timer := time.AfterFunc(after, func() { close(c.done) })
+	t.Cleanup(func() { timer.Stop() })
+
+	return c
+}
+
+func (c hostileContext) Done() <-chan struct{} { return c.done }
+
+func (c hostileContext) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
+
+// TestHarness_CleanupKeepsOtherClients pins the test harness against the
+// one-off TestPanicRecovery failure ("http: CloseIdleConnections called"):
+// a started server's cleanup must not close connections a parallel test
+// uses for its own server.
+func TestHarness_CleanupKeepsOtherClients(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T, base, otherBase string)
+	}{
+		{"an idle connection survives another server's cleanup", idleSurvives},
+		{"requests in flight survive another server's cleanups", inFlightSurvive},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newServer(t)
+			mustNil(t, srv.Register(okRoute("/ok")))
+			base := startServer(t, srv)
+
+			tt.run(t, base, startServer(t, newServer(t)))
+		})
+	}
+}
+
+// getOK sends GET base/ok with base's client and reports whether it
+// reused an idle connection.
+func getOK(base string) (reused bool, err error) {
+	trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }}
+
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), http.MethodGet, base+"/ok", http.NoBody)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := clientFor(base).Do(req)
+	if err != nil {
+		return false, err
+	}
+
+	_, _ = io.Copy(io.Discard, res.Body)
+
+	return reused, res.Body.Close()
+}
+
+// idleSurvives: the connection left idle by one request is reused by the
+// next, although another server's cleanup ran in between.
+func idleSurvives(t *testing.T, base, otherBase string) {
+	t.Helper()
+
+	if _, err := getOK(base); err != nil {
+		t.Fatal(err)
+	}
+
+	clientFor(otherBase).CloseIdleConnections() // what its cleanup does
+
+	reused, err := getOK(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !reused {
+		t.Error("another server's cleanup closed this server's idle connection")
+	}
+}
+
+// inFlightSurvive: requests sent while another server's cleanup runs in a
+// loop never fail (the scratch reproduction; probabilistic before the fix,
+// where about 1 run in 10 failed).
+func inFlightSurvive(t *testing.T, base, otherBase string) {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("8000 requests; idleSurvives is the deterministic guard")
+	}
+
+	var stop atomic.Bool
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		for !stop.Load() {
+			clientFor(otherBase).CloseIdleConnections()
+			runtime.Gosched() // leave the parallel tests their share
+		}
+	}()
+
+	defer func() { stop.Store(true); <-done }()
+
+	const workers, requests = 8, 1000
+
+	errs := make(chan error, workers)
+
+	for range workers {
+		go func() {
+			for range requests {
+				if _, err := getOK(base); err != nil {
+					errs <- err
+
+					return
+				}
+			}
+			errs <- nil
+		}()
+	}
+
+	for range workers {
+		if err := <-errs; err != nil {
+			t.Fatalf("GET /ok: %v", err)
+		}
+	}
 }

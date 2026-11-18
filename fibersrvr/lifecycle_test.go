@@ -3,6 +3,7 @@ package fibersrvr_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"slices"
@@ -262,4 +263,158 @@ func TestFiberShutdownHooks(t *testing.T) {
 			t.Fatalf("hooks = %v, want %v", got, after)
 		}
 	})
+}
+
+// TestFiberDrain covers fiber-engine / Scenario: Fiber drain.
+func TestFiberDrain(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		work     time.Duration // 0: one idle keep-alive connection
+		deadline time.Duration
+		want     error
+	}{
+		{"idle keep-alive", 0, time.Second, nil},
+		{"short request", 10 * time.Millisecond, time.Second, nil},
+		{"long request", 5 * time.Second, 50 * time.Millisecond, context.DeadlineExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv, _ := newServer(t)
+			started := make(chan struct{}, 1)
+			if err := srv.Register(routes(func(r fiber.Router) {
+				r.Get("/w", func(c fiber.Ctx) error {
+					started <- struct{}{}
+					select {
+					case <-time.After(tt.work):
+					case <-c.Context().Done():
+					}
+
+					return c.SendStatus(http.StatusOK)
+				})
+			})); err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- srv.Start(context.Background()) }()
+			<-srv.Ready()
+
+			// One client connection of its own, kept alive.
+			client := &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{}).DialContext, MaxIdleConnsPerHost: 1}}
+			defer client.CloseIdleConnections()
+
+			request := func() {
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/w", nil)
+				if res, err := client.Do(req); err == nil {
+					_ = res.Body.Close()
+				}
+			}
+
+			if tt.work == 0 {
+				request() // leaves the connection idle
+				<-started
+			} else {
+				go request()
+				<-started
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			defer cancel()
+
+			if err := srv.Shutdown(ctx); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+				t.Fatalf("Shutdown = %v, want %v", err, tt.want)
+			}
+			if n := srv.OpenConns(); n != 0 {
+				t.Fatalf("%d server connections open after Shutdown", n)
+			}
+
+			if err := <-done; err != nil {
+				t.Errorf("Start = %v", err)
+			}
+		})
+	}
+}
+
+// TestFiberShutdownNeverServed pins the fiber fact design D3 relies on:
+// ShutdownWithContext on an app that never served returns nil (fiber's
+// ErrNotRunning is only for an app without a fasthttp server, which
+// fiber.New always creates).
+func TestFiberShutdownNeverServed(t *testing.T) {
+	t.Parallel()
+
+	if err := fiber.New().ShutdownWithContext(context.Background()); err != nil {
+		t.Fatalf("ShutdownWithContext = %v, want nil", err)
+	}
+}
+
+// TestFiberContextReuse covers fiber-engine / Scenario: Context reuse: with
+// fiber reusing its pooled contexts and buffers, every access record keeps
+// its own request's route and trace id.
+func TestFiberContextReuse(t *testing.T) {
+	t.Parallel()
+
+	const (
+		requests = 1000
+		routeN   = 10
+	)
+
+	for _, immutable := range []bool{false, true} {
+		t.Run(fmt.Sprint("immutable ", immutable), func(t *testing.T) {
+			t.Parallel()
+
+			var opts []srvr.Option
+			if immutable {
+				opts = append(opts, fibersrvr.WithFiberConfig(func(c *fiber.Config) { c.Immutable = true }))
+			}
+
+			srv, logs := newServer(t, opts...)
+			conf := routes(func(r fiber.Router) {
+				for i := range routeN {
+					r.Get(fmt.Sprintf("/r%d/:id", i), ok)
+				}
+			})
+
+			// Configure once before the concurrent requests.
+			serve(t, srv, conf, http.MethodGet, "/r0/warmup", nil, nil)
+
+			want := map[string]string{} // trace id -> route
+			var wg sync.WaitGroup
+
+			for i := range requests {
+				traceID := fmt.Sprintf("%032x", i+1)
+				route := fmt.Sprintf("/r%d/:id", i%routeN)
+				want[traceID] = route
+
+				wg.Go(func() {
+					serve(t, srv, conf, http.MethodGet, fmt.Sprintf("/r%d/%d", i%routeN, i), nil,
+						map[string]string{"traceparent": "00-" + traceID + "-00f067aa0ba902b7-01"})
+				})
+			}
+
+			wg.Wait()
+
+			got := 0
+			for _, r := range logs.access(t) {
+				id, _ := r["trace_id"].(string)
+				route, known := want[id]
+				if !known {
+					continue // the warm-up request
+				}
+
+				got++
+				if r["http.route"] != route {
+					t.Fatalf("record %v: route %v, want %s", id, r["http.route"], route)
+				}
+			}
+
+			if got != requests {
+				t.Fatalf("%d matching records, want %d", got, requests)
+			}
+		})
+	}
 }

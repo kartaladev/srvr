@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"slices"
 
 	"github.com/kartaladev/prblm"
@@ -103,4 +105,65 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 	}
 
 	return values, errors.Join(errs...)
+}
+
+// The sentinel errors of every srvr engine, documented on the names
+// package srvr re-exports them under (srvr.ErrConfig and so on), so
+// errors.Is matches either name.
+var (
+	ErrConfig        = errors.New("srvr: invalid configuration")
+	ErrServerStarted = errors.New("srvr: server already started")
+	ErrServerClosed  = errors.New("srvr: server closed")
+	ErrRouteConfig   = errors.New("srvr: invalid route configuration")
+	ErrShutdownHook  = errors.New("srvr: shutdown hook failed")
+)
+
+// IsNil reports whether v is nil or an interface holding a nil pointer,
+// map, slice, function or channel (a typed nil).
+func IsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+// ErrorHook is called for every error the server answers with a problem,
+// with the problem sent (nil for a note about a problem that was not sent,
+// such as a panic after the response started). Consumers use it as
+// srvr.ErrorHook.
+type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
+
+// newProblems builds a problem handler from opts and returns an invalid
+// option, which makes prblm.NewHandler panic, as an error wrapping
+// ErrConfig.
+func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = ConfigError("ProblemOptions", v, "is invalid")
+		}
+	}()
+
+	return prblm.NewHandler(opts...), nil
+}
+
+// onError is srvr's prblm hook. It records the failure for the request's
+// access record, which the access stage writes, and calls the consumer's
+// hook, if any, containing a panic in it.
+func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
+	recordFailure(ctx, err, p)
+
+	if c.settings.ErrorHook == nil {
+		return
+	}
+
+	defer func() { _ = recover() }()
+
+	c.settings.ErrorHook(ctx, err, p)
 }
