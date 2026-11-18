@@ -10,6 +10,13 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 3 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** Task 4.1's composition rows passed at their first run (slice 1's `BeginObservers` already composed in order and ended in reverse); `TestObserver_ComposeContext` failed on its RED only because its observers returned nil end functions (`EOF`), which 4.2 fixed. Task 4.2 RED: nil and typed-nil observers were accepted (`New = <nil>`), and every panicking or nil-end row closed the connection (`EOF`). Decisions: a context returned by `Begin` that is nil or does not carry srvr's request state is replaced by the incoming one without a record (the spec's nil-context row specifies no record; the /simplify altitude review suggested a third fault kind, not adopted because it would add an unspecified log value); a returned context whose `Value` panics is a `begin_panic`; the fault record carries `srvr.observer.type` and `exception.message` besides the kind (additive keys, pinned by `TestLogSchemaGolden_ObserverFault`, documented in LOGGING.md "Observer events"). Fault flags are atomics on a per-observer guard built once in `ResolveConfig`; no lock is held while observer code runs.
+- **Evidence:** `observer_faults_test.go`, `schema_test.go` `TestLogSchemaGolden_ObserverFault`, `TestLogSchemaDocumented` (RED: `LOGGING.md does not list "srvr.observer.fault"`).
+- **Suggested action:** none.
+
 ### Unmatched 404 problems differ between net/http and gin/fiber
 - **Status:** open
 - **Target:** unassigned (engine parity; found by otel-observability task 3.3)

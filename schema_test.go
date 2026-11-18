@@ -176,6 +176,33 @@ func TestLogSchemaGolden_Lifecycle(t *testing.T) {
 	}
 }
 
+// goldenObserverFaultKeys pins srvr.observer.fault, an additive event
+// (srvr.log.schema unchanged).
+var goldenObserverFaultKeys = []string{
+	"exception.message", "level", "msg", "service.name", "service.version", "span_id", "srvr.log.schema",
+	"srvr.observer.fault.kind", "srvr.observer.type", "time", "trace_id",
+}
+
+// TestLogSchemaGolden_ObserverFault pins the keys of srvr.observer.fault.
+func TestLogSchemaGolden_ObserverFault(t *testing.T) {
+	t.Parallel()
+
+	obs := observerFunc(func(context.Context, srvr.RequestInfo) (context.Context, func(srvr.ResultInfo)) { panic("boom") })
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/ok", func(http.ResponseWriter, *http.Request) error { return nil })
+	}, srvr.WithServiceVersion("1.4.2"), srvr.WithObserver(obs))
+	get(t, base+"/ok")
+
+	rec := out.waitRecord(t, "srvr.observer.fault")
+	if got := flatKeys(rec, ""); !slices.Equal(got, goldenObserverFaultKeys) {
+		t.Errorf("srvr.observer.fault keys = %v\nwant %v", got, goldenObserverFaultKeys)
+	}
+
+	if rec["srvr.log.schema"] != float64(goldenSchemaVersion) {
+		t.Errorf("srvr.log.schema = %v", rec["srvr.log.schema"])
+	}
+}
+
 // TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
 func TestLogSchemaDocumented(t *testing.T) {
 	t.Parallel()
@@ -183,7 +210,7 @@ func TestLogSchemaDocumented(t *testing.T) {
 	doc, err := os.ReadFile("LOGGING.md")
 	mustNil(t, err)
 
-	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys)
+	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"})
 	for event, k := range goldenKeys {
 		keys = append(keys, event)
 		keys = append(keys, k...)

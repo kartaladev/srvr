@@ -46,17 +46,17 @@
 
 ## 4. Slice: composition and fault isolation
 
-- [ ] 4.1 Composition order (request-observer / Scenario: Composition, all rows); verify `go test -race -run TestObserver_Compose` passes
+- [x] 4.1 Composition order (request-observer / Scenario: Composition, all rows); verify `go test -race -run TestObserver_Compose` passes
   - RED: table; fails because only one observer is kept
   - GREEN: ordered slice, reverse-order end
   - REFACTOR: /simplify
-- [ ] 4.2 Faulty observers (request-observer / Scenario: Observer faults, all rows); verify `go test -race -run TestObserver_Faults` passes
+- [x] 4.2 Faulty observers (request-observer / Scenario: Observer faults, all rows); verify `go test -race -run TestObserver_Faults` passes
   - RED: table with nil, typed-nil, Begin panic, nil ctx, nil end, end panic, end panic with `http.ErrAbortHandler`, repeated panic, blocking `Begin` and blocking end-function rows (the blocking end row asserts status `200` after at least `50ms` and the access record after the end function, owner decision 2026-11-18), a `Begin` returning a context whose `Value` panics, and an end panic whose value's `Error()` panics; fails because panics escape or an observer's `http.ErrAbortHandler` is re-raised; no lock is held while observer code runs
   - GREEN: guarded calls, fallbacks, once-per-kind fault logging
   - REFACTOR: Extract Class `guardedObserver`, then /simplify
   - DOC: the godoc of `engine.Observer` (aliased as `srvr.Observer`) and of package `otelsrvr` states that observers run on the request path and must be fast, and that slow work belongs in the SDK's batch processors
-- [ ] 4.3 Add the `srvr.observer.fault` record to core's golden-record test (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes
-- [ ] 4.4 Verify slice end to end and confirm guard branches are covered in `go tool cover -func`; in the core module, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(core): compose observers and isolate their faults`
+- [x] 4.3 Add the `srvr.observer.fault` record to core's golden-record test (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes
+- [x] 4.4 Verify slice end to end and confirm guard branches are covered in `go tool cover -func`; in the core module, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(core): compose observers and isolate their faults`
 
 ## 5. Slice: bounded attributes, buckets and optional instruments
 

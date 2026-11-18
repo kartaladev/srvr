@@ -128,6 +128,7 @@ func (s *Settings) validate() []error {
 		validateListener,
 		validateShutdownTimeout,
 		validateMaxHeaderBytes,
+		validateObservers,
 	} {
 		if err := check(s); err != nil {
 			errs = append(errs, err)
@@ -185,4 +186,18 @@ func validateMaxHeaderBytes(s *Settings) error {
 	}
 
 	return nil
+}
+
+// validateObservers rejects a nil or typed-nil observer, which would panic
+// on every request.
+func validateObservers(s *Settings) error {
+	var errs []error
+
+	for i, o := range s.Observers {
+		if IsNil(o) {
+			errs = append(errs, ConfigError("Observer", fmt.Sprintf("%d (%T)", i, o), "is nil"))
+		}
+	}
+
+	return errors.Join(errs...)
 }

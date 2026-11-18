@@ -25,6 +25,8 @@ type Core struct {
 	log *logHandler
 	// serviceAttrs are added to lifecycle and failed records.
 	serviceAttrs []slog.Attr
+	// observers are the server's observers, guarded.
+	observers []*guardedObserver
 }
 
 // ResolveConfig applies opts in argument order, fills the defaults and
@@ -37,7 +39,7 @@ func ResolveConfig(opts []Option) (*Core, error) {
 		return nil, err
 	}
 
-	c := &Core{settings: s, cfg: s.resolve()}
+	c := &Core{settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers)}
 
 	if c.log, err = newLogHandler(&c.settings.Log); err != nil {
 		return nil, err

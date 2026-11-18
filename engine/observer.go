@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,8 +15,22 @@ import (
 // srvr.Observer and register it with srvr.WithObserver.
 //
 // Begin returns the context the rest of the request runs with (the
-// incoming one, or one derived from it) and the end function. Both run on
-// the request's goroutine: an observer that blocks delays the request.
+// incoming one, or one derived from it) and the end function, which may
+// be nil. Several observers compose: Begin runs in registration order,
+// each with the context the previous one returned, and the end functions
+// run in reverse order.
+//
+// Observers run synchronously on the request path, on every engine: a
+// slow Begin or end function delays the response and is not detected.
+// They must be fast; slow work such as exporting telemetry belongs in the
+// OpenTelemetry SDK's batch span processors and periodic metric readers,
+// which export asynchronously.
+//
+// A faulty observer never changes the response: a panic in Begin or in
+// the end function (even with http.ErrAbortHandler) is contained and
+// logged once per observer and kind as srvr.observer.fault; a nil context,
+// or one not derived from the context Begin got, is replaced by that
+// context.
 type Observer interface {
 	Begin(ctx context.Context, info RequestInfo) (context.Context, func(ResultInfo))
 }
@@ -76,7 +92,7 @@ type ResultInfo struct {
 
 // Observed reports whether the server has observers, so an engine can skip
 // building the [RequestInfo] for a server without one.
-func (c *Core) Observed() bool { return len(c.settings.Observers) > 0 }
+func (c *Core) Observed() bool { return len(c.observers) > 0 }
 
 // BeginObservers calls Begin of every observer of the server for the
 // request of ctx, in registration order, each with the context the
@@ -91,25 +107,108 @@ func (c *Core) BeginObservers(ctx context.Context, info RequestInfo) context.Con
 		return ctx
 	}
 
-	req.ends = make(endFuncs, 0, len(c.settings.Observers))
-	for _, o := range c.settings.Observers {
+	req.ends = make([]endFunc, 0, len(c.observers))
+	for _, o := range c.observers {
 		var end func(ResultInfo)
 
-		ctx, end = o.Begin(ctx, info)
-		req.ends = append(req.ends, end)
+		ctx, end = c.begin(ctx, req, o, info)
+		if end != nil {
+			req.ends = append(req.ends, endFunc{observer: o, fn: end})
+		}
 	}
 
 	return ctx
 }
 
-// endFuncs are the end functions of a request's observers, in Begin order.
-type endFuncs []func(ResultInfo)
+// endFunc is the end function an observer returned.
+type endFunc struct {
+	observer *guardedObserver
+	fn       func(ResultInfo)
+}
 
-// run calls the end functions in reverse Begin order.
-func (e endFuncs) run(res ResultInfo) {
-	for i := len(e) - 1; i >= 0; i-- {
-		e[i](res)
+// guardedObserver is a registered observer with the fault kinds it has
+// reported, so each is logged once per server.
+type guardedObserver struct {
+	Observer
+
+	reported [numFaultKinds]atomic.Bool
+}
+
+// guardObservers wraps every one of observers.
+func guardObservers(observers []Observer) []*guardedObserver {
+	guarded := make([]*guardedObserver, len(observers))
+	for i, o := range observers {
+		guarded[i] = &guardedObserver{Observer: o}
 	}
+
+	return guarded
+}
+
+// begin calls Begin of o under recover. It returns ctx and no end
+// function when Begin panics, and ctx when the returned context is nil or
+// does not carry the request state req (an observer must derive its
+// context from the one it got), so the request keeps srvr's state.
+func (c *Core) begin(ctx context.Context, req *RequestState, o *guardedObserver, info RequestInfo) (next context.Context, end func(ResultInfo)) {
+	defer func() {
+		if v := recover(); v != nil {
+			c.observerFault(ctx, o, faultBeginPanic, v)
+			next, end = ctx, nil
+		}
+	}()
+
+	next, end = o.Begin(ctx, info)
+	if next != ctx && (next == nil || requestFrom(next) != req) {
+		next = ctx
+	}
+
+	return next, end
+}
+
+// endObservers calls the request's end functions in reverse Begin order,
+// each under recover: a panic, even with http.ErrAbortHandler, is reported
+// and never re-raised.
+func (c *Core) endObservers(ctx context.Context, req *RequestState, res ResultInfo) {
+	for i := len(req.ends) - 1; i >= 0; i-- {
+		c.end(ctx, req.ends[i], res)
+	}
+}
+
+func (c *Core) end(ctx context.Context, e endFunc, res ResultInfo) {
+	defer func() {
+		if v := recover(); v != nil {
+			c.observerFault(ctx, e.observer, faultEndPanic, v)
+		}
+	}()
+
+	e.fn(res)
+}
+
+// faultKind is an observer fault, logged as srvr.observer.fault.kind.
+type faultKind int
+
+const (
+	faultBeginPanic faultKind = iota
+	faultEndPanic
+	numFaultKinds
+)
+
+// String returns the srvr.observer.fault.kind value.
+func (k faultKind) String() string {
+	return [numFaultKinds]string{faultBeginPanic: "begin_panic", faultEndPanic: "end_panic"}[k]
+}
+
+// observerFault writes srvr.observer.fault for o the first time it
+// reports kind; v is the panic value, read through ValueText.
+func (c *Core) observerFault(ctx context.Context, o *guardedObserver, kind faultKind, v any) {
+	if o.reported[kind].Swap(true) {
+		return
+	}
+
+	c.logEvent(ctx, slog.LevelError, eventObserverFault,
+		slog.String(keyObserverFaultKind, kind.String()),
+		slog.String(keyObserverType, TypeName(o.Observer)),
+		c.exceptionMessage(ValueText(v)),
+	)
 }
 
 // httpRequestInfo returns the request information of a net/http request.

@@ -82,6 +82,17 @@ when the redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`. With a
 handler as plain strings. A consumer handler and the redactor are called synchronously: one that
 blocks stalls the request or the `Start`/`Shutdown` call writing the record.
 
+## Observer events
+
+| Event | Level | Keys |
+|-------|-------|------|
+| `srvr.observer.fault` | ERROR, once per observer and fault kind, when a `WithObserver` observer panics; the request is answered as if the observer were absent | `srvr.observer.fault.kind` (`begin_panic`: `Begin` panicked, or the context it returned panicked when read; `end_panic`: the end function panicked, also with `http.ErrAbortHandler`, which is never re-raised), `srvr.observer.type` (the observer's Go type), `exception.message` (the panic value's text, redacted and limited like lifecycle text) |
+
+The record is written with the request's context, so it carries `trace_id` and `span_id` of the first
+request that hit the fault, and the service keys. Observers run synchronously on the request path
+(`Begin` before routing, the end function just before the access record): a slow observer delays the
+response, and is neither detected nor logged. Adding this event kept `srvr.log.schema` at 1.
+
 ## Sample triage record
 
 ```json

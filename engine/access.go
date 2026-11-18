@@ -161,7 +161,7 @@ func (c *Core) WriteAccess(ctx context.Context, info AccessInfo) {
 // access record; a zero info.Status, an aborted request whose response
 // never started, omits the status.
 func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessInfo) {
-	req.ends.run(req.result(info))
+	c.endObservers(ctx, req, req.result(info))
 
 	status := info.Status
 	aborted := req.aborted

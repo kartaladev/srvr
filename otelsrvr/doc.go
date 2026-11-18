@@ -15,4 +15,9 @@
 // OpenTelemetry semantic conventions v1.43. By default it records through
 // the global MeterProvider, which is a no-op until the application sets
 // one with otel.SetMeterProvider; [WithMeterProvider] injects another.
+//
+// The observer runs on the request path, synchronously, like otelhttp:
+// recording a value is cheap, and exporting is left to the SDK's periodic
+// readers and batch processors, which run in the background. Configure
+// those, not otelsrvr, when export is slow.
 package otelsrvr

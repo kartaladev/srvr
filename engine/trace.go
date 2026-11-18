@@ -56,9 +56,9 @@ type RequestState struct {
 	// failure is the error the request failed with, as srvr's prblm hook
 	// or the unmatched interception recorded it.
 	failure *failure
-	// ends are the end functions of the request's observers, in Begin
-	// order.
-	ends endFuncs
+	// ends are the non-nil end functions of the request's observers, in
+	// Begin order.
+	ends []endFunc
 }
 
 // Matched reports whether a route matched the request.

@@ -27,8 +27,10 @@ const (
 )
 
 // WithObserver adds o to the server's observers, which every engine calls
-// once per request, between the access log and panic recovery. Default:
-// no observer, so a server without one does no observer work.
+// once per request, between the access log and panic recovery; observers
+// run on the request path and must be fast (see [engine.Observer]).
+// Default: no observer, so a server without one does no observer work. A
+// nil or typed-nil o fails New with an error wrapping [ErrConfig].
 func WithObserver(o Observer) Option {
 	return func(s *engine.Settings) { s.Observers = append(s.Observers, o) }
 }
