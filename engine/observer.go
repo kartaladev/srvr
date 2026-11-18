@@ -80,9 +80,12 @@ type ResultInfo struct {
 	ResponseBodySize int64
 	// ErrorKind is how the request failed.
 	ErrorKind ErrorKind
-	// Err is the error the request failed with: the returned error, the
-	// recovered panic as reported by prblm, or the error of an unmatched
-	// route; nil when it did not fail.
+	// Err is the error consumer code failed with: the returned error
+	// (after srvr's guard against a cyclic chain) or the recovered panic as
+	// reported by prblm. It is nil when the request did not fail, and when
+	// srvr answered it itself without running a route (no route matched,
+	// or the server rejected it before routing), which has no consumer
+	// error; ErrorKind is still ErrorKindError then.
 	Err error
 	// Committed is true when the error arrived after the response started.
 	Committed bool
@@ -231,7 +234,10 @@ func (r *RequestState) result(info AccessInfo) ResultInfo {
 	}
 
 	if f := r.failure; f != nil {
-		res.Err, res.Committed = f.err, f.committed
+		res.Committed = f.committed
+		if r.Matched() || f.panic != nil { // consumer code ran
+			res.Err = f.err
+		}
 	}
 
 	return res

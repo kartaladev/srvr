@@ -3,7 +3,9 @@ package otelsrvr_test
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -144,4 +146,35 @@ func attr(set attribute.Set, key string) (string, bool) {
 	}
 
 	return v.String(), true
+}
+
+// attributeKeys returns the sorted attribute keys of m's data points.
+func attributeKeys(t *testing.T, m metricdata.Metrics) []string {
+	t.Helper()
+
+	keys := map[string]bool{}
+	add := func(set attribute.Set) {
+		for _, kv := range set.ToSlice() {
+			keys[string(kv.Key)] = true
+		}
+	}
+
+	switch d := m.Data.(type) {
+	case metricdata.Histogram[float64]:
+		for _, p := range d.DataPoints {
+			add(p.Attributes)
+		}
+	case metricdata.Histogram[int64]:
+		for _, p := range d.DataPoints {
+			add(p.Attributes)
+		}
+	case metricdata.Sum[int64]:
+		for _, p := range d.DataPoints {
+			add(p.Attributes)
+		}
+	default:
+		t.Fatalf("%s is %T", m.Name, m.Data)
+	}
+
+	return slices.Sorted(maps.Keys(keys))
 }

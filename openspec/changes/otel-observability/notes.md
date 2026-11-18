@@ -10,6 +10,13 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 4 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** RED for 5.1 failed on every `_OTHER` and `error.type` row; 5.3/5.4 and 5.5 failed to compile (`WithDurationBuckets`, `WithConfig`, `WithActiveRequests` undefined); 5.6 failed with `panic: meter panicked` escaping `New`. 5.2 (cardinality) and 5.7 (schema golden) passed at first run as guards. Decisions: (1) `ResultInfo.Err` is nil when srvr answered the request itself without running a route (unmatched, rejected before routing), so the metric `error.type` is the status code there as the spec requires; `ErrorKind` stays `error`. (2) An error whose `ErrorType()` panics gets its Go type (`TestAttributes_FaultyErrors`; a mutation without the recover lost the data point); an error whose `Unwrap` panics was already replaced by srvr's chain guard, so its `error.type` is `*engine.unresolvable`. (3) Instrument names, units and descriptions come from semconv `httpconv`; the advisory buckets are a copy because httpconv keeps them unexported. (4) A `Record`/`Add` that panics is left to srvr's observer guard (design D11 updated). (5) `WithDurationBuckets()` with no arguments, and an empty non-nil `Config.DurationBuckets`, are invalid; nil means the default. (6) `Config.Tracing`/`WithTracing` exist from this slice because the Configuration sources rows need them; spans arrive in slice 5. The effective configuration is read in tests through `export_test.go` `EffectiveConfig`, not public API.
+- **Evidence:** `otelsrvr/attributes_test.go`, `cardinality_test.go`, `config_test.go`, `optional_test.go`, `providerfaults_test.go`, `schema_test.go`.
+- **Suggested action:** none.
+
 ### Slice 3 notes (2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability

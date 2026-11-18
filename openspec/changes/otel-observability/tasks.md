@@ -60,32 +60,32 @@
 
 ## 5. Slice: bounded attributes, buckets and optional instruments
 
-- [ ] 5.1 Attribute values (otel-metrics / Scenario: Attribute values, normal and hostile rows); verify `cd otelsrvr && go test -race -run TestAttributes` passes
+- [x] 5.1 Attribute values (otel-metrics / Scenario: Attribute values, normal and hostile rows); verify `cd otelsrvr && go test -race -run TestAttributes` passes
   - RED: table; fails on `_OTHER`, the omitted `http.route` for unmatched requests, and `error.type` for wrapped, `ErrorType()`, joined, panic, `http.ErrAbortHandler` and status-only rows
   - GREEN: method allow-list, route omitted when empty, `semconv.ErrorType` for returned errors, `panic`, status code string for failures without an error value
   - REFACTOR: Replace Conditional with lookup table, then /simplify
-- [ ] 5.2 Cardinality under scanning (otel-metrics / Scenario: Cardinality under path scanning); verify `go test -race -run TestCardinality` passes
+- [x] 5.2 Cardinality under scanning (otel-metrics / Scenario: Cardinality under path scanning); verify `go test -race -run TestCardinality` passes
   - RED: 10000 random paths; fails if any raw path leaks or an unmatched request carries `http.route`
   - GREEN: no change expected beyond 5.1; keep test as guard
   - REFACTOR: /simplify
-- [ ] 5.3 Buckets (otel-metrics / Scenario: Bucket boundaries, all rows); verify `go test -race -run TestBuckets` passes
+- [x] 5.3 Buckets (otel-metrics / Scenario: Bucket boundaries, all rows); verify `go test -race -run TestBuckets` passes
   - RED: table including equal, NaN, +Inf and `WithConfig` rows; fails because buckets are not validated
   - GREEN: advisory boundaries default, `WithDurationBuckets` and `Config.DurationBuckets` validation
   - REFACTOR: /simplify
-- [ ] 5.4 Configuration sources (otel-metrics / Scenario: Configuration sources, all rows); verify `go test -race -run TestConfigSources` passes
+- [x] 5.4 Configuration sources (otel-metrics / Scenario: Configuration sources, all rows); verify `go test -race -run TestConfigSources` passes
   - RED: table of option orders; fails because `WithConfig` does not exist or does not reset unset fields to defaults
   - GREEN: `otelsrvr.Config` with `json`/`yaml`/`env` tags, `WithConfig` setting every field, options applied in argument order, validation after all options
   - REFACTOR: /simplify
-- [ ] 5.5 Optional instruments (otel-metrics / Scenario: Optional instruments; Scenario: Active requests under concurrency); verify `go test -race -count=20 -run 'TestOptional|TestActiveRequests'` passes
+- [x] 5.5 Optional instruments (otel-metrics / Scenario: Optional instruments; Scenario: Active requests under concurrency); verify `go test -race -count=20 -run 'TestOptional|TestActiveRequests'` passes
   - RED: tables including panicking handlers; fails because instruments do not exist or counter leaks
   - GREEN: up-down counter incremented at Begin, decremented in end; body size histograms
   - REFACTOR: /simplify
-- [ ] 5.6 Provider faults (otel-metrics / Scenario: Provider faults, all rows); verify `go test -race -run TestProviderFaults` passes
+- [x] 5.6 Provider faults (otel-metrics / Scenario: Provider faults, all rows); verify `go test -race -run TestProviderFaults` passes
   - RED: table with failing meter, a meter whose instrument constructor panics, a histogram whose `Record` panics, a typed-nil provider and shut-down SDK provider; fails on error wrapping or an escaping panic
   - GREEN: wrap creation errors in `ErrConfig`
   - REFACTOR: /simplify
-- [ ] 5.7 Golden test of metric names, units and attribute keys against semconv v1.43; verify `go test -run TestMetricSchemaGolden` passes
-- [ ] 5.8 Verify slice end to end and confirm attribute, config and instrument branches are covered in `go tool cover -func`; in `otelsrvr` and `internal/paritytest`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...` (`go.work` allowed for `internal/paritytest`); run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): bound metric attributes and add optional instruments`
+- [x] 5.7 Golden test of metric names, units and attribute keys against semconv v1.43; verify `go test -run TestMetricSchemaGolden` passes
+- [x] 5.8 Verify slice end to end and confirm attribute, config and instrument branches are covered in `go tool cover -func`; in `otelsrvr` and `internal/paritytest`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...` (`go.work` allowed for `internal/paritytest`); run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): bound metric attributes and add optional instruments`
 
 ## 6. Slice: tracing and trace source
 
