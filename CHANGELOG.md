@@ -46,6 +46,11 @@ once tagged.
   request context is live, or past its deadline, stays `500`; the consumer's prblm mappers, prblm's built-ins and
   `prblm.WithStatus` hints still win. On fiber a disconnect is not detected and stays `500`.
   `srvr.log.schema` stays `1` (a value, not a key).
+- A consumer's `prblm.OnError` passed through `WithProblemOptions` now runs: srvr adds its own error
+  hook with prblm v0.2.0's `prblm.AddErrorHook` instead of `prblm.OnError`, so it no longer
+  replaces the consumer's hook, and no prblm option can replace or remove srvr's. The consumer's
+  `OnError` runs first, then any `prblm.AddErrorHook`, then srvr's hook and `WithErrorHook`; a
+  panicking hook does not stop the others. `WithErrorHook` is unchanged.
 
 - **Breaking (default log content):** with no redactor configured, `exception.message` and
   `exception.stacktrace` now mask URL query values and the values of secret-looking `key=value`,

@@ -128,7 +128,7 @@ func ExampleWithErrorHook() {
 	srv, err := srvr.New(
 		srvr.WithAddr("127.0.0.1:0"),
 		srvr.WithLogOutput(io.Discard),
-		// Not prblm.OnError: srvr owns prblm's single hook.
+		// Runs after srvr has recorded the error for the access record.
 		srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
 			fmt.Println("answered", p.Status, "for:", err)
 		}),

@@ -200,6 +200,14 @@ Decided 2026-11-19 (owner delegated the choice: option (a) of the notes entry "C
 - *fiber:* fasthttp does not detect a disconnect and srvr's fiber request context (derived from the server's base context) is cancelled only by a forced drain, so on fiber a disconnect stays `500` (engine-parity exception row).
 - *Alternatives considered:* a built-in rule upstream in prblm (not chosen: owner wants srvr to own the mapper; prblm may still adopt it later). (b) the buffer treats a cancelled request context as not failed: it would leave a `500` `ERROR` record for a disconnect and split the flush rule from the status. (c) expect a flush: a disconnect is not a server failure.
 
+### D12. srvr adds its error hook with `prblm.AddErrorHook`; `WithErrorHook` stays
+Decided 2026-11-19 (owner request). prblm v0.2.0 keeps `prblm.OnError` as the one replaceable, application-owned hook and adds `prblm.AddErrorHook` for libraries: added hooks are never replaced, each report calls the `OnError` hook first and then the added hooks in order, and a panicking hook no longer stops the later ones. `engine.Core.ProblemOptions` now ends with `prblm.AddErrorHook(c.onError)` instead of `prblm.OnError(c.onError)`; every engine builds its renderers from that list (net/http's `Core.Problems`, ginsrvr's `ginprblm.Middleware`/`Recovery`, fibersrvr's `fiberprblm.ErrorHandler`), so the switch covers all three.
+
+- *Why:* core-server design D4 had srvr own the single `OnError` slot and override a consumer's `prblm.OnError`, documented on `WithProblemOptions`. With `AddErrorHook` the consumer's hook runs and srvr's recording still always runs: `prblm.OnError(nil)` or a later `prblm.OnError` replace only the consumer's slot.
+- *Order and faults:* the consumer's `OnError` runs before srvr's hook, then any consumer `AddErrorHook` passed through `WithProblemOptions` (added before srvr's, since srvr's options come last), then srvr's hook, which records the failure and calls the `WithErrorHook` hook. A panicking consumer hook is contained by prblm and srvr still records; a consumer hook that blocks delays srvr's hook and the response, the same as a blocking `WithErrorHook` (not guarded; consumer code runs on the request goroutine).
+- *`WithErrorHook` stays:* it is public API, typed as `srvr.ErrorHook`, validated (nil fails construction), contained by srvr's own `recover`, and guaranteed to run after srvr recorded the failure, so a hook reading srvr state sees it. It is now one of two equivalent ways to observe answered errors rather than the only one; removing it pre-v1 would break consumers for no gain. Godoc on both options states the relation.
+- *Alternatives considered:* keep `prblm.OnError` and document the limitation (rejected: owner request; prblm now offers the composable hook). Drop `WithErrorHook` (rejected: breaking with no gain).
+
 ## Defaults
 
 | Behaviour | Default | Why | Override |

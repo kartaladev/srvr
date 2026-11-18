@@ -163,6 +163,16 @@
   - REFACTOR: /simplify
 - [ ] 10.5 Verify the slice, run `make check` and `make cover`, gopls diagnostics, run /simplify on the slice and commit `refactor!: rename LogWriteErrors to LogRecordsLost, join and type configuration errors`
 
+## 12. Slice: keep the consumer's prblm OnError hook (owner request 2026-11-19)
+
+Note: owner request 2026-11-19, placed before the release slice so it ships in the first release (design D12).
+
+- [x] 12.1 Spec rows and tests (error-responses / Scenario: Consumer prblm error hooks, all rows; Scenario: Consumer prblm error hook on every engine, all rows): RED - `TestConsumerPrblmHooks` in the core module and `TestParity_ConsumerOnError` in `internal/paritytest`, confirming the consumer `OnError` rows fail because srvr's `prblm.OnError` replaces the consumer's; verify `go test -race -run 'TestConsumerPrblmHooks|TestParity_ConsumerOnError'` fails for that reason
+- [x] 12.2 Implementation: GREEN - `engine.Core.ProblemOptions` adds srvr's hook with `prblm.AddErrorHook` (find references with gopls first: net/http, ginsrvr and fibersrvr all build from it); REFACTOR; drop the obsolete upstream reproduction `TestUpstream_PrblmOnErrorComposes`; verify `go test -race ./...` passes in the core, `ginsrvr`, `fibersrvr` and `internal/paritytest` modules
+- [x] 12.3 Docs: godoc of `WithProblemOptions`, `WithErrorHook`, `ErrorHook` and `Core.ProblemOptions`, `ExampleWithErrorHook`, `openspec/config.yaml` context, `CHANGELOG.md` Unreleased (Changed), `notes.md` entry closing the composable-hook carry-over; verify `go test -run Example` passes and `grep -rn 'OnError' --include='*.go' --include='*.md' . --exclude-dir=archive` shows no stale claim
+- [x] 12.4 Verify the slice: `make check`, gopls diagnostics on the changed files, coverage of the hook path (`go test -coverpkg=./... -coverprofile=c.out ./...`), run /simplify on the slice and re-run `make check`
+- [x] 12.5 Commit `feat(core): keep the consumer's prblm OnError hook with AddErrorHook`
+
 ## 11. Slice: release (carried from skills-compliance)
 
 - [ ] 11.1 Precondition: this change is reviewed and merged to `main`, and `skills-compliance` is archived; verify `git log main --oneline -1` contains the merge and `openspec list` no longer lists `skills-compliance`

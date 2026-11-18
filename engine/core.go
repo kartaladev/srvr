@@ -81,14 +81,16 @@ func (c *Core) Problems() *prblm.Handler { return c.problems }
 // ProblemOptions returns the prblm options every problem renderer of the
 // server must be built from: the consumer's, then srvr's mapper for a
 // request the client closed (after the consumer's mappers, which win), its
-// trace_id enricher and its OnError hook, last so that they win.
+// trace_id enricher (last, so that it wins) and its error hook, added with
+// prblm.AddErrorHook so that no consumer option replaces it (hook order:
+// srvr.WithProblemOptions).
 func (c *Core) ProblemOptions() []prblm.Option {
 	return slices.Concat(
 		c.settings.ProblemOptions,
 		[]prblm.Option{
 			prblm.WithMappers(clientClosedMapper),
 			prblm.WithEnrichers(traceIDEnricher),
-			prblm.OnError(c.onError),
+			prblm.AddErrorHook(c.onError),
 		},
 	)
 }

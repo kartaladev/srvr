@@ -358,9 +358,14 @@ func setLogHandler(s *engine.Settings, field, from string, h slog.Handler) {
 // types) to the problem handler that renders every error response. Later
 // calls add to earlier ones.
 //
-// Do not pass [prblm.OnError]: prblm keeps a single hook and srvr installs
-// its own last, which records the error for the request's log record, so a
-// consumer OnError would never run. Use [WithErrorHook] instead.
+// prblm's error hooks may be passed here too: a [prblm.OnError] or
+// [prblm.AddErrorHook] hook runs for every error the server answers. srvr
+// adds its own hook, which records the error for the request's log record,
+// with prblm.AddErrorHook, so no option passed here replaces or removes it
+// (prblm.OnError(nil) removes only the consumer's OnError hook). prblm calls
+// the OnError hook first, then the added hooks in order, srvr's last; a
+// hook that panics is ignored and the later hooks still run.
+// [WithErrorHook] is the srvr-native alternative.
 //
 // srvr adds one mapper after these: an error matching context.Canceled
 // returned while the request context is cancelled (the client went away)
@@ -375,8 +380,11 @@ func WithProblemOptions(opts ...prblm.Option) Option {
 }
 
 // WithErrorHook sets a hook called for every error the server answers,
-// after srvr's own hook. A hook that panics does not affect the response.
-// fn must not be nil.
+// from srvr's own hook once it has recorded the error, so it runs after a
+// [prblm.OnError] or [prblm.AddErrorHook] hook passed to
+// [WithProblemOptions]. Either way of observing answered errors works; this
+// one is validated at construction and typed as [ErrorHook]. A hook that
+// panics does not affect the response. fn must not be nil.
 func WithErrorHook(fn ErrorHook) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {

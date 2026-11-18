@@ -25,6 +25,7 @@ Carried from `skills-compliance`:
 - **BREAKING** `srvr.LogWriteErrors()` becomes `srvr.LogRecordsLost()` (no alias; pre-v1 and unreleased).
 - Construction names every invalid field in one joined error, the log fields (`LogConfig.Level`, `Format`) included; `otelsrvr` and `otelsetup` return a typed `*ConfigError` naming the field, still matching their `ErrConfig`.
 - Fiber is tested, and fixed if needed, for a passed listener whose `Close` does not unblock `Accept`, as net/http and gin already are.
+- **A consumer's `prblm.OnError` runs** (owner request 2026-11-19): srvr adds its own error hook with prblm v0.2.0's `prblm.AddErrorHook` instead of the single-slot `prblm.OnError`, so a consumer's `prblm.OnError` passed through `WithProblemOptions` is no longer silently replaced; `WithErrorHook` stays (design D12).
 - **Release:** the change ends with a release prepared by the plan (changelog, `make check`, release guard dry run); tags are created and pushed only after the owner confirms the version.
 
 ## Defaults and Customization
@@ -46,7 +47,7 @@ Carried from `skills-compliance`:
 <!-- The debug buffer's summary attributes extend the http.request.failed record defined by triage-error-records without changing any of its requirements; they are specified in triage-debug-buffer so the feature stays self-contained. -->
 - `structured-logging`: the write-failure counter is `srvr.LogRecordsLost()`; unmatched failed records may be rate limited by an opt-in; the user agent may be omitted.
 - `engine-support`: consumer-fault rows name `srvr.LogRecordsLost()`.
-- `error-responses`: an error matching `context.Canceled` returned after the client went away (request context cancelled) is answered `499` instead of `500`, by srvr's own prblm mapper (design D11).
+- `error-responses`: an error matching `context.Canceled` returned after the client went away (request context cancelled) is answered `499` instead of `500`, by srvr's own prblm mapper (design D11); a consumer's `prblm.OnError` and `prblm.AddErrorHook` passed through `WithProblemOptions` run alongside srvr's hook, which prblm can no longer replace (design D12).
 - `engine-parity`: a new documented difference: on fiber that case stays `500`, because fasthttp does not detect a disconnect.
 - `server-lifecycle`: one joined error names every invalid field, log fields included; a listener whose `Close` does not unblock `Accept` never blocks the stop on any engine.
 - `otel-metrics`: configuration errors are a typed `*ConfigError`.
