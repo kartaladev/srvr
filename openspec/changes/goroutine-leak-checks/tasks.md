@@ -2,11 +2,11 @@
 
 ## 1. Consolidation: refresh plan against merged changes
 
-- [ ] 1.1 Sync with the main branch (`git fetch` and rebase or merge the main branch into the working branch) and list every change archived or merged since this change was planned (`openspec list --json`, `openspec/changes/archive/`, `git log` on the main branch); verify by naming them in the task's completion note
-- [ ] 1.2 Read every `notes.md` carry-over from earlier changes (active and archived) and decide for each open entry addressed to this change or to `unassigned`: adopt it into this change's artifacts, defer it (re-address it in this change's own `notes.md`), or close it with a reason; verify no open entry is left undecided
-- [ ] 1.3 Compare this change's proposal, specs, design and tasks with the current main specs (`openspec list --specs`, `openspec show <id> --type spec`) and the merged code (test harnesses, `engine` lifecycle and hooks, `otelsetup` shutdown, fasthttp version); fix every stale assumption in this change's artifacts (use `/opsx:update`); verify with `openspec validate goroutine-leak-checks --strict` passing
-- [ ] 1.4 Record the outcome of 1.1-1.3 (what was refreshed, what was adopted from carry-overs) at the top of this change's `notes.md`; verify the file exists and lists the refreshed items or states that none were needed
-- [ ] 1.5 Commit the consolidation as one conventional commit, `docs(openspec): consolidate goroutine-leak-checks against main`, containing only planning files (`openspec/`); skip the commit when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.1 Sync with the main branch (`git fetch` and rebase or merge the main branch into the working branch) and list every change archived or merged since this change was planned (`openspec list --json`, `openspec/changes/archive/`, `git log` on the main branch); verify by naming them in the task's completion note
+- [x] 1.2 Read every `notes.md` carry-over from earlier changes (active and archived) and decide for each open entry addressed to this change or to `unassigned`: adopt it into this change's artifacts, defer it (re-address it in this change's own `notes.md`), or close it with a reason; verify no open entry is left undecided
+- [x] 1.3 Compare this change's proposal, specs, design and tasks with the current main specs (`openspec list --specs`, `openspec show <id> --type spec`) and the merged code (test harnesses, `engine` lifecycle and hooks, `otelsetup` shutdown, fasthttp version); fix every stale assumption in this change's artifacts (use `/opsx:update`); verify with `openspec validate goroutine-leak-checks --strict` passing
+- [x] 1.4 Record the outcome of 1.1-1.3 (what was refreshed, what was adopted from carry-overs) at the top of this change's `notes.md`; verify the file exists and lists the refreshed items or states that none were needed
+- [x] 1.5 Commit the consolidation as one conventional commit, `docs(openspec): consolidate goroutine-leak-checks against main`, containing only planning files (`openspec/`); skip the commit when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: core module tests fail on leaked goroutines
 
