@@ -656,7 +656,7 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 	ctx = s.core.BeginRequest(ctx, traceparent(c))
 	state, _ := engine.StateFrom(ctx) // never nil: BeginRequest made it
 	if s.core.Observed() {            // requestInfo copies, which a server without observers skips
-		ctx = s.core.BeginObservers(ctx, requestInfo(c))
+		ctx = s.core.BeginObservers(ctx, s.requestInfo(c))
 	}
 	c.SetContext(ctx)
 
@@ -714,12 +714,25 @@ func (s *Server) accessInfo(c fiber.Ctx, d time.Duration) engine.AccessInfo {
 }
 
 // requestInfo copies what observers learn before routing out of c.
-func requestInfo(c fiber.Ctx) engine.RequestInfo {
-	return engine.RequestInfo{
-		Method: c.Method(), // a stable string in fiber v3, never a pooled buffer
-		Scheme: strings.Clone(c.Scheme()),
-		Host:   string(c.Request().Host()),
+func (s *Server) requestInfo(c fiber.Ctx) engine.RequestInfo {
+	// c.Method is a stable string in fiber v3, never a pooled buffer;
+	// NewRequestInfo copies the path when it keeps it.
+	return s.core.NewRequestInfo(c.Method(), strings.Clone(c.Scheme()), string(c.Request().Host()), c.Path(), fiberHeader{&c.Request().Header})
+}
+
+// fiberHeader reads fasthttp request headers for observers, during Begin
+// only; values are copied out of fasthttp's buffers.
+type fiberHeader struct{ h *fasthttp.RequestHeader }
+
+func (f fiberHeader) Get(key string) string { return string(f.h.Peek(key)) }
+
+func (f fiberHeader) Keys() []string {
+	var keys []string
+	for k := range f.h.All() {
+		keys = append(keys, string(k))
 	}
+
+	return keys
 }
 
 // renderError is the app's error handler: fiberprblm's, given the error

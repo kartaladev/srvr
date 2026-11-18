@@ -89,36 +89,36 @@
 
 ## 6. Slice: tracing and trace source
 
-- [ ] 6.1 Trace source in core (request-observer / Scenario: Trace source, all rows); verify `go test -race -run TestTraceSource` passes
+- [x] 6.1 Trace source in core (request-observer / Scenario: Trace source, all rows); verify `go test -race -run TestTraceSource` passes
   - RED: table, plus a source whose `TraceFromContext` panics (ignored, core's trace kept, one `srvr.observer.fault` `trace_source_panic`); fails because core ignores observer-supplied ids
   - GREEN: `TraceSource` interface consulted by logging, problem enrichment and `TraceFromContext`; ADD a trace-source field to `engine.RequestState` (gin-and-fiber-engines defines the struct with route, matched, status, failure and trace context only), filled by the observer stage so the outer access record sees the source's ids
   - REFACTOR: /simplify
-- [ ] 6.2 Tracing switch (otel-tracing / Scenario: Tracing switch, all rows); verify `cd otelsrvr && go test -race -run TestTracingSwitch` passes
+- [x] 6.2 Tracing switch (otel-tracing / Scenario: Tracing switch, all rows); verify `cd otelsrvr && go test -race -run TestTracingSwitch` passes
   - RED: table with in-memory exporter (test-only SDK); fails because spans are never started
   - GREEN: `WithTracing`, `Config.Tracing`, `WithTracerProvider` validation
   - REFACTOR: /simplify
-- [ ] 6.3 Span shape per engine (otel-tracing / Scenario: Span shape per engine, all rows); verify `go test -race -run TestSpanShape` passes in otelsrvr (net/http rows) and `internal/paritytest` (gin and fiber rows)
+- [x] 6.3 Span shape per engine (otel-tracing / Scenario: Span shape per engine, all rows); verify `go test -race -run TestSpanShape` passes in otelsrvr (net/http rows) and `internal/paritytest` (gin and fiber rows)
   - RED: table including the `http.ErrAbortHandler` row (status `Error`, exception event, no status code attribute); fails on naming, status and exception event
   - GREEN: span name from route, status rules, exception event for panics
   - REFACTOR: /simplify
-- [ ] 6.4 Span path attributes (otel-tracing / Scenario: Span path attributes, all rows); verify `go test -race -run TestSpanPathAttributes` passes
+- [x] 6.4 Span path attributes (otel-tracing / Scenario: Span path attributes, all rows); verify `go test -race -run TestSpanPathAttributes` passes
   - RED: table over `IncludePath` on and off, `_OTHER` method and an oversized path; fails because `url.path` is never set or always set
   - GREEN: read core's `IncludePath` through the request info; add `url.path` and `http.request.method_original` only when on, truncated by core's attribute limit
   - REFACTOR: /simplify
-- [ ] 6.5 Parent extraction (otel-tracing / Scenario: Parent extraction, all rows); verify `go test -race -run TestPropagation` passes (global propagator restored after each case)
+- [x] 6.5 Parent extraction (otel-tracing / Scenario: Parent extraction, all rows); verify `go test -race -run TestPropagation` passes (global propagator restored after each case)
   - RED: table including the no-op global, Baggage-only global and both ignored-incoming-context rows (option and `WithTraceConfig`); fails because no extraction happens, the no-op global drops `traceparent`, or ignored context is still extracted
   - GREEN: per-request propagator choice (`WithPropagator`, else global, else `propagation.TraceContext{}` when the global declares no fields); skip extraction when core ignores incoming trace context
   - REFACTOR: /simplify
-- [ ] 6.6 Correlation follows the span (otel-tracing / Scenario: Correlation equality; Scenario: Unsampled spans); verify `go test -race -run TestSpanCorrelation` passes
+- [x] 6.6 Correlation follows the span (otel-tracing / Scenario: Correlation equality; Scenario: Unsampled spans); verify `go test -race -run TestSpanCorrelation` passes
   - RED: tables; fails because logs keep srvr's generated ids
   - GREEN: otelsrvr implements `TraceSource` when tracing is on
   - REFACTOR: /simplify
-- [ ] 6.7 Spans always end (otel-tracing / Scenario: Span ending, all rows); verify `go test -race -run TestSpanEnding` passes
+- [x] 6.7 Spans always end (otel-tracing / Scenario: Span ending, all rows); verify `go test -race -run TestSpanEnding` passes
   - RED: table including abort, client disconnect and forced shutdown; fails if a span is left open or ended twice
   - GREEN: end in the end function with once-guard; core guarantees end function on abort paths
   - REFACTOR: /simplify
-- [ ] 6.8 Godoc and an `Example` enabling tracing with a provider, documenting the propagator fallback and that log and metric `error.type` differ by design; verify `go test -run Example` passes
-- [ ] 6.9 Verify slice end to end (one failing request -> span, log record and problem share ids) and confirm span, propagator and trace-source branches are covered in `go tool cover -func`; in the core module, `otelsrvr` and `internal/paritytest`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...` (`go.work` allowed for `internal/paritytest`); run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): add optional server spans and span-based correlation`
+- [x] 6.8 Godoc and an `Example` enabling tracing with a provider, documenting the propagator fallback and that log and metric `error.type` differ by design; verify `go test -run Example` passes
+- [x] 6.9 Verify slice end to end (one failing request -> span, log record and problem share ids) and confirm span, propagator and trace-source branches are covered in `go tool cover -func`; in the core module, `otelsrvr` and `internal/paritytest`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...` (`go.work` allowed for `internal/paritytest`); run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): add optional server spans and span-based correlation`
 
 ## 7. Slice: otelsetup with Prometheus
 

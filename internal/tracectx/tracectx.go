@@ -84,7 +84,7 @@ func parse(h string) (Trace, bool) {
 	}
 
 	traceID, parentID, flags := h[3:35], h[36:52], h[53:55]
-	if !isHex(traceID) || !isHex(parentID) || !isHex(flags) || isZero(traceID) || isZero(parentID) {
+	if !Valid(traceID, parentID) || !isHex(flags) {
 		return Trace{}, false
 	}
 
@@ -106,3 +106,10 @@ func isHex(s string) bool {
 }
 
 func isZero(s string) bool { return strings.Trim(s, "0") == "" }
+
+// Valid reports whether traceID and spanID are well-formed W3C ids: 32 and
+// 16 lowercase hex characters, neither all zeros.
+func Valid(traceID, spanID string) bool {
+	return len(traceID) == traceIDLen && len(spanID) == spanIDLen &&
+		isHex(traceID) && isHex(spanID) && !isZero(traceID) && !isZero(spanID)
+}

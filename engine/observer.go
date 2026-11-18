@@ -3,9 +3,14 @@ package engine
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/kartaladev/srvr/internal/tracectx"
 )
 
 // Observer is told about every request a server handles, on every engine:
@@ -35,6 +40,20 @@ type Observer interface {
 	Begin(ctx context.Context, info RequestInfo) (context.Context, func(ResultInfo))
 }
 
+// TraceSource is an optional extension of an [Observer]: an observer that
+// implements it supplies the request's trace context, for example from the
+// span its Begin started. srvr asks it right after its Begin, with the
+// context Begin returned; a valid trace (32 and 16 lowercase hex
+// characters, neither all zeros) replaces srvr's own for
+// TraceFromContext, request loggers, the problem trace_id and the access
+// record, and the last observer that supplies one wins. An invalid trace
+// or false keeps srvr's; a panic is logged once as srvr.observer.fault
+// with kind trace_source_panic and keeps srvr's. Consumers use it as
+// srvr.TraceSource.
+type TraceSource interface {
+	TraceFromContext(ctx context.Context) (Trace, bool)
+}
+
 // RequestInfo is what an observer learns about a request before routing.
 // Every value is a copy the observer may keep.
 type RequestInfo struct {
@@ -44,6 +63,51 @@ type RequestInfo struct {
 	Scheme string
 	// Host is the request's host, as the client sent it.
 	Host string
+	// Path is the request path, set only when the server's access log
+	// includes it (AccessLogConfig.IncludePath), so observers follow the
+	// same privacy switch; empty otherwise. Like Method, it is cut to the
+	// log's MaxAttrBytes with srvr's truncation marker.
+	Path string
+	// Header reads the request headers, for example for a propagator. It
+	// is valid only during Begin; Get returns a copy. Never nil.
+	Header HeaderReader
+	// IgnoreIncomingTrace is true when the server ignores incoming trace
+	// context (TraceConfig.IgnoreIncoming): an observer that propagates
+	// context must not extract it either.
+	IgnoreIncomingTrace bool
+}
+
+// HeaderReader reads request headers; keys are case-insensitive.
+type HeaderReader interface {
+	// Get returns the first value of key, or "".
+	Get(key string) string
+	// Keys returns the header names present.
+	Keys() []string
+}
+
+// httpHeader reads an http.Header.
+type httpHeader http.Header
+
+func (h httpHeader) Get(key string) string { return http.Header(h).Get(key) }
+
+func (h httpHeader) Keys() []string { return slices.Collect(maps.Keys(h)) }
+
+// NewRequestInfo returns the request information an engine passes to
+// [Core.BeginObservers]: method and path cut to the log's attribute limit,
+// the path only when the access log includes it, and whether incoming
+// trace context is ignored. The caller copies every string out of buffers
+// it reuses; header may read them, as it is used only during Begin.
+func (c *Core) NewRequestInfo(method, scheme, host, path string, header HeaderReader) RequestInfo {
+	limit := c.settings.Log.maxAttrBytes()
+	info := RequestInfo{Scheme: scheme, Host: host, Header: header, IgnoreIncomingTrace: c.settings.Trace.IgnoreIncoming}
+	info.Method, _ = cutString(method, limit)
+
+	if c.settings.Access.IncludePath {
+		cut, _ := cutString(path, limit)
+		info.Path = strings.Clone(cut) // the engine may pass a reused buffer
+	}
+
+	return info
 }
 
 // ErrorKind is how a request failed: [ErrorKindNone], [ErrorKindError] or
@@ -134,6 +198,8 @@ type endFunc struct {
 type guardedObserver struct {
 	Observer
 
+	// source is the observer as a TraceSource, or nil.
+	source   TraceSource
 	reported [numFaultKinds]atomic.Bool
 }
 
@@ -141,7 +207,8 @@ type guardedObserver struct {
 func guardObservers(observers []Observer) []*guardedObserver {
 	guarded := make([]*guardedObserver, len(observers))
 	for i, o := range observers {
-		guarded[i] = &guardedObserver{Observer: o}
+		src, _ := o.(TraceSource)
+		guarded[i] = &guardedObserver{Observer: o, source: src}
 	}
 
 	return guarded
@@ -164,7 +231,25 @@ func (c *Core) begin(ctx context.Context, req *RequestState, o *guardedObserver,
 		next = ctx
 	}
 
+	if o.source != nil {
+		c.sourceTrace(next, req, o)
+	}
+
 	return next, end
+}
+
+// sourceTrace makes the trace o's source supplies for ctx the request's, when it
+// is valid; a panic in src is reported and keeps the request's trace.
+func (c *Core) sourceTrace(ctx context.Context, req *RequestState, o *guardedObserver) {
+	defer func() {
+		if v := recover(); v != nil {
+			c.observerFault(ctx, o, faultTraceSourcePanic, v)
+		}
+	}()
+
+	if tr, ok := o.source.TraceFromContext(ctx); ok && tracectx.Valid(tr.TraceID, tr.SpanID) {
+		req.trace = tr
+	}
 }
 
 // endObservers calls the request's end functions in reverse Begin order,
@@ -192,12 +277,13 @@ type faultKind int
 const (
 	faultBeginPanic faultKind = iota
 	faultEndPanic
+	faultTraceSourcePanic
 	numFaultKinds
 )
 
 // String returns the srvr.observer.fault.kind value.
 func (k faultKind) String() string {
-	return [numFaultKinds]string{faultBeginPanic: "begin_panic", faultEndPanic: "end_panic"}[k]
+	return [numFaultKinds]string{faultBeginPanic: "begin_panic", faultEndPanic: "end_panic", faultTraceSourcePanic: "trace_source_panic"}[k]
 }
 
 // observerFault writes srvr.observer.fault for o the first time it
@@ -215,13 +301,13 @@ func (c *Core) observerFault(ctx context.Context, o *guardedObserver, kind fault
 }
 
 // httpRequestInfo returns the request information of a net/http request.
-func httpRequestInfo(r *http.Request) RequestInfo {
+func (c *Core) httpRequestInfo(r *http.Request) RequestInfo {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
 	}
 
-	return RequestInfo{Method: r.Method, Scheme: scheme, Host: r.Host}
+	return c.NewRequestInfo(r.Method, scheme, r.Host, r.URL.Path, httpHeader(r.Header))
 }
 
 // result returns the result information of the finished request info

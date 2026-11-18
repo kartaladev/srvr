@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -271,5 +272,58 @@ func TestObserver_Abort(t *testing.T) {
 	_, results, _ := obs.seen()
 	if got := results[0]; !got.Aborted || got.ErrorKind != srvr.ErrorKindPanic || got.Status != 0 || got.Route != "/users/{id}" {
 		t.Errorf("result = %+v, want aborted, kind panic, status 0, route /users/{id}", got)
+	}
+}
+
+// TestObserver_RequestInfo pins what Begin learns: the header reader, the
+// path only with IncludePath, and the ignore-incoming flag.
+func TestObserver_RequestInfo(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		opts   []srvr.Option
+		path   string
+		ignore bool
+	}{
+		{"defaults", nil, "", false},
+		{"include path", []srvr.Option{srvr.WithAccessLogIncludePath()}, "/ping", false},
+		{"ignore incoming", []srvr.Option{srvr.WithIgnoreIncomingTraceContext()}, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				mu   sync.Mutex
+				got  srvr.RequestInfo
+				hdr  string
+				keys []string
+			)
+
+			obs := observerFunc(func(ctx context.Context, info srvr.RequestInfo) (context.Context, func(srvr.ResultInfo)) {
+				mu.Lock()
+				defer mu.Unlock()
+
+				got, hdr, keys = info, info.Header.Get("X-Probe"), info.Header.Keys()
+
+				return ctx, nil
+			})
+
+			base, _ := loggedServer(t, okRoute("/ping"), append(tt.opts, srvr.WithObserver(obs))...)
+			do(t, http.MethodGet, base+"/ping", nil, map[string]string{"X-Probe": "yes"})
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			if got.Path != tt.path || got.IgnoreIncomingTrace != tt.ignore || got.Method != http.MethodGet || got.Scheme != "http" {
+				t.Errorf("RequestInfo = %+v", got)
+			}
+
+			if hdr != "yes" || !slices.Contains(keys, "X-Probe") {
+				t.Errorf("header X-Probe = %q, keys %v", hdr, keys)
+			}
+		})
 	}
 }

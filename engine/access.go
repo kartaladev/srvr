@@ -95,8 +95,10 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 
 		// Observers begin inside the access stage and end in its record,
 		// so they see the final status, including an abort.
-		if octx := c.BeginObservers(ctx, httpRequestInfo(r)); octx != ctx {
-			r = r.WithContext(octx)
+		if c.Observed() {
+			if octx := c.BeginObservers(ctx, c.httpRequestInfo(r)); octx != ctx {
+				r = r.WithContext(octx)
+			}
 		}
 
 		defer func() {

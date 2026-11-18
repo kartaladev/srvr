@@ -86,7 +86,7 @@ blocks stalls the request or the `Start`/`Shutdown` call writing the record.
 
 | Event | Level | Keys |
 |-------|-------|------|
-| `srvr.observer.fault` | ERROR, once per observer and fault kind, when a `WithObserver` observer panics; the request is answered as if the observer were absent | `srvr.observer.fault.kind` (`begin_panic`: `Begin` panicked, or the context it returned panicked when read; `end_panic`: the end function panicked, also with `http.ErrAbortHandler`, which is never re-raised), `srvr.observer.type` (the observer's Go type), `exception.message` (the panic value's text, redacted and limited like lifecycle text) |
+| `srvr.observer.fault` | ERROR, once per observer and fault kind, when a `WithObserver` observer panics; the request is answered as if the observer were absent | `srvr.observer.fault.kind` (`begin_panic`: `Begin` panicked, or the context it returned panicked when read; `end_panic`: the end function panicked, also with `http.ErrAbortHandler`, which is never re-raised; `trace_source_panic`: its `TraceFromContext` panicked, and srvr kept its own trace), `srvr.observer.type` (the observer's Go type), `exception.message` (the panic value's text, redacted and limited like lifecycle text) |
 
 The record is written with the request's context, so it carries `trace_id` and `span_id` of the first
 request that hit the fault, and the service keys. Observers run synchronously on the request path

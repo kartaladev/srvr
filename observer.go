@@ -14,6 +14,12 @@ type (
 	ResultInfo = engine.ResultInfo
 	// ErrorKind is how a request failed; see [engine.ErrorKind].
 	ErrorKind = engine.ErrorKind
+	// TraceSource is an optional extension of an Observer that supplies
+	// the request's trace context; see [engine.TraceSource].
+	TraceSource = engine.TraceSource
+	// HeaderReader reads request headers during an observer's Begin; see
+	// [engine.HeaderReader].
+	HeaderReader = engine.HeaderReader
 )
 
 const (

@@ -39,7 +39,10 @@ type stateKey struct{}
 // read by the access stage. Later stages read it with [StateFrom]; a
 // handler's own goroutines must not write it.
 type RequestState struct {
-	core  *Core
+	core *Core
+	// trace is the request's trace: srvr's own, or the one an observer's
+	// TraceSource supplied, which replaces it. Request loggers are bound to
+	// it by pointer, so they follow the replacement.
 	trace Trace
 	// rec records the response, set by the net/http access stage.
 	rec *responseRecorder

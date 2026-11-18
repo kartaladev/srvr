@@ -10,6 +10,20 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 5 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** RED: 6.1 failed to compile (`srvr.TraceSource` undefined); 6.2 (`WithTracerProvider` undefined); 6.3 failed on every row (name `HTTP`, no status); 6.4 on the include rows (`url.path` absent); 6.5 failed to compile (`WithPropagator`); 6.6 on every row (logs kept srvr's ids); a panicking `Tracer` escaped `New` (`panic: Tracer panicked`). 6.7 (spans always end) and the per-engine span and propagation parity rows passed at first run: srvr's seam already runs every end function once on every path, so no once-guard was added. Decisions within the plan: (1) the sourced trace replaces `RequestState`'s trace in place (loggers are bound to it by pointer), so no separate ownership field; the engine-support MODIFIED delta stays true. (2) `RequestInfo` gained `Path` (only with `AccessLogConfig.IncludePath`, cut to `MaxAttrBytes`, copied), `Header` (a `HeaderReader`, valid during `Begin`) and `IgnoreIncomingTrace`; method is cut too. Its exact shape is new public API in `engine` aliased in srvr (`srvr.HeaderReader`), within design D10. (3) Span exception events carry only `exception.type` (the panic value's Go type, `panic` for an abort) and the Error status has no description: no error text leaves srvr unredacted on spans, the safe default; adding `exception.message` would loosen privacy and needs an owner decision. (4) `WithPropagator`'s propagator is used as configured; only the global one gets the W3C fallback (design D8), read per request. (5) A non-recording span is ended without name, attributes or events. (6) `srvr.Trace.ParentSpanID` is empty when the trace comes from otelsrvr's span (no spec row asks for it). (7) /simplify altitude suggestions not adopted: hiding trace headers instead of `IgnoreIncomingTrace`, and a privacy setting separate from `IncludePath` (both contradict design D8/D10 owner decisions).
+- **Evidence:** `tracesource_test.go`, `observer_test.go` `TestObserver_RequestInfo`; otelsrvr `tracing_test.go`, `spanshape_test.go`, `spanpath_test.go`, `propagation_test.go`, `correlation_test.go`, `spanending_test.go`; `internal/paritytest/spanshape_test.go`.
+- **Suggested action:** none.
+
+### One unreproduced failure of the core test suite (2026-11-18)
+- **Status:** open (unconfirmed)
+- **Target:** unassigned
+- **Context:** During slice 5, one `GOWORK=off go test -race -count=1 ./...` run of the core module ended in `FAIL` for package `github.com/kartaladev/srvr`; the failing test's output was cut off by `tail`. Six further full runs (three `./...`, three `.`) passed. No test was identified, so it is a hypothesis, not a defect.
+- **Evidence:** unverified: output lost; later runs now keep full output in a file.
+- **Suggested action:** if it recurs, keep the full output and reproduce the named test with a targeted high `-count` run.
+
 ### Slice 4 notes (2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability

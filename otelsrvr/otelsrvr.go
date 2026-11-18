@@ -9,13 +9,17 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/semconv/v1.43.0/httpconv"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ScopeName is the instrumentation scope of everything otelsrvr records.
@@ -59,7 +63,12 @@ var semconvBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 
 type settings struct {
 	Config
 
-	meterProvider metric.MeterProvider
+	meterProvider  metric.MeterProvider
+	tracerProvider trace.TracerProvider
+	// propagator is the one WithPropagator set, or nil for the global one.
+	propagator propagation.TextMapPropagator
+	// propagatorErr is why WithPropagator's propagator is unusable.
+	propagatorErr error
 }
 
 // WithConfig sets every field of [Config] from c, a zero field meaning its
@@ -102,11 +111,37 @@ func (s *settings) validate() error {
 		errs = append(errs, fmt.Errorf("%w: MeterProvider %T is nil", ErrConfig, s.meterProvider))
 	}
 
+	if engine.IsNil(s.tracerProvider) {
+		errs = append(errs, fmt.Errorf("%w: TracerProvider %T is nil", ErrConfig, s.tracerProvider))
+	}
+
+	if s.propagatorErr != nil {
+		errs = append(errs, s.propagatorErr)
+	}
+
 	if err := validateBuckets(s.DurationBuckets); err != nil {
 		errs = append(errs, err)
 	}
 
 	return errors.Join(errs...)
+}
+
+// validatePropagator rejects a nil or typed-nil propagator and one whose
+// Fields panics.
+func validatePropagator(p propagation.TextMapPropagator) (err error) {
+	if engine.IsNil(p) {
+		return fmt.Errorf("%w: Propagator %T is nil", ErrConfig, p)
+	}
+
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("%w: Propagator %T panicked: %s", ErrConfig, p, engine.ValueText(v))
+		}
+	}()
+
+	_ = p.Fields()
+
+	return nil
 }
 
 // validateBuckets checks that b, when set, is non-empty, strictly
@@ -132,6 +167,23 @@ func validateBuckets(b []float64) error {
 	return nil
 }
 
+// WithTracerProvider starts spans through tp instead of the global
+// TracerProvider (the default, a no-op until the application installs
+// one). A nil or typed-nil tp fails [New].
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(s *settings) { s.tracerProvider = tp }
+}
+
+// WithPropagator extracts the remote parent of server spans with p instead
+// of the global propagator. Without it otelsrvr reads the global one per
+// request and, when that declares no fields (the no-op default), uses W3C
+// TraceContext, so enabling tracing never drops an incoming traceparent
+// that srvr honours. A nil or typed-nil p, or one whose Fields panics,
+// fails [New].
+func WithPropagator(p propagation.TextMapPropagator) Option {
+	return func(s *settings) { s.propagator, s.propagatorErr = p, validatePropagator(p) }
+}
+
 // WithMeterProvider records through mp instead of the global
 // MeterProvider (the default, a no-op until the application installs
 // one). A nil or typed-nil mp fails [New].
@@ -148,15 +200,40 @@ type Observer struct {
 	duration                  metric.Float64Histogram
 	active                    metric.Int64UpDownCounter
 	requestSize, responseSize metric.Int64Histogram
+	// tracer starts server spans; nil when tracing is off.
+	tracer trace.Tracer
+	// propagator is WithPropagator's, or nil to read the global one per
+	// request.
+	propagator propagation.TextMapPropagator
 }
 
-var _ srvr.Observer = (*Observer)(nil)
+var (
+	_ srvr.Observer    = (*Observer)(nil)
+	_ srvr.TraceSource = (*Observer)(nil)
+)
+
+// TraceFromContext implements srvr.TraceSource: with tracing on, srvr's
+// trace_id and span_id in logs, problems and srvr.TraceFromContext are the
+// server span's, including a non-recording (unsampled) one. With tracing
+// off it reports false and srvr keeps its own trace context.
+func (o *Observer) TraceFromContext(ctx context.Context) (srvr.Trace, bool) {
+	if o.tracer == nil {
+		return srvr.Trace{}, false
+	}
+
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return srvr.Trace{}, false
+	}
+
+	return srvr.Trace{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String(), Sampled: sc.IsSampled()}, true
+}
 
 // New returns an observer configured by opts. Invalid configuration, or a
 // meter that fails to create an instrument, returns an error wrapping
 // [ErrConfig].
 func New(opts ...Option) (*Observer, error) {
-	s := settings{meterProvider: otel.GetMeterProvider()}
+	s := settings{meterProvider: otel.GetMeterProvider(), tracerProvider: otel.GetTracerProvider()}
 	for _, opt := range opts {
 		opt(&s)
 	}
@@ -169,7 +246,32 @@ func New(opts ...Option) (*Observer, error) {
 		s.DurationBuckets = slices.Clone(semconvBuckets)
 	}
 
-	return newObserver(s.meterProvider, s.Config)
+	o, err := newObserver(s.meterProvider, s.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.Tracing {
+		if o.tracer, err = tracer(s.tracerProvider); err != nil {
+			return nil, err
+		}
+
+		o.propagator = s.propagator
+	}
+
+	return o, nil
+}
+
+// tracer returns tp's tracer for otelsrvr; a provider that panics fails
+// it.
+func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("%w: TracerProvider %T panicked: %s", ErrConfig, tp, engine.ValueText(v))
+		}
+	}()
+
+	return tp.Tracer(ScopeName), nil
 }
 
 // newObserver creates the instruments cfg enables on mp's meter. A
@@ -237,12 +339,27 @@ func (o *Observer) Begin(ctx context.Context, info srvr.RequestInfo) (context.Co
 		o.active.Add(ctx, 1, active)
 	}
 
+	var span trace.Span
+	if o.tracer != nil {
+		if !info.IgnoreIncomingTrace {
+			ctx = o.extract(ctx, info.Header)
+		}
+
+		ctx, span = o.tracer.Start(ctx, "HTTP", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(pathAttributes(method, info)...))
+	}
+
 	return ctx, func(res srvr.ResultInfo) {
+		kvs := attributes(method, scheme, res)
+
+		if span != nil {
+			endSpan(span, method, res, kvs)
+		}
+
 		if o.active != nil {
 			o.active.Add(ctx, -1, active)
 		}
 
-		attrs := metric.WithAttributes(attributes(method, scheme, res)...)
+		attrs := metric.WithAttributes(kvs...)
 		o.duration.Record(ctx, res.Duration.Seconds(), attrs)
 
 		if o.requestSize != nil {
@@ -250,6 +367,102 @@ func (o *Observer) Begin(ctx context.Context, info srvr.RequestInfo) (context.Co
 			o.responseSize.Record(ctx, res.ResponseBodySize, attrs)
 		}
 	}
+}
+
+// extract returns ctx with the remote parent the propagator finds in
+// header; a propagator that panics leaves ctx unchanged, so the span is a
+// new root.
+func (o *Observer) extract(ctx context.Context, header srvr.HeaderReader) (out context.Context) {
+	defer func() {
+		if recover() != nil {
+			out = ctx
+		}
+	}()
+
+	p := o.propagator
+	if p == nil {
+		// The global propagator is read per request, so a later
+		// otel.SetTextMapPropagator applies; the no-op default falls back
+		// to W3C TraceContext.
+		if p = otel.GetTextMapPropagator(); len(p.Fields()) == 0 {
+			p = propagation.TraceContext{}
+		}
+	}
+
+	return p.Extract(ctx, headerCarrier{header})
+}
+
+// headerCarrier adapts srvr's header reader to a read-only carrier.
+type headerCarrier struct{ srvr.HeaderReader }
+
+// Set does nothing: the request headers are read-only.
+func (headerCarrier) Set(string, string) {}
+
+// endSpan names span after the route, sets its attributes and status and
+// ends it. The status is Error, without a description, for a 5xx and a
+// recovered panic (semantic conventions leave 4xx Unset on server spans);
+// a panic adds an exception event with the panic value's Go type and no
+// message, so no error text leaves srvr unredacted.
+func endSpan(span trace.Span, method attribute.KeyValue, res srvr.ResultInfo, kvs []attribute.KeyValue) {
+	if !span.IsRecording() {
+		span.End()
+
+		return
+	}
+
+	span.SetName(spanName(method, res.Route))
+	span.SetAttributes(kvs...)
+
+	panicked := res.ErrorKind == srvr.ErrorKindPanic
+	if panicked {
+		span.AddEvent(semconv.ExceptionEventName, trace.WithAttributes(semconv.ExceptionType(panicType(res))))
+	}
+
+	if panicked || res.Status >= http.StatusInternalServerError {
+		span.SetStatus(codes.Error, "")
+	}
+
+	span.End()
+}
+
+// pathAttributes returns url.path and, for a method semantic conventions do
+// not name, http.request.method_original: span-only attributes, present
+// only when srvr passes the path (core AccessLogConfig.IncludePath).
+func pathAttributes(method attribute.KeyValue, info srvr.RequestInfo) []attribute.KeyValue {
+	if info.Path == "" {
+		return nil
+	}
+
+	attrs := []attribute.KeyValue{semconv.URLPath(info.Path)}
+	if method == semconv.HTTPRequestMethodOther {
+		attrs = append(attrs, semconv.HTTPRequestMethodOriginal(info.Method))
+	}
+
+	return attrs
+}
+
+// spanName returns "{method} {route}", "{method}" when no route matched,
+// and "HTTP" for a method semantic conventions do not name.
+func spanName(method attribute.KeyValue, route string) string {
+	m := method.Value.AsString()
+	switch {
+	case method == semconv.HTTPRequestMethodOther:
+		return "HTTP"
+	case route == "":
+		return m
+	default:
+		return m + " " + route
+	}
+}
+
+// panicType returns the Go type of the value a recovered panic carried,
+// or "panic" when srvr does not have it (an aborted request).
+func panicType(res srvr.ResultInfo) string {
+	if pe, ok := errors.AsType[*prblm.PanicError](res.Err); ok && pe != nil {
+		return engine.TypeName(pe.Value)
+	}
+
+	return "panic"
 }
 
 // attributes returns the bounded attributes of a finished request:
