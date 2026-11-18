@@ -150,17 +150,31 @@ func waitRefused(t *testing.T, addr string) {
 	t.Fatalf("connections to %s were still accepted", addr)
 }
 
-// eventually waits up to a second for cond.
+// eventuallyLimit is the longest eventually waits for its condition.
+const eventuallyLimit = time.Second
+
+// deadlineMargin is left before the test binary's deadline, so a failing
+// wait reports its message before the binary panics on its timeout.
+const deadlineMargin = 100 * time.Millisecond
+
+// eventually polls cond until it holds, failing with msg after
+// eventuallyLimit or just before the test's deadline, whichever is first.
+// cond is checked at least once.
 func eventually(t *testing.T, cond func() bool, msg string) {
 	t.Helper()
 
-	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
-		if cond() {
-			return
-		}
+	deadline := time.Now().Add(eventuallyLimit)
+	if d, ok := t.Deadline(); ok && d.Add(-deadlineMargin).Before(deadline) {
+		deadline = d.Add(-deadlineMargin)
 	}
 
-	t.Fatal(msg)
+	for !cond() {
+		if !time.Now().Before(deadline) {
+			t.Fatal(msg)
+		}
+
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // workRoute registers GET /work whose handler signals started and then

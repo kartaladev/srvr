@@ -75,6 +75,9 @@ func (b *logBuffer) where(t *testing.T, key string, value any) []map[string]any 
 	return out
 }
 
+// duplicateWindow is how long waitRecord watches for a second record.
+const duplicateWindow = 10 * time.Millisecond
+
 // waitRecord waits for one record with msg: access records are written as
 // the response finishes, which can be just after the client has it.
 func (b *logBuffer) waitRecord(t *testing.T, msg string) map[string]any {
@@ -82,12 +85,21 @@ func (b *logBuffer) waitRecord(t *testing.T, msg string) map[string]any {
 
 	var got []map[string]any
 	eventually(t, func() bool { got = b.find(t, msg); return len(got) > 0 }, "no "+msg+" record in:\n"+b.String())
-	time.Sleep(10 * time.Millisecond) // a second record would arrive by now
-	if got = b.find(t, msg); len(got) != 1 {
-		t.Fatalf("%d %s records, want 1:\n%s", len(got), msg, b.String())
-	}
 
-	return got[0]
+	// A duplicate would come from a goroutine the test cannot join (the
+	// request's, which can outlive the client's response, or the
+	// server's), and the absence of a write raises no event to wait on:
+	// a short quiet window is the only bound. It fails as soon as a
+	// second record appears.
+	for quiet := time.Now().Add(duplicateWindow); ; time.Sleep(time.Millisecond) {
+		if got = b.find(t, msg); len(got) != 1 {
+			t.Fatalf("%d %s records, want 1:\n%s", len(got), msg, b.String())
+		}
+
+		if !time.Now().Before(quiet) {
+			return got[0]
+		}
+	}
 }
 
 // loggedServer returns a started server logging to a buffer.

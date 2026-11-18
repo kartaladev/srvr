@@ -92,7 +92,16 @@ func TestStart_Stop(t *testing.T) {
 			done := startWith(ctx, t, srv)
 
 			status := inFlight("http://" + srv.Addr() + "/work")
-			<-started
+			// The deadline row's clock runs from before Start: under load it
+			// can pass before the request reaches the handler. Fail with a
+			// message then, instead of waiting on started forever.
+			select {
+			case <-started:
+			case got := <-status:
+				t.Fatalf("the request ended (status %d) before reaching the handler: the stop came first", got)
+			case <-time.After(waitLimit):
+				t.Fatalf("after %s: the request did not reach the handler", waitLimit)
+			}
 			trigger()
 			// Start must still be draining: the request is in flight.
 			select {
@@ -111,7 +120,7 @@ func TestStart_Stop(t *testing.T) {
 				t.Fatal("Start did not return")
 			}
 
-			if got := <-status; got != http.StatusOK {
+			if got := receive(t, status, "the in-flight request did not finish"); got != http.StatusOK {
 				t.Fatalf("in-flight status = %d, want 200", got)
 			}
 		})

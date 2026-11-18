@@ -478,44 +478,60 @@ func TestLogSchemaGolden(t *testing.T) {
 	get(t, base+"/fail")
 
 	for event, want := range goldenKeys {
-		var rec map[string]any
-		eventually(t, func() bool {
-			for _, r := range out.find(t, event) {
-				if r["http.route"] == "/ok" || r["http.route"] == "/fail" {
-					rec = r
-				}
-			}
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
 
-			return rec != nil
-		}, "no "+event+" record")
-		if got := flatKeys(rec, ""); !slices.Equal(got, want) {
-			t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
-		}
-		if rec["srvr.log.schema"] != float64(goldenSchemaVersion) {
-			t.Errorf("%s srvr.log.schema = %v, want %d", event, rec["srvr.log.schema"], goldenSchemaVersion)
-		}
+			var rec map[string]any
+			eventually(t, func() bool {
+				for _, r := range out.find(t, event) {
+					if r["http.route"] == "/ok" || r["http.route"] == "/fail" {
+						rec = r
+					}
+				}
+
+				return rec != nil
+			}, "no "+event+" record")
+			if got := flatKeys(rec, ""); !slices.Equal(got, want) {
+				t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
+			}
+			if rec["srvr.log.schema"] != float64(goldenSchemaVersion) {
+				t.Errorf("%s srvr.log.schema = %v, want %d", event, rec["srvr.log.schema"], goldenSchemaVersion)
+			}
+		})
 	}
 
-	for path, want := range map[string][]string{"/panic": goldenPanicKeys, "/abort": goldenAbortedKeys} {
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+path, nil)
-		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-		}
+	failed := []struct {
+		name, path string
+		want       []string
+	}{
+		{"panic", "/panic", goldenPanicKeys},
+		{"abort", "/abort", goldenAbortedKeys},
+	}
 
-		var rec map[string]any
-		eventually(t, func() bool {
-			for _, r := range out.find(t, "http.request.failed") {
-				if r["http.route"] == path {
-					rec = r
-				}
+	for _, tt := range failed {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+tt.path, nil)
+			if res, err := clientFor(req.URL.String()).Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, res.Body)
+				res.Body.Close()
 			}
 
-			return rec != nil
-		}, "no failed record for "+path)
-		if got := flatKeys(rec, ""); !slices.Equal(got, want) {
-			t.Errorf("%s failed keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", path, got, want)
-		}
+			var rec map[string]any
+			eventually(t, func() bool {
+				for _, r := range out.find(t, "http.request.failed") {
+					if r["http.route"] == tt.path {
+						rec = r
+					}
+				}
+
+				return rec != nil
+			}, "no failed record for "+tt.path)
+			if got := flatKeys(rec, ""); !slices.Equal(got, tt.want) {
+				t.Errorf("%s failed keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", tt.path, got, tt.want)
+			}
+		})
 	}
 
 	if _, has := out.waitRecord(t, "handler.own")["srvr.log.schema"]; has {
@@ -568,17 +584,21 @@ func TestLogSchemaGolden_Lifecycle(t *testing.T) {
 	_ = srv.Start(t.Context())
 
 	for event, want := range goldenLifecycleKeys {
-		recs := out.find(t, event)
-		if len(recs) == 0 {
-			t.Fatalf("no %s record:\n%s", event, out.String())
-		}
-		got := slices.DeleteFunc(flatKeys(recs[0], ""), func(k string) bool { return k == "vcs.revision" })
-		if !slices.Equal(got, want) {
-			t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
-		}
-		if recs[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
-			t.Errorf("%s srvr.log.schema = %v", event, recs[0]["srvr.log.schema"])
-		}
+		t.Run(event, func(t *testing.T) {
+			t.Parallel()
+
+			recs := out.find(t, event)
+			if len(recs) == 0 {
+				t.Fatalf("no %s record:\n%s", event, out.String())
+			}
+			got := slices.DeleteFunc(flatKeys(recs[0], ""), func(k string) bool { return k == "vcs.revision" })
+			if !slices.Equal(got, want) {
+				t.Errorf("%s keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", event, got, want)
+			}
+			if recs[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
+				t.Errorf("%s srvr.log.schema = %v", event, recs[0]["srvr.log.schema"])
+			}
+		})
 	}
 }
 

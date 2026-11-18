@@ -1,0 +1,121 @@
+package engine
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+// benchTrace is the trace of the request context the logging benchmarks
+// write with.
+var benchTrace = Trace{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7"}
+
+// benchRequestContext returns a request context carrying benchTrace, as a
+// request handled by the server has.
+func benchRequestContext(b *testing.B) context.Context {
+	b.Helper()
+
+	return context.WithValue(b.Context(), stateKey{}, &RequestState{trace: benchTrace})
+}
+
+// BenchmarkCorrelation compares ungrouped and grouped request records: a
+// grouped logger replays its WithGroup and WithAttrs steps per record.
+func BenchmarkCorrelation(b *testing.B) {
+	base := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)} //nolint:sloglint // the benchmark measures encoding records: slog.DiscardHandler is disabled and would skip that work
+	ctx := benchRequestContext(b)
+
+	cases := []struct {
+		name   string
+		logger *slog.Logger
+	}{
+		{"ungrouped", slog.New(base)},
+		{"grouped", slog.New(base).With("table", "users").WithGroup("db")},
+	}
+
+	for _, bc := range cases {
+		b.Run(bc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				bc.logger.InfoContext(ctx, "query", "k", "v")
+			}
+		})
+	}
+}
+
+// BenchmarkLogHandler measures srvr's logging handler as the server builds
+// it by default (JSON, default attribute cap) writing a request record to
+// io.Discard, after 0, 1 and 3 With steps, with and without a slog.Any
+// attribute, which the attribute cap formats to measure.
+func BenchmarkLogHandler(b *testing.B) {
+	h, err := newLogHandler(&LogSettings{Output: io.Discard})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := benchRequestContext(b)
+	header := http.Header{"Accept": {"application/json"}, "User-Agent": {"bench/1.0"}}
+
+	cases := []struct {
+		name    string
+		steps   int
+		withAny bool
+	}{
+		{"0 steps", 0, false},
+		{"0 steps with slog.Any", 0, true},
+		{"1 step", 1, false},
+		{"1 step with slog.Any", 1, true},
+		{"3 steps", 3, false},
+		{"3 steps with slog.Any", 3, true},
+	}
+
+	for _, bc := range cases {
+		b.Run(bc.name, func(b *testing.B) {
+			l := slog.New(h)
+			for i := range bc.steps {
+				l = l.With(slog.Int("step", i))
+			}
+
+			attrs := []slog.Attr{slog.String("table", "users")}
+			if bc.withAny {
+				attrs = append(attrs, slog.Any("header", header))
+			}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				l.LogAttrs(ctx, slog.LevelInfo, "query", attrs...)
+			}
+		})
+	}
+}
+
+// BenchmarkRedactSecrets measures the default redactor over representative
+// error and stack texts.
+func BenchmarkRedactSecrets(b *testing.B) {
+	frame := "github.com/example/app/internal/store.(*Users).Find(0x14000123450, {0x1045a2f40, 0x14000234560})\n" +
+		"\t/home/build/app/internal/store/users.go:42 +0x1c4\n"
+
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"no secret", "store: find user 42: connection refused"},
+		{"URL query secret", `Get "https://api.example.com/v1/users?api_key=abc123&page=2": dial tcp: i/o timeout`},
+		{"key=value secret", "auth: login failed for user=alice password=hunter2 retry=3"},
+		{"32 KiB stack", strings.Repeat(frame, 32<<10/len(frame))},
+	}
+
+	for _, bc := range cases {
+		b.Run(bc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				_ = RedactSecrets(bc.text)
+			}
+		})
+	}
+}

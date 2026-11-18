@@ -283,7 +283,16 @@ func TestShutdownOrdering(t *testing.T) {
 
 			started, release := make(chan struct{}), make(chan struct{})
 
-			srv := hooked(t, s, []srvr.Option{srvr.WithObserver(obs)}, configFunc(func(g *srvr.Group) {
+			// draining is closed by a BeforeDrain hook: the listener is
+			// closed and the drain is about to wait for the request.
+			draining := make(chan struct{})
+			beforeDrain := srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error {
+				close(draining)
+
+				return nil
+			})
+
+			srv := hooked(t, s, []srvr.Option{srvr.WithObserver(obs), beforeDrain}, configFunc(func(g *srvr.Group) {
 				g.GET("/slow", func(w http.ResponseWriter, _ *http.Request) error {
 					close(started)
 					<-release
@@ -321,8 +330,17 @@ func TestShutdownOrdering(t *testing.T) {
 				go func() { stopped <- srv.Shutdown(t.Context()) }()
 			}
 
-			time.Sleep(20 * time.Millisecond) // the stop is under way, the request still in flight
-			close(release)
+			drained := false
+			select { // the stop is under way, the request still in flight
+			case <-draining:
+				drained = true
+			case <-time.After(5 * time.Second):
+			}
+			close(release) // also on failure, so the drain does not wait on the handler
+
+			if !drained {
+				t.Fatal("the stop did not reach the drain")
+			}
 			<-answered
 
 			if err := <-done; err != nil {

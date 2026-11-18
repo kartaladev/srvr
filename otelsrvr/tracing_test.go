@@ -29,6 +29,30 @@ func recorder() (*sdktrace.TracerProvider, *tracetest.SpanRecorder) {
 	return sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)), rec
 }
 
+// signalRecorder is a span recorder that also signals each ended span on
+// ended, dropping the signal when one is already pending.
+type signalRecorder struct {
+	*tracetest.SpanRecorder
+
+	ended chan struct{}
+}
+
+func (r signalRecorder) OnEnd(s sdktrace.ReadOnlySpan) {
+	r.SpanRecorder.OnEnd(s)
+
+	select {
+	case r.ended <- struct{}{}:
+	default:
+	}
+}
+
+// signalling returns a tracer provider recording into a signalRecorder.
+func signalling() (*sdktrace.TracerProvider, signalRecorder) {
+	rec := signalRecorder{SpanRecorder: tracetest.NewSpanRecorder(), ended: make(chan struct{}, 1)}
+
+	return sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)), rec
+}
+
 // traced starts a net/http server with otelsrvr built from opts and conf,
 // and returns its base URL.
 func traced(t *testing.T, conf configFunc, srvOpts []srvr.Option, opts ...otelsrvr.Option) string {
@@ -291,7 +315,7 @@ func TestSpanEnding(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			tp, rec := recorder()
+			tp, rec := signalling()
 
 			obs, err := otelsrvr.New(otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(tp))
 			if err != nil {
@@ -344,9 +368,10 @@ func TestSpanEnding(t *testing.T) {
 
 			<-sent
 
-			deadline := time.Now().Add(5 * time.Second)
-			for len(rec.Ended()) == 0 && time.Now().Before(deadline) {
-				time.Sleep(time.Millisecond)
+			select {
+			case <-rec.ended:
+			case <-time.After(5 * time.Second):
+				t.Error("no span ended")
 			}
 
 			_ = srv.Shutdown(t.Context())

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr/otelsetup"
+	"go.opentelemetry.io/otel"
 )
 
 // emit records one counter value and, when s traces, one span.
@@ -271,6 +272,10 @@ func (b *logBuffer) records(t *testing.T, msg string) []map[string]any {
 	return out
 }
 
+// exportFailures is how many failed exports TestExportFailure waits for:
+// the first and five more.
+const exportFailures = 6
+
 // TestExportFailure covers telemetry-setup "Collector down during
 // traffic", all rows. It sets the environment and the globals, so it is
 // not parallel and resets them.
@@ -307,6 +312,18 @@ func TestExportFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Count the failures reaching the global handler, after the
+			// setup's own (installed by WithSetGlobal), which still sees each.
+			failures := make(chan struct{}, exportFailures)
+			next := otel.GetErrorHandler()
+			otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+				next.Handle(err)
+				select {
+				case failures <- struct{}{}:
+				default:
+				}
+			}))
+
 			base := app(t, s, nil)
 			for range 100 {
 				if status, _ := fetch(t, base+"/users/1"); status != 200 {
@@ -314,14 +331,16 @@ func TestExportFailure(t *testing.T) {
 				}
 			}
 
-			// Wait for the first record, or several export intervals when
-			// none is expected; later failures must not add records.
-			deadline := time.Now().Add(2 * time.Second)
-			for tt.records > 0 && len(logs.records(t, "otel.export.failed")) == 0 && time.Now().Before(deadline) {
-				time.Sleep(10 * time.Millisecond)
+			// Wait for several failed exports: the first may log a record,
+			// the later ones must not add any.
+			timeout := time.After(5 * time.Second)
+			for i := range exportFailures {
+				select {
+				case <-failures:
+				case <-timeout:
+					t.Fatalf("%d of %d export failures reached the error handler", i, exportFailures)
+				}
 			}
-
-			time.Sleep(100 * time.Millisecond) // five more export intervals
 
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
