@@ -10,6 +10,13 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 6 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** RED: 7.2 failed to compile (`otelsetup.PrometheusConfig`, `Option`, `Setup` undefined); 7.5 failed on the SetGlobal row (`SetGlobal did not install the meter provider ...`); 7.6 failed to compile (`ShutdownHook` undefined). 7.3 and 7.4 passed at first run: 7.2's GREEN already built the resource, the private listener and the registry. Two defects found and fixed, each proven by a failing run: (1) `resource.Default()` reads `OTEL_SERVICE_NAME` once per process, so a setup built after any other one ignored the current environment (`precedence_test.go` `TestConfigPrecedence/OTEL_SERVICE_NAME_fills_an_empty_service.name` failed in the full package run: `service.name is not from-env`); the resource now reads the environment itself. (2) `Shutdown` could return while the metrics listener was still open, because `http.Server.Shutdown` closes only listeners `Serve` already tracks (`shutdown_test.go` `TestShutdown/Prometheus_only`: `the metrics listener is still open`); `Shutdown` now closes the listener. Decisions: `PrometheusConfig.Listen` is a `*bool` (nil = true), because the spec's `Listen: false` needs a default of true that a zero `bool` cannot express; `Config.Service` reuses `srvr.ServiceConfig`; the metrics server has write and idle timeouts and the scrape handler at most 4 scrapes in flight and a 20s timeout (safe defaults for a listener that may be made public); providers and the listener shut down concurrently under one `FlushTimeout` deadline. The "default address" Scraping row binds 127.0.0.1:9464 and the precedence rows use `127.0.0.1:0` instead of the default address so the suite can run in parallel. A panicking or blocking provider `Shutdown` is not separately guarded: otelsetup builds every provider and exporter itself, and the SDK's shutdown honours the deadline (pinned for a hanging collector by task 8.3).
+- **Evidence:** as named; otelsetup `new_test.go`, `precedence_test.go`, `scrape_test.go`, `globals_test.go`, `shutdown_test.go`, `example_test.go`.
+- **Suggested action:** none.
+
 ### Slice 5 notes (2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability

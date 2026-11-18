@@ -122,29 +122,29 @@
 
 ## 7. Slice: otelsetup with Prometheus
 
-- [ ] 7.1 Create module `github.com/kartaladev/srvr/otelsetup` with SDK, sdk/metric, Prometheus exporter and client_golang; add to `go.work`, CI and release list; verify `GOWORK=off go build ./...` passes in `otelsetup`
-- [ ] 7.2 Provider construction, Prometheus rows (telemetry-setup / Scenario: Provider construction, Prometheus rows and the rejected rows that do not involve OTLP); verify `cd otelsetup && go test -race -run TestNew` passes
+- [x] 7.1 Create module `github.com/kartaladev/srvr/otelsetup` with SDK, sdk/metric, Prometheus exporter and client_golang; add to `go.work`, CI and release list; verify `GOWORK=off go build ./...` passes in `otelsetup`
+- [x] 7.2 Provider construction, Prometheus rows (telemetry-setup / Scenario: Provider construction, Prometheus rows and the rejected rows that do not involve OTLP); verify `cd otelsetup && go test -race -run TestNew` passes
   - RED: table, including a failure after the meter provider was built (it is shut down, no global touched, no listener left bound); fails because `otelsetup.New` does not exist
   - GREEN: `Config`, `New(ctx, opts...)`, `WithConfig`, validation, resource from service fields, meter provider with Prometheus reader on a dedicated registry
   - REFACTOR: Split Phase (validate, build, start), then /simplify
-- [ ] 7.3 Configuration precedence, non-OTLP rows (telemetry-setup / Scenario: Configuration precedence, `service.name` and flush-timeout rows); verify `go test -race -run TestConfigPrecedence` passes (environment set with `t.Setenv`, so not parallel)
+- [x] 7.3 Configuration precedence, non-OTLP rows (telemetry-setup / Scenario: Configuration precedence, `service.name` and flush-timeout rows); verify `go test -race -run TestConfigPrecedence` passes (environment set with `t.Setenv`, so not parallel)
   - RED: table; fails because options do not apply in order or `OTEL_SERVICE_NAME` beats `Config.Service.Name`
   - GREEN: individual options (`WithPrometheus`, `WithService`, `WithFlushTimeout`, `WithSetGlobal`, ...), srvr's `service.*` attributes merged over `resource.Default`
   - REFACTOR: /simplify
-- [ ] 7.4 Scraping and listener (telemetry-setup / Scenario: Scraping, all rows; Scenario: Registry isolation, all rows); verify `go test -race -run 'TestScrape|TestRegistryIsolation'` passes
+- [x] 7.4 Scraping and listener (telemetry-setup / Scenario: Scraping, all rows; Scenario: Registry isolation, all rows); verify `go test -race -run 'TestScrape|TestRegistryIsolation'` passes
   - RED: tables; fails because no listener exists or the default registry is used
   - GREEN: private listener, `MetricsAddr`, `MetricsHandler`, `Listen: false`, rollback on bind failure
   - REFACTOR: /simplify
-- [ ] 7.5 Globals (telemetry-setup / Scenario: Globals, all rows); verify `go test -race -run TestSetGlobal` passes (globals restored after each case)
+- [x] 7.5 Globals (telemetry-setup / Scenario: Globals, all rows); verify `go test -race -run TestSetGlobal` passes (globals restored after each case)
   - RED: table; fails because globals are always/never set
   - GREEN: `SetGlobal` installing providers and composite propagator as the last step of a successful `New`; a failing `New` leaves every global unchanged
   - REFACTOR: /simplify
-- [ ] 7.6 Shutdown, misuse and servers that never served (telemetry-setup / Scenario: Flush outcomes, Prometheus row; Scenario: Lifecycle misuse; Scenario: Server that never served, all rows); verify `go test -race -run 'TestShutdown|TestShutdownHook_NeverServed'` passes
+- [x] 7.6 Shutdown, misuse and servers that never served (telemetry-setup / Scenario: Flush outcomes, Prometheus row; Scenario: Lifecycle misuse; Scenario: Server that never served, all rows); verify `go test -race -run 'TestShutdown|TestShutdownHook_NeverServed'` passes
   - RED: tables; fails because shutdown is not idempotent, the hook does not run when the server never started or `Start` failed after leaving its initial state, or it runs for `Start(nil)`, `ErrServerStarted` or `ErrServerClosed`
   - GREEN: idempotent bounded `Shutdown` (no mutex held across provider calls; a panicking or blocking provider `Shutdown` is bounded and reported, errors joined); `ShutdownHook()` returning `srvr.WithShutdownHook(srvr.AfterDrain, setup.Shutdown)` (core's mechanism; no hook mechanism is added here)
   - REFACTOR: /simplify
-- [ ] 7.7 Godoc and an `Example` serving Prometheus metrics for a srvr server with `setup.ShutdownHook()`, documenting which `OTEL_*` variables the SDK reads when fields are empty; verify `go test -run Example` passes
-- [ ] 7.8 Verify slice end to end (srvr server + otelsrvr + otelsetup -> scrape shows the route) and confirm construction rollback and shutdown branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): wire SDK and Prometheus scraping`
+- [x] 7.7 Godoc and an `Example` serving Prometheus metrics for a srvr server with `setup.ShutdownHook()`, documenting which `OTEL_*` variables the SDK reads when fields are empty; verify `go test -run Example` passes
+- [x] 7.8 Verify slice end to end (srvr server + otelsrvr + otelsetup -> scrape shows the route) and confirm construction rollback and shutdown branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): wire SDK and Prometheus scraping`
 
 ## 8. Slice: OTLP export and failure isolation
 

@@ -93,6 +93,28 @@ jobs:
       - name: test
         run: go test -race ./...
 
+  otelsetup:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: otelsetup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: otelsetup/go.mod
+      - name: vet
+        run: go vet ./...
+      - name: lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          working-directory: otelsetup
+      - name: test
+        run: go test -race ./...
+
   paritytest:
     runs-on: ubuntu-latest
     env:
