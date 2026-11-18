@@ -11,6 +11,7 @@ require (
 	github.com/kartaladev/prblm v0.1.0
 	github.com/kartaladev/prblm/ginprblm v0.1.0
 	github.com/kartaladev/srvr v0.0.0-00010101000000-000000000000
+	go.uber.org/goleak v1.3.0
 )
 
 require (

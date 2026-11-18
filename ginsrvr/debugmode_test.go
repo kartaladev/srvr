@@ -24,6 +24,7 @@ func TestGinDebugWarning(t *testing.T) { //nolint:paralleltest // gin's mode is 
 
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
+			checkGoroutines(t)
 			gin.SetMode(tt.mode)
 			t.Cleanup(func() { gin.SetMode(gin.TestMode) })
 
@@ -49,6 +50,7 @@ func TestGinDebugWarning(t *testing.T) { //nolint:paralleltest // gin's mode is 
 // gin_debug_mode warning, counted in LogWriteErrors, and construction
 // still succeeds.
 func TestGinDebugWarning_PanickingHandler(t *testing.T) { //nolint:paralleltest // gin's mode is process-global.
+	checkGoroutines(t)
 	gin.SetMode(gin.DebugMode)
 	t.Cleanup(func() { gin.SetMode(gin.TestMode) })
 

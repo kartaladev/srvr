@@ -15,3 +15,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** the "never `Shutdown`" lifecycle rows identify srvr's serve goroutine by its frame `engine.(*Lifecycle[...]).serve.func1` (`engine/lifecycle.go:312`, `go func() { r.served <- runner.Serve(ln) }()`). The tests match the stable prefix `engine.(*Lifecycle[...]).serve`, but a refactor that moves the goroutine into another function would still break them without any behaviour change. Raised by the /simplify altitude review of group 2; a production change is out of scope for this test-only change.
 - **Evidence:** `TestLifecycle_Goroutines/one_route,_Start_and_never_Shutdown` (`lifecycle_goroutines_test.go`) reports `github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serve.func1`.
 - **Suggested action:** give the serve goroutine a named method (for example `(*Lifecycle[C]).serveOn`) and match that name in the leak rows of every engine.
+
+### fasthttp's idle-worker cleaner could end in time instead of being ignored
+- **Status:** open
+- **Target:** goroutine-leak-checks (owner decision; D3 kept as planned meanwhile)
+- **Context:** the /simplify altitude review of group 3 noted that `(*workerPool).Start.func2` outlives `Stop` only because it sleeps `MaxIdleWorkerDuration` (10s by default). A test helper setting a short `MaxIdleWorkerDuration` on the fiber app's fasthttp server (reachable through `App().Server()` in `fibersrvr/export_test.go`) would let the cleaner end within goleak's retry window, so the cleaner ignore, its constant and its "needed" rows in fibersrvr and paritytest could go. That changes design D3 and the spec's ignore rows, so it was not applied.
+- **Evidence:** fasthttp v1.78.0 `workerpool.go` (cleaner loop sleeps `MaxIdleWorkerDuration`); `TestLeakIgnores/fasthttp_idle-worker_cleaner` (`fibersrvr/leakignores_test.go`) fails with the ignore removed.
+- **Suggested action:** the owner decides; if adopted, update D3 and the spec's ignore rows through `/opsx:update`, then drop the ignore.

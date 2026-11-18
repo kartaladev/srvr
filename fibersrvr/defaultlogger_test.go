@@ -32,6 +32,8 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			checkGoroutines(t)
+
 			before := slog.Default()
 			t.Cleanup(func() { slog.SetDefault(before) })
 

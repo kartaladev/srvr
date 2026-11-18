@@ -28,20 +28,20 @@
 
 ## 3. Slice: gin and fiber tests fail on leaked goroutines
 
-- [ ] 3.1 Leak check in `ginsrvr` and `fibersrvr` (test-quality / Scenario: A goroutine left running fails the module's tests, ginsrvr and fibersrvr rows); verify `GOWORK=off go test -race ./...` passes in both modules
+- [x] 3.1 Leak check in `ginsrvr` and `fibersrvr` (test-quality / Scenario: A goroutine left running fails the module's tests, ginsrvr and fibersrvr rows); verify `GOWORK=off go test -race ./...` passes in both modules
   - RED: add `goleak` and `TestMain` (`leak_test.go`, empty `leakOptions`) to both modules; run and record `fibersrvr` failing on fasthttp's `(*workerPool).Start.func2` and `updateServerDate.func1`; add `TestLeakCheck` rows per module
   - GREEN: `fibersrvr` `leakOptions` with the two `IgnoreAnyFunction` ignores, each commented with its reason and fasthttp v1.78.0
   - REFACTOR: Consolidate Duplicate Conditional Fragments between the two modules' fixtures where a file-local helper suffices, then /simplify
-- [ ] 3.2 fasthttp ignores are needed and narrow (test-quality / Scenario: Each ignore is needed and narrow, fibersrvr rows of both tables); verify `GOWORK=off go test -race -run TestLeakIgnores .` passes in `fibersrvr`
+- [x] 3.2 fasthttp ignores are needed and narrow (test-quality / Scenario: Each ignore is needed and narrow, fibersrvr rows of both tables); verify `GOWORK=off go test -race -run TestLeakIgnores .` passes in `fibersrvr`
   - RED: `TestLeakIgnores` (non-parallel): after a fiber server's `Start`/`Shutdown`, `goleak.Find` without options reports each ignored function, with `leakOptions` reports neither; a fiber server never shut down is reported with `leakOptions`, naming srvr's serve goroutine. Run once with one ignore removed and record the failure
   - GREEN: the ignores from 3.1
   - REFACTOR: Extract Function for "stack names function", then /simplify
-- [ ] 3.3 gin and fiber lifecycles leave no goroutine (test-quality / Scenario: Lifecycle leaves no goroutine behind, gin and fiber rows); verify `GOWORK=off go test -race -run TestLifecycle_Goroutines .` passes in both modules
+- [x] 3.3 gin and fiber lifecycles leave no goroutine (test-quality / Scenario: Lifecycle leaves no goroutine behind, gin and fiber rows); verify `GOWORK=off go test -race -run TestLifecycle_Goroutines .` passes in both modules
   - RED: `TestLifecycle_Goroutines` per module with `checkGoroutines(t)` (keep-alive request then `Shutdown` -> no) and `goleak.Find` (never `Shutdown` -> reported); add `checkGoroutines` to the existing non-parallel tests that start servers (`TestDefaultLoggerAfterConstruction` in both, `TestGinDebugWarning*`)
   - GREEN: `checkGoroutines` in each module's `leak_test.go`; production change only for a proven srvr leak (D6)
   - REFACTOR: Parameterize Function, then /simplify
-- [ ] 3.4 Verify slice end to end: in `ginsrvr` and `fibersrvr` run `GOWORK=off` vet, golangci-lint, `go test -race ./...` and coverage (`engine` adapters and lifecycle unchanged or higher); gopls diagnostics on changed files; `pgrep -fl '\.test'` after each test command shows no binary of this repository
-- [ ] 3.5 Run /simplify on the slice's changes, re-run both modules' tests, and commit `test(engines): fail gin and fiber tests on leaked goroutines`; verify with `git log -1 --stat`
+- [x] 3.4 Verify slice end to end: in `ginsrvr` and `fibersrvr` run `GOWORK=off` vet, golangci-lint, `go test -race ./...` and coverage (`engine` adapters and lifecycle unchanged or higher); gopls diagnostics on changed files; `pgrep -fl '\.test'` after each test command shows no binary of this repository
+- [x] 3.5 Run /simplify on the slice's changes, re-run both modules' tests, and commit `test(engines): fail gin and fiber tests on leaked goroutines`; verify with `git log -1 --stat`
 
 ## 4. Slice: otel module tests fail on leaked goroutines
 
