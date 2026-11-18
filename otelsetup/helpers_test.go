@@ -3,6 +3,7 @@ package otelsetup_test
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -80,4 +81,18 @@ func resetGlobals(t *testing.T) {
 		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
 		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {}))
 	})
+}
+
+// freeAddr returns a loopback address whose port was free a moment ago.
+func freeAddr(t *testing.T) string {
+	t.Helper()
+
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer ln.Close()
+
+	return ln.Addr().String()
 }

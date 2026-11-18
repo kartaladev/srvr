@@ -68,8 +68,6 @@ func app(t *testing.T, s *otelsetup.Setup, conf configFunc) string {
 func TestScrape(t *testing.T) {
 	t.Parallel()
 
-	noListen := false
-
 	tests := []struct {
 		name     string
 		prom     otelsetup.PrometheusConfig
@@ -82,7 +80,7 @@ func TestScrape(t *testing.T) {
 		{"ephemeral port", local, false, "/metrics", false, 200, "http_server_request_duration_seconds_bucket"},
 		{"custom path", otelsetup.PrometheusConfig{Enabled: true, Addr: "127.0.0.1:0", Path: "/internal/metrics"}, false, "/internal/metrics", false, 200, "http_server_request_duration_seconds_count"},
 		{"not on the application listener", local, false, "/metrics", true, 404, `"status":404`},
-		{"mounted by the consumer", otelsetup.PrometheusConfig{Enabled: true, Listen: &noListen}, true, "/ops/metrics", true, 200, "http_server_request_duration_seconds_count"},
+		{"mounted by the consumer", otelsetup.PrometheusConfig{Enabled: true, DisableListener: true}, true, "/ops/metrics", true, 200, "http_server_request_duration_seconds_count"},
 	}
 
 	for _, tt := range tests {
@@ -112,7 +110,7 @@ func TestScrape(t *testing.T) {
 			}
 
 			if tt.mount && s.MetricsAddr() != "" {
-				t.Errorf("MetricsAddr = %q with Listen false", s.MetricsAddr())
+				t.Errorf("MetricsAddr = %q with DisableListener", s.MetricsAddr())
 			}
 		})
 	}

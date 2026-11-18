@@ -56,4 +56,17 @@
 // recording a value is cheap, and exporting is left to the SDK's periodic
 // readers and batch processors, which run in the background. Configure
 // those, not otelsrvr, when export is slow.
+//
+// # Dependencies
+//
+// The non-test packages of this module import the OpenTelemetry API only.
+// Its go.mod still requires the OpenTelemetry SDK (go.opentelemetry.io/otel/sdk
+// and sdk/metric), because its own tests record through it, so a module
+// that requires otelsrvr gains that SDK version as a minimum in its module
+// graph and go.sum, although no SDK package is compiled into its binary.
+// Two tests enforce the rule: TestNoSDKDependency in this module fails when
+// a non-test package of otelsrvr imports go.opentelemetry.io/otel/sdk or
+// go.opentelemetry.io/otel/exporters (it does not check go.mod or test
+// packages), and TestCoreHasNoOTel in the core module fails when any core
+// package, test packages included, imports go.opentelemetry.io.
 package otelsrvr

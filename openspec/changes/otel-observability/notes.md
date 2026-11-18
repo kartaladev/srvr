@@ -2,6 +2,13 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Slice 8 notes: otelsetup fixes (tasks 9.1-9.5, 2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** RED 9.1 (`TestNew_OTLP`, the seven new `OTLP.Endpoint` rows): `New = <nil>, want an error wrapping ErrConfig naming OTLP.Endpoint` for six rows while the SDK only logged `"otlpmetric: parse endpoint url" "error"="parse \"http://collector:4318 /v1/metrics\": invalid port \":4318 \" after host"`; the `collector:otlp` row failed in the SDK with an error not wrapping `ErrConfig`. RED 9.2 (`TestNew`, two `Prometheus.Path` rows): `127.0.0.1:59450 is still bound after New failed: ... address already in use` and `New panicked: parsing "/metrics/{": at offset 9: bad wildcard segment`. RED 9.3 (`TestFaultyLogger/panics`): `panic escaped otel.Handle: log handler boom`; the re-entrant row passed at first run (the rate-limit lock was already released before the logger call) and stays as a guard. RED 9.4: the `DisableListener` Scraping row failed to compile (`unknown field DisableListener`), as planned. Decisions: one `checkEndpoint`/`isURL` pair is shared by validation and `exporterOptions`; `Prometheus.Addr` and the OTLP host:port share `splitHostPort`; a panic from a consumer logger is dropped, not counted (`engine`'s `LogWriteErrors` counter is internal, design D7); `Example_disableListener` shows the mounted handler. /simplify: `freeAddr` moved to `helpers_test.go`, `faultyHandler` simplified, `TestFaultyLogger` uses `DisableListener`; not adopted: exporting an `engine` constructor that wraps any logger in srvr's guarded handler so otelsetup's dropped records are counted in `LogWriteErrors` (new public `engine` API, beyond this group; design D7 states the record is dropped uncounted), removing the tests' `recover` wrappers (a panic in a parallel subtest would end the whole test binary), and stating the listener limits in one place (task 9.5 asks for both godocs and the README).
+- **Evidence:** otelsetup `otlp_test.go` `TestNew_OTLP`, `new_test.go` `TestNew`, `faultylogger_test.go` `TestFaultyLogger`, `scrape_test.go` `TestScrape`; `GOWORK=off go test -race -count=1 -run <name> .` in `otelsetup`.
+- **Suggested action:** none.
+
 ### Verification 2026-11-18 folded into the plan (task group 9)
 - **Status:** open: planned as task group 9
 - **Target:** otel-observability

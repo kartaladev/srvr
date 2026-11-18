@@ -148,13 +148,26 @@ func TestNew_OTLP(t *testing.T) {
 		otlp otelsetup.OTLPConfig
 		want string
 	}{
-		{"unknown protocol", otelsetup.OTLPConfig{Endpoint: "collector:4318", Protocol: "thrift", Metrics: true}, "Protocol"},
-		{"no signal", otelsetup.OTLPConfig{Endpoint: "collector:4318", Protocol: "http/protobuf"}, "Metrics"},
+		{"unknown protocol", otelsetup.OTLPConfig{Endpoint: "http://collector:4318", Protocol: "thrift", Metrics: true}, "Protocol"},
+		{"no signal", otelsetup.OTLPConfig{Endpoint: "http://collector:4318", Protocol: "http/protobuf"}, "Metrics"},
+		// An unparsable URL must not be replaced by the SDK default, which
+		// WithEndpointURL silently does.
+		{"URL with a trailing space", otelsetup.OTLPConfig{Endpoint: "http://collector:4318 ", Metrics: true}, "OTLP.Endpoint"},
+		{"unclosed IPv6 host", otelsetup.OTLPConfig{Endpoint: "http://[::1", Metrics: true}, "OTLP.Endpoint"},
+		{"unsupported scheme", otelsetup.OTLPConfig{Endpoint: "ftp://collector:4318", Metrics: true}, "OTLP.Endpoint"},
+		{"URL without a host", otelsetup.OTLPConfig{Endpoint: "http://", Metrics: true}, "OTLP.Endpoint"},
+		{"host without a port", otelsetup.OTLPConfig{Endpoint: "collector", Metrics: true}, "OTLP.Endpoint"},
+		{"port without a host", otelsetup.OTLPConfig{Endpoint: ":4318", Metrics: true}, "OTLP.Endpoint"},
+		{"named port", otelsetup.OTLPConfig{Endpoint: "collector:otlp", Metrics: true}, "OTLP.Endpoint"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(tt.otlp))
+			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(tt.otlp))
+			if s != nil {
+				t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+			}
+
 			if !errors.Is(err, otelsetup.ErrConfig) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New = %v, want an error wrapping ErrConfig naming %s", err, tt.want)
 			}

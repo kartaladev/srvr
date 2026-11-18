@@ -31,8 +31,24 @@ otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: "
 
 Binding a public address loosens an exposure default: metrics describe the
 service's internals, so keep the port off public ingress. To serve metrics on a
-listener of your own instead, set `Listen` to false and mount
-`setup.MetricsHandler()`.
+listener of your own instead, set `DisableListener: true` and mount
+`setup.MetricsHandler()`:
+
+```go
+setup, err := otelsetup.New(ctx, otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{
+	Enabled:         true,
+	DisableListener: true,
+}))
+// in a route configurer:
+g.Group("/ops").Mount("/metrics", setup.MetricsHandler())
+```
+
+The setup's own listener has a 10s read-header timeout, a 30s write timeout
+and a 60s idle timeout; the handler serves at most 4 scrapes at a time and cuts
+each off after 20s, because every scrape runs a full collection. These limits
+are fixed; with `DisableListener` your own server sets the listener timeouts.
+`Path` must start with `/` and be a pattern `http.ServeMux` accepts; an invalid
+one fails `New` with `ErrConfig` before anything is bound.
 
 ## OTLP
 
@@ -49,7 +65,10 @@ setup, err := otelsetup.New(ctx,
 
 `Endpoint` is a base URL (`http://` plaintext, `https://` TLS; the signal path
 `/v1/metrics` or `/v1/traces` is appended for http/protobuf) or a `host:port`,
-which uses TLS. `Headers` carries, for example, an API key.
+which uses TLS. A URL that does not parse, has another scheme or no host, and a
+`host:port` without a host or a numeric port, fail `New` with `ErrConfig`
+naming `OTLP.Endpoint` (the SDK would otherwise ignore it silently and export
+to its default endpoint). `Headers` carries, for example, an API key.
 
 ## Configuration sources and the environment
 

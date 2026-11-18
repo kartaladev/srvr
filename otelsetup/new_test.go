@@ -3,6 +3,8 @@ package otelsetup_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -54,13 +56,40 @@ func TestNew(t *testing.T) {
 		{"bad Addr", otelsetup.Config{Prometheus: otelsetup.PrometheusConfig{Enabled: true, Addr: "nope"}}, "Addr"},
 		{"relative Path", otelsetup.Config{Prometheus: otelsetup.PrometheusConfig{Enabled: true, Path: "metrics"}}, "Path"},
 		{"negative FlushTimeout", otelsetup.Config{FlushTimeout: -time.Second, Prometheus: local}, "FlushTimeout"},
+		// Paths http.ServeMux rejects: they must fail before a port is bound.
+		{"path with an unclosed wildcard", otelsetup.Config{Prometheus: otelsetup.PrometheusConfig{Enabled: true, Addr: freeAddr(t), Path: "/metrics/{"}}, "Prometheus.Path"},
+		{"path with a space", otelsetup.Config{Prometheus: otelsetup.PrometheusConfig{Enabled: true, Addr: freeAddr(t), Path: "/metrics x"}}, "Prometheus.Path"},
 	}
 
 	for _, tt := range rejected {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithConfig(tt.cfg))
+			var (
+				s   *otelsetup.Setup
+				err error
+			)
+
+			func() {
+				defer func() {
+					if v := recover(); v != nil {
+						err = fmt.Errorf("New panicked: %v", v)
+					}
+				}()
+
+				s, err = otelsetup.New(context.Background(), otelsetup.WithConfig(tt.cfg))
+			}()
+
+			// A failed New leaves no port bound.
+			if addr := tt.cfg.Prometheus.Addr; strings.HasPrefix(addr, "127.0.0.1:") {
+				ln, lerr := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+				if lerr != nil {
+					t.Errorf("%s is still bound after New failed: %v", addr, lerr)
+				} else {
+					_ = ln.Close()
+				}
+			}
+
 			if !errors.Is(err, otelsetup.ErrConfig) || !strings.Contains(err.Error(), tt.field) || s != nil {
 				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig mentioning %q", s, err, tt.field)
 			}

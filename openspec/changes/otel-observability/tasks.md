@@ -174,23 +174,23 @@
 
 ## 9. Slice: verification fixes
 
-- [ ] 9.1 OTLP endpoint validation (telemetry-setup / Scenario: Provider construction, the `OTLP.Endpoint` rejected rows; the `http://collector:4318` rows); verify `cd otelsetup && go test -race -run 'TestNew_OTLP|TestNew$'` passes
+- [x] 9.1 OTLP endpoint validation (telemetry-setup / Scenario: Provider construction, the `OTLP.Endpoint` rejected rows; the `http://collector:4318` rows); verify `cd otelsetup && go test -race -run 'TestNew_OTLP|TestNew$'` passes
   - RED: the scratch reproduction `TestScratchInvalidEndpoint` as the spec's rejected `OTLP.Endpoint` rows; fails because `New` returns `nil` for them (the SDK's `WithEndpointURL` ignores unparsable URLs); existing rows use `http://collector:4318`
   - GREEN: validation per design D9, through one endpoint-parsing function shared with `exporterOptions`
   - REFACTOR: /simplify
-- [ ] 9.2 Prometheus path validation (telemetry-setup / Scenario: Provider construction, the `Prometheus.Path` rejected rows); verify `go test -race -run TestNew` passes
+- [x] 9.2 Prometheus path validation (telemetry-setup / Scenario: Provider construction, the `Prometheus.Path` rejected rows); verify `go test -race -run TestNew` passes
   - RED: the scratch reproductions `TestScratchInvalidPath` and `TestScratchPanicLeaksListener` as rows: `/metrics/{` and `/metrics x` must fail `New` with `ErrConfig` naming `Prometheus.Path`, without panicking, and the address given in `Addr` must be free afterwards; fails with a panic from `mux.Handle` after the listener was bound, and the port stays bound
   - GREEN: validation registers the path on a throwaway `http.ServeMux` under `recover`, before anything is built
   - REFACTOR: /simplify
-- [ ] 9.3 Faulty logger (telemetry-setup / Scenario: Faulty logger, all rows); verify `go test -race -run 'TestExportErrorHandler|TestFaultyLogger'` passes
+- [x] 9.3 Faulty logger (telemetry-setup / Scenario: Faulty logger, all rows); verify `go test -race -run 'TestExportErrorHandler|TestFaultyLogger'` passes
   - RED: the scratch reproduction `TestScratchPanickingLoggerContained` as the panic row (fails: `panic escaped otel.Handle: log handler boom`), plus the re-entrant row (a handler that calls `otel.Handle` again; must not deadlock)
   - GREEN: `recover` around the `LogAttrs` call; the rate-limit lock stays released while the logger runs
   - REFACTOR: /simplify
-- [ ] 9.4 Replace `PrometheusConfig.Listen *bool` with `DisableListener bool` (`json:"disable_listener" yaml:"disable_listener" env:"DISABLE_LISTENER"`; zero value listens) (telemetry-setup / Scenario: Scraping, the `DisableListener` row); verify `go test -race -run TestScrape` passes
+- [x] 9.4 Replace `PrometheusConfig.Listen *bool` with `DisableListener bool` (`json:"disable_listener" yaml:"disable_listener" env:"DISABLE_LISTENER"`; zero value listens) (telemetry-setup / Scenario: Scraping, the `DisableListener` row); verify `go test -race -run TestScrape` passes
   - RED: the Scraping row with `DisableListener: true`; fails to compile until the field exists (a public API shape change before v0.1.0, no compatibility shim), then must serve no listener and a working `MetricsHandler()`
   - GREEN: the field, godoc, README and examples
   - REFACTOR: /simplify
-- [ ] 9.5 Documentation: the metrics listener limits (design Defaults) in the `PrometheusConfig` and `MetricsHandler` godoc and the README; in the `otelsrvr` godoc, that its `go.mod` requires the SDK only for its tests, its non-test packages import only the API, and what `TestNoSDKDependency` and core `TestCoreHasNoOTel` enforce; verify `go vet` and `go test -run Example` pass in both modules
+- [x] 9.5 Documentation: the metrics listener limits (design Defaults) in the `PrometheusConfig` and `MetricsHandler` godoc and the README; in the `otelsrvr` godoc, that its `go.mod` requires the SDK only for its tests, its non-test packages import only the API, and what `TestNoSDKDependency` and core `TestCoreHasNoOTel` enforce; verify `go vet` and `go test -run Example` pass in both modules
 - [ ] 9.6 Test harness: every started test server gets its own `http.Client` and `http.Transport`, and its cleanup closes only that client's idle connections, in core `helpers_test.go` and the equivalent helpers of `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` and `internal/paritytest`; verify the reproduction passes and the full core suite passes 10 times in a row (`GOWORK=off go test -race -count=1 ./...`, foreground)
   - REFACTOR first (green): route the helpers' client and cleanup through two seams that still use `http.DefaultClient`
   - RED: the scratch reproduction `flake_repro_test.go.txt` adapted to the seams (requests to a started server through its client while another server's cleanup runs repeatedly); fails with `http: CloseIdleConnections called`, as `TestPanicRecovery/string` did

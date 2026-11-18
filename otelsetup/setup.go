@@ -131,7 +131,7 @@ func (s *Setup) build(ctx context.Context, res *resource.Resource) error {
 		s.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithResource(res), sdktrace.WithBatcher(exp))
 	}
 
-	if s.cfg.Prometheus.Enabled && s.cfg.Prometheus.listen() {
+	if s.cfg.Prometheus.Enabled && !s.cfg.Prometheus.DisableListener {
 		return s.listen(ctx)
 	}
 
@@ -206,7 +206,9 @@ func (s *Setup) MeterProvider() *sdkmetric.MeterProvider { return s.meterProvide
 func (s *Setup) TracerProvider() *sdktrace.TracerProvider { return s.tracerProvider }
 
 // MetricsHandler returns the Prometheus exposition handler, or nil without
-// Prometheus. Mount it yourself with PrometheusConfig.Listen false.
+// Prometheus. Mount it yourself with PrometheusConfig.DisableListener. It
+// serves at most 4 scrapes at a time and cuts each off after 20s, because
+// every scrape runs a full collection.
 func (s *Setup) MetricsHandler() http.Handler { return s.metricsHandler }
 
 // MetricsAddr returns the bound address of the metrics listener, such as

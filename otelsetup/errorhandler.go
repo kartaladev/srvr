@@ -15,7 +15,9 @@ const exportErrorInterval = time.Minute
 // exportErrorHandler logs OpenTelemetry errors (failed exports, mostly) as
 // otel.export.failed at WARN, at most once per exportErrorInterval per
 // error kind (the error's Go type), so a collector outage cannot flood the
-// log. The logger is called without holding the lock.
+// log. The logger is called without holding the lock, and a panic from it
+// is recovered and the record dropped: the SDK calls Handle from its
+// export goroutines, where an escaping panic would crash the process.
 type exportErrorHandler struct {
 	logger *slog.Logger
 	now    func() time.Time
@@ -38,6 +40,8 @@ func (h *exportErrorHandler) Handle(err error) {
 	if !h.due(kind) {
 		return
 	}
+
+	defer func() { _ = recover() }() // a faulty consumer slog.Handler
 
 	// The error text is read through ValueText: an Error method that
 	// panics gives a placeholder.

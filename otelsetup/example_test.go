@@ -111,3 +111,26 @@ func Example_otlp() {
 
 	_ = srv
 }
+
+// Prometheus metrics mounted on the application's own server instead of
+// the setup's listener. Not run: it only shows the wiring.
+func Example_disableListener() {
+	ctx := context.Background()
+
+	setup, err := otelsetup.New(ctx, otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{
+		Enabled:         true,
+		DisableListener: true, // no listener of the setup's own
+	}))
+	if err != nil {
+		panic(err)
+	}
+
+	srv, err := srvr.New(setup.ShutdownHook())
+	if err != nil {
+		panic(err)
+	}
+
+	_ = srv.Register(configFunc(func(g *srvr.Group) {
+		g.Group("/ops").Mount("/metrics", setup.MetricsHandler())
+	}))
+}

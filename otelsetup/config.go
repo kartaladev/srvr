@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // ErrConfig is wrapped by every error New returns for invalid
@@ -57,12 +59,20 @@ type PrometheusConfig struct {
 	// Addr is the metrics listener's host:port. Default 127.0.0.1:9464
 	// (loopback only). Binding a public address loosens an exposure
 	// default: metrics describe the service's internals.
+	//
+	// The listener has a ReadHeaderTimeout of 10s, a WriteTimeout of 30s
+	// and an IdleTimeout of 60s, and serves at most 4 scrapes at a time,
+	// each cut off after 20s: every scrape runs a full collection, and the
+	// listener may be made public. These limits are not configurable; with
+	// DisableListener your own server sets the listener's timeouts.
 	Addr string `json:"addr" yaml:"addr" env:"ADDR"`
-	// Path is where metrics are served. Default /metrics.
+	// Path is where metrics are served. Default /metrics. It must start
+	// with / and be a pattern http.ServeMux accepts.
 	Path string `json:"path" yaml:"path" env:"PATH"`
-	// Listen runs the metrics listener. Default (nil) true; false leaves
-	// serving to the consumer, who mounts [Setup.MetricsHandler].
-	Listen *bool `json:"listen" yaml:"listen" env:"LISTEN"`
+	// DisableListener leaves serving to the consumer, who mounts
+	// [Setup.MetricsHandler] on a listener of their own. Default false: the
+	// setup runs its own metrics listener on Addr.
+	DisableListener bool `json:"disable_listener" yaml:"disable_listener" env:"DISABLE_LISTENER"`
 }
 
 // OTLP protocols.
@@ -79,9 +89,13 @@ type OTLPConfig struct {
 	// Endpoint is where the collector listens: a base URL
 	// ("http://collector:4318" for plaintext, "https://..." for TLS; for
 	// http/protobuf the signal path /v1/metrics or /v1/traces is appended,
-	// as for OTEL_EXPORTER_OTLP_ENDPOINT) or a host:port, which uses TLS. Empty: OTEL_EXPORTER_OTLP_ENDPOINT, else
-	// the SDK default (localhost:4318 or :4317). An operator's environment
-	// can therefore redirect export when this is empty.
+	// as for OTEL_EXPORTER_OTLP_ENDPOINT) or a host:port, which uses TLS.
+	// A URL must parse and have scheme http or https and a host; a
+	// host:port needs a host and a numeric port; otherwise New fails with
+	// [ErrConfig] (the SDK would silently ignore the value). Empty:
+	// OTEL_EXPORTER_OTLP_ENDPOINT, else the SDK default (localhost:4318 or
+	// :4317). An operator's environment can therefore redirect export when
+	// this is empty.
 	Endpoint string `json:"endpoint" yaml:"endpoint" env:"ENDPOINT"`
 	// Protocol is "http/protobuf" (default) or "grpc".
 	Protocol string `json:"protocol" yaml:"protocol" env:"PROTOCOL"`
@@ -99,9 +113,6 @@ type OTLPConfig struct {
 func (o OTLPConfig) enabled() bool {
 	return o.Endpoint != "" || o.Protocol != "" || o.Metrics || o.Traces || len(o.Headers) > 0
 }
-
-// listen reports whether the setup runs its own listener.
-func (p PrometheusConfig) listen() bool { return p.Listen == nil || *p.Listen }
 
 // Option configures a [Setup]. Options apply in argument order, so a later
 // option wins over an earlier one.
@@ -198,6 +209,12 @@ func (c Config) validate() error {
 		if !c.OTLP.Metrics && !c.OTLP.Traces {
 			errs = append(errs, fmt.Errorf("%w: OTLP enables neither Metrics nor Traces", ErrConfig))
 		}
+
+		if ep := c.OTLP.Endpoint; ep != "" {
+			if err := checkEndpoint(ep); err != nil {
+				errs = append(errs, fmt.Errorf("%w: OTLP.Endpoint %q: %w", ErrConfig, ep, err))
+			}
+		}
 	}
 
 	if c.FlushTimeout < 0 {
@@ -209,24 +226,55 @@ func (c Config) validate() error {
 			errs = append(errs, err)
 		}
 
-		if !strings.HasPrefix(c.Prometheus.Path, "/") {
-			errs = append(errs, fmt.Errorf("%w: Prometheus.Path %q must start with /", ErrConfig, c.Prometheus.Path))
+		if err := validatePath(c.Prometheus.Path); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
 	return errors.Join(errs...)
 }
 
-// validateAddr checks that addr is host:port with a numeric port.
+// validateAddr checks that addr is host:port with a numeric port; the host
+// may be empty (all interfaces).
 func validateAddr(addr string) error {
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
+	if _, err := splitHostPort(addr); err != nil {
 		return fmt.Errorf("%w: Prometheus.Addr %q: %w", ErrConfig, addr, err)
 	}
 
-	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return fmt.Errorf("%w: Prometheus.Addr %q: port %q is not a number in 0-65535", ErrConfig, addr, port)
+	return nil
+}
+
+// splitHostPort returns the host of addr, a host:port whose port is a
+// number in 0-65535.
+func splitHostPort(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
 	}
+
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return "", fmt.Errorf("port %q is not a number in 0-65535", port)
+	}
+
+	return host, nil
+}
+
+// validatePath checks that path starts with / and is a pattern
+// http.ServeMux accepts. ServeMux panics on a pattern it rejects, so the
+// path is registered on a throwaway mux under recover, before anything is
+// built or bound.
+func validatePath(path string) (err error) {
+	if !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%w: Prometheus.Path %q must start with /", ErrConfig, path)
+	}
+
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("%w: Prometheus.Path %q: %s", ErrConfig, path, engine.ValueText(v))
+		}
+	}()
+
+	http.NewServeMux().Handle(path, http.NotFoundHandler())
 
 	return nil
 }
