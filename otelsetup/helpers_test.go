@@ -22,25 +22,38 @@ var local = otelsetup.PrometheusConfig{Enabled: true, Addr: "127.0.0.1:0"}
 func setUp(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
 	t.Helper()
 
-	s, err := otelsetup.New(context.Background(), opts...)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := s.Shutdown(ctx); err != nil {
-			t.Errorf("Shutdown: %v", err)
-		}
-	})
+	s := newSetup(t, opts...)
+	t.Cleanup(func() { shutdown(t, s) })
 
 	if addr := s.MetricsAddr(); addr != "" {
 		registerClient(t, addr) // its cleanup runs before Shutdown
 	}
 
 	return s
+}
+
+// newSetup builds a setup the test shuts down itself.
+func newSetup(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
+	t.Helper()
+
+	s, err := otelsetup.New(context.Background(), opts...)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	return s
+}
+
+// shutdown shuts s down within 5s and fails t on an error.
+func shutdown(t *testing.T, s *otelsetup.Setup) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := s.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown: %v", err)
+	}
 }
 
 // fetch GETs url and returns the status and body.

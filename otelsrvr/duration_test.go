@@ -58,6 +58,8 @@ func TestDuration(t *testing.T) {
 // The global-provider rows replace the global MeterProvider, so the test
 // is not parallel and restores it.
 func TestDurationProvider(t *testing.T) {
+	checkGoroutines(t)
+
 	saved := otel.GetMeterProvider()
 	t.Cleanup(func() { otel.SetMeterProvider(saved) })
 

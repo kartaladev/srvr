@@ -14,6 +14,8 @@ import (
 // New that leaves the globals unchanged. It replaces the globals, so it is
 // not parallel and resets them.
 func TestSetGlobal(t *testing.T) {
+	checkGoroutines(t)
+
 	resetGlobals(t)
 
 	injects := func() bool {

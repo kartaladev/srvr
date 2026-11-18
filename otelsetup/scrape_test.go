@@ -120,6 +120,8 @@ func TestScrape(t *testing.T) {
 // TestScrapeDefaultAddr covers the default-address Scraping row: it binds
 // 127.0.0.1:9464, so it is not parallel.
 func TestScrapeDefaultAddr(t *testing.T) {
+	checkGoroutines(t)
+
 	s := setUp(t, otelsetup.WithPrometheus())
 	base := app(t, s, nil)
 	fetch(t, base+"/users/42")

@@ -38,6 +38,8 @@ func traced(t *testing.T, conf configFunc, srvOpts []srvr.Option, opts ...otelsr
 // global-provider row replaces the global TracerProvider, so the test is
 // not parallel and restores it.
 func TestTracingSwitch(t *testing.T) {
+	checkGoroutines(t)
+
 	saved := otel.GetTracerProvider()
 	t.Cleanup(func() { otel.SetTracerProvider(saved) })
 

@@ -65,6 +65,8 @@ func (kindCError) Error() string { return "c" }
 // TestFaultyLogger covers telemetry-setup "Faulty logger", all rows. It
 // sets the globals, so it is not parallel and resets them.
 func TestFaultyLogger(t *testing.T) {
+	checkGoroutines(t)
+
 	resetGlobals(t)
 
 	tests := []struct {

@@ -34,6 +34,8 @@ func (fieldsPanics) Fields() []string { panic("Fields panicked") }
 // faulty propagators (design D11). Rows using the global propagator
 // replace it, so the test is not parallel and restores it.
 func TestPropagation(t *testing.T) {
+	checkGoroutines(t)
+
 	saved := otel.GetTextMapPropagator()
 	t.Cleanup(func() { otel.SetTextMapPropagator(saved) })
 

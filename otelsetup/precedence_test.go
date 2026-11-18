@@ -14,6 +14,8 @@ import (
 // the service.name and flush-timeout rows. The environment rows use
 // t.Setenv, so the test is not parallel.
 func TestConfigPrecedence(t *testing.T) {
+	checkGoroutines(t)
+
 	t.Run("Config service.name beats OTEL_SERVICE_NAME", func(t *testing.T) {
 		t.Setenv("OTEL_SERVICE_NAME", "from-env")
 
@@ -56,6 +58,8 @@ func TestConfigPrecedence(t *testing.T) {
 // precedence", the OTLP endpoint rows, against fake collectors. It sets
 // the environment, so it is not parallel.
 func TestConfigPrecedence_OTLP(t *testing.T) {
+	checkGoroutines(t)
+
 	for _, explicit := range []bool{true, false} {
 		t.Run(map[bool]string{true: "explicit Endpoint wins", false: "environment fills an empty Endpoint"}[explicit], func(t *testing.T) {
 			fromEnv, fromConfig := newHTTPCollector(t, false), newHTTPCollector(t, false)

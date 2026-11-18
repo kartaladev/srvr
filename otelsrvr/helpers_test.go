@@ -27,6 +27,28 @@ func (f configFunc) Configure(g *srvr.Group) { f(g) }
 func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 	t.Helper()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	srv, done := startServing(ctx, t, conf, opts...)
+
+	t.Cleanup(func() {
+		cancel()
+
+		if err := <-done; err != nil {
+			t.Errorf("Start = %v", err)
+		}
+	})
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
+
+	return "http://" + srv.Addr()
+}
+
+// startServing starts a net/http srvr server with opts and conf on a
+// loopback port with ctx and waits until it is ready. It returns the
+// server and the channel Start's result arrives on; the caller stops it.
+func startServing(ctx context.Context, t *testing.T, conf configFunc, opts ...srvr.Option) (*srvr.Server, <-chan error) {
+	t.Helper()
+
 	opts = append([]srvr.Option{srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard)}, opts...)
 
 	srv, err := srvr.New(opts...)
@@ -38,18 +60,9 @@ func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 		t.Fatalf("Register: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
-
-	t.Cleanup(func() {
-		cancel()
-
-		if err := <-done; err != nil {
-			t.Errorf("Start = %v", err)
-		}
-	})
 
 	select {
 	case <-srv.Ready():
@@ -59,9 +72,7 @@ func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 		t.Fatal("server did not become ready")
 	}
 
-	registerClient(t, srv.Addr()) // its cleanup runs before the one above
-
-	return "http://" + srv.Addr()
+	return srv, done
 }
 
 // send sends a request and returns the status after reading the body.

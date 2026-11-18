@@ -45,16 +45,16 @@
 
 ## 4. Slice: otel module tests fail on leaked goroutines
 
-- [ ] 4.1 Leak check in `otelsrvr` and `otelsetup` (test-quality / Scenario: A goroutine left running fails the module's tests, otelsrvr and otelsetup rows); verify `GOWORK=off go test -race ./...` passes in both modules
+- [x] 4.1 Leak check in `otelsrvr` and `otelsetup` (test-quality / Scenario: A goroutine left running fails the module's tests, otelsrvr and otelsetup rows); verify `GOWORK=off go test -race ./...` passes in both modules
   - RED: add `goleak`, `TestMain` and `TestLeakCheck` to both; record the run (the probe found no leak: the leak-check rows' never-closed case is the RED)
   - GREEN: empty `leakOptions` unless a dependency goroutine is proven deliberate (then an ignore per D3 and a row in the spec through `/opsx:update`)
   - REFACTOR: /simplify
-- [ ] 4.2 otel lifecycles leave no goroutine (test-quality / Scenario: Lifecycle leaves no goroutine behind, otel rows); verify `GOWORK=off go test -race -run TestLifecycle_Goroutines .` passes in both modules
+- [x] 4.2 otel lifecycles leave no goroutine (test-quality / Scenario: Lifecycle leaves no goroutine behind, otel rows); verify `GOWORK=off go test -race -run TestLifecycle_Goroutines .` passes in both modules
   - RED: `TestLifecycle_Goroutines` in `otelsrvr` (traced server, SDK tracer provider shut down) and `otelsetup` (Prometheus listener with a scrape, OTLP HTTP to the test collector, OTLP gRPC to an unreachable endpoint, `New` failing on a bound address, never `Shutdown` -> reported naming the metrics server's serve goroutine); add `checkGoroutines` to the existing non-parallel tests that start listeners or exporters (`TestExportFailure`, `TestFaultyLogger`, `TestSetGlobal`, `TestConfigPrecedence`, `TestConfigPrecedence_OTLP`, `TestScrapeDefaultAddr`, `TestTracingSwitch`, `TestPropagation`, `TestDurationProvider`) where they do
   - GREEN: `checkGoroutines` per module; production change only for a proven srvr leak (D6)
   - REFACTOR: Parameterize Function, then /simplify
-- [ ] 4.3 Verify slice end to end: in `otelsrvr` and `otelsetup` run `GOWORK=off` vet, golangci-lint, `go test -race ./...` and coverage (`Setup.Shutdown`, `listen`, `stopListener` unchanged or higher); `TestNoSDKDependency` still passes; gopls diagnostics; `pgrep -fl '\.test'` after each test command shows no binary of this repository
-- [ ] 4.4 Run /simplify on the slice's changes, re-run both modules' tests, and commit `test(otel): fail otelsrvr and otelsetup tests on leaked goroutines`; verify with `git log -1 --stat`
+- [x] 4.3 Verify slice end to end: in `otelsrvr` and `otelsetup` run `GOWORK=off` vet, golangci-lint, `go test -race ./...` and coverage (`Setup.Shutdown`, `listen`, `stopListener` unchanged or higher); `TestNoSDKDependency` still passes; gopls diagnostics; `pgrep -fl '\.test'` after each test command shows no binary of this repository
+- [x] 4.4 Run /simplify on the slice's changes, re-run both modules' tests, and commit `test(otel): fail otelsrvr and otelsetup tests on leaked goroutines`; verify with `git log -1 --stat`
 
 ## 5. Slice: parity tests, every-package guard and project rules
 

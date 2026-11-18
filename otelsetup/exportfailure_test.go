@@ -53,6 +53,8 @@ func (b *logBuffer) records(t *testing.T, msg string) []map[string]any {
 // traffic", all rows. It sets the environment and the globals, so it is
 // not parallel and resets them.
 func TestExportFailure(t *testing.T) {
+	checkGoroutines(t)
+
 	resetGlobals(t)
 
 	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "20") // milliseconds
