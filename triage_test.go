@@ -239,7 +239,7 @@ func TestTriage_Aborted(t *testing.T) {
 
 			base, out := loggedServer(t, func(g *srvr.Group) { g.GET("/x", tt.h) })
 			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/x", nil)
-			if res, err := http.DefaultClient.Do(req); err == nil {
+			if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 				_, rerr := io.ReadAll(res.Body)
 				res.Body.Close()
 				if tt.status == nil || rerr == nil {

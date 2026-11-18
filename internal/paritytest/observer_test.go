@@ -2,11 +2,14 @@ package paritytest
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/otelsrvr"
@@ -210,4 +213,70 @@ func viewOf(run observedRun, route string, sameSize bool) parityView {
 		responseSize: res.ResponseBodySize, requestSize: res.RequestBodySize,
 		attrs: set.Equivalent(),
 	}
+}
+
+// TestObserverAborts covers request-observer "Aborts and late failures per
+// engine", all rows.
+func TestObserverAborts(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		start              func(*testing.T, outcome, ...srvr.Option) (string, *logBuffer)
+		outcome            outcome
+		status             int
+		aborted, committed bool
+		accessSize         bool // the size is the access record's (and not 0)
+	}{
+		{"net/http aborts", startNetHTTP, panicsAbort, 0, true, false, false},
+		{"gin aborts", startGin, panicsAbort, 0, true, false, false},
+		// Documented fiber exception: fasthttp has no abort sentinel, so
+		// the panic is recovered like any other and rendered as a problem.
+		{"fiber aborts", startFiber, panicsAbort, http.StatusInternalServerError, false, false, true},
+		{"fiber streams and then fails", startFiberStreamLate, succeeds, http.StatusOK, false, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := &resultObserver{}
+			base, logs := tt.start(t, tt.outcome, srvr.WithObserver(rec))
+			_, _, _ = send(t, http.MethodGet, base+"/items/42", nil) // an abort is a transport error
+
+			access := logs.access(t) // the access record follows the end functions
+			res := rec.only(t)
+
+			if res.Status != tt.status || res.Aborted != tt.aborted || res.Committed != tt.committed {
+				t.Errorf("ResultInfo status %d aborted %v committed %v, want %d %v %v", res.Status, res.Aborted, res.Committed, tt.status, tt.aborted, tt.committed)
+			}
+
+			var want int64
+			if tt.accessSize {
+				size, _ := access[0]["http.response.body.size"].(float64)
+				if want = int64(size); want == 0 {
+					t.Errorf("access record size 0: %v", access[0])
+				}
+			}
+
+			if res.ResponseBodySize != want {
+				t.Errorf("ResponseBodySize = %d, want %d (access record %v)", res.ResponseBodySize, want, access[0])
+			}
+		})
+	}
+}
+
+// startFiberStreamLate starts a fiber server whose /items/:id handler
+// streams "streamed" with its declared length and then fails; the outcome
+// is ignored.
+func startFiberStreamLate(t *testing.T, _ outcome, opts ...srvr.Option) (string, *logBuffer) {
+	t.Helper()
+
+	return fiberServer(t, func(r fiber.Router) {
+		r.Get("/items/:id", func(c fiber.Ctx) error {
+			_ = c.SendStream(strings.NewReader("streamed"), len("streamed")) // a declared length
+
+			return errors.New("late")
+		})
+	}, opts...)
 }

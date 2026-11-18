@@ -19,15 +19,17 @@ func TestSpanShape(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		outcome outcome
-		path    string
-		route   bool
-		status  codes.Code
+		name      string
+		outcome   outcome
+		path      string
+		route     bool
+		status    codes.Code
+		exception string // exception.type of the exception event, "" for none
 	}{
-		{"writes 200", succeeds, "/items/42", true, codes.Unset},
-		{"returns boom", failsBoom, "/items/42", true, codes.Error},
-		{"unmatched", succeeds, "/nope", false, codes.Unset},
+		{"writes 200", succeeds, "/items/42", true, codes.Unset, ""},
+		{"returns boom", failsBoom, "/items/42", true, codes.Error, ""},
+		{"unmatched", succeeds, "/nope", false, codes.Unset, ""},
+		{"panics", panicsBoom, "/items/42", true, codes.Error, "string"},
 	}
 
 	for _, e := range engines {
@@ -61,6 +63,10 @@ func TestSpanShape(t *testing.T) {
 					t.Fatalf("want one span %q with status %v", want, tt.status)
 				}
 
+				if got := exceptionType(spans[0]); got != tt.exception {
+					t.Errorf("exception.type = %q, want %q (events %v)", got, tt.exception, spans[0].Events())
+				}
+
 				// The span continues the incoming trace, and the access
 				// record carries the span's ids, on every engine.
 				sc := spans[0].SpanContext()
@@ -74,4 +80,22 @@ func TestSpanShape(t *testing.T) {
 			})
 		}
 	}
+}
+
+// exceptionType returns the exception.type of span's exception event, or
+// "" without one.
+func exceptionType(span sdktrace.ReadOnlySpan) string {
+	for _, ev := range span.Events() {
+		if ev.Name != "exception" {
+			continue
+		}
+
+		for _, kv := range ev.Attributes {
+			if kv.Key == "exception.type" {
+				return kv.Value.AsString()
+			}
+		}
+	}
+
+	return ""
 }

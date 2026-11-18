@@ -44,7 +44,6 @@ func app(t *testing.T, s *otelsetup.Setup, conf configFunc) string {
 	go func() { done <- srv.Start(ctx) }()
 
 	t.Cleanup(func() {
-		http.DefaultClient.CloseIdleConnections()
 		cancel()
 
 		if err := <-done; err != nil {
@@ -59,6 +58,8 @@ func app(t *testing.T, s *otelsetup.Setup, conf configFunc) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("not ready")
 	}
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
 }

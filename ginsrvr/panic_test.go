@@ -59,7 +59,7 @@ func TestGinPanic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_ = res.Body.Close()
 			t.Fatalf("got response %d, want an aborted connection", res.StatusCode)
 		}
@@ -85,7 +85,7 @@ func TestGinAbortRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if res, err := http.DefaultClient.Do(req); err == nil {
+	if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 		_ = res.Body.Close()
 	}
 

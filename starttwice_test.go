@@ -91,7 +91,7 @@ func TestStart_Twice(t *testing.T) {
 		}
 
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/", nil)
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			res.Body.Close()
 			t.Fatal("a request after stop was served: the server must stay stopped")
 		}

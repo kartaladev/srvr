@@ -2,6 +2,13 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Slice 8 notes: test harness and parity (tasks 9.6-9.9, 2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** 9.6: a pure refactor first routed the core helpers' client and cleanup through `clientFor`/`releaseClient` seams that still used `http.DefaultClient` (suite green). RED with the scratch reproduction adapted to the seams (`harness_test.go` `TestHarness_CleanupKeepsOtherClients`, requests to one started server while another server's cleanup runs in a loop): `GET /ok: Get "http://127.0.0.1:64522/ok": net/http: HTTP/1.x transport connection broken: http: CloseIdleConnections called`, the failure `TestPanicRecovery/string` showed. The race is probabilistic (1 run in 10 under the old behaviour, the others also ran out of ephemeral ports because every closed idle connection forced a new dial), so a deterministic row was added: after another server's cleanup, the next request to this server must reuse its idle connection (`httptrace` `GotConn.Reused`); under the old behaviour it failed 3 of 3 runs (`another server's cleanup closed this server's idle connection`). GREEN: `clients_test.go` in each of core, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` and `internal/paritytest`: `registerClient(t, addr)` gives every started server (and otelsetup's metrics listener) its own `http.Client` and cloned `http.Transport` (`MaxIdleConnsPerHost` 16), closing only its idle connections at cleanup, before the server stops; `clientFor(url)` picks it, falling back to `http.DefaultClient` for servers the helpers did not start; direct `http.DefaultClient.Do` calls against started servers moved to `clientFor` (examples, which run after all tests, keep `http.DefaultClient`). After: `-count=20` of the harness test passed, and 10 sequential foreground runs of `GOWORK=off go test -race -count=1 -json ./...` in the core all passed (0 failures). 9.7: the abort, streamed-fiber and span panic rows passed at first run as guards; the streamed row declares the stream length, because fiber logs an undeclared stream length as 0 (engine-parity), which would make the size comparison vacuous (spec row updated). 9.8: the `https` branch of `httpRequestInfo` had 0 hits in the core package's coverage before the TLS row (`srvr.WithListener(tls.NewListener(...))` with an `httptest` certificate) and is covered after; the row passed at first run as a guard. /simplify: the stress row yields in its close loop and is skipped with `-short` (the deterministic row is the guard); `TestObserverAborts` takes an `outcome` per row instead of wrapper closures. Not adopted: a shared non-test `internal/testhttp` package instead of six `clients_test.go` copies (it would ship test-only code in the core module), failing loudly in `clientFor` for an unregistered host (core tests started by `startWith`/`startBackground` rely on the fallback), and a host-taking `clientFor` variant (cosmetic).
+- **Evidence:** core `harness_test.go`, `clients_test.go`, `observer_test.go` `TestObserver_RequestInfo/TLS`; `internal/paritytest/observer_test.go` `TestObserverAborts`, `spanshape_test.go` `TestSpanShape/*/panics`.
+- **Suggested action:** none.
+
 ### Slice 8 notes: otelsetup fixes (tasks 9.1-9.5, 2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability
@@ -10,7 +17,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Verification 2026-11-18 folded into the plan (task group 9)
-- **Status:** open: planned as task group 9
+- **Status:** closed: applied (task group 9; see the two "Slice 8 notes" entries)
 - **Target:** otel-observability
 - **Context:** `/opsx:verify` after task group 8 found: C1 an unparsable OTLP `Endpoint` is silently replaced by the SDK default (`otlp.go` passes it to `WithEndpointURL`, which ignores a `url.Parse` error); W1 a `Prometheus.Path` that `ServeMux` rejects panics in `mux.Handle` after the listener is bound, leaking the port; W2 design D11 contradicted the code and spec (a later `Shutdown` returns `nil`, panicking SDK `Shutdown`/`ForceFlush` are not guarded, `sync.Once` makes concurrent callers wait); W3 the export error handler calls the consumer's logger without `recover`, from the SDK's export goroutines; W4 a core test-harness race (shared `http.DefaultClient`, every `startServer` cleanup calls `CloseIdleConnections`), seen as `TestPanicRecovery/string ... http: CloseIdleConnections called`; S1 `otelsrvr`'s `go.mod` requires the SDK (tests only); S2 missing observer and span parity rows (aborts, a streamed fiber body with a late error, panics); S3 spec rows used `collector:4318` where the examples use `http://collector:4318`; S4 the metrics listener limits were undocumented; S5 the `https` branch of `httpRequestInfo` was untested. Owner decisions 2026-11-18: replace `PrometheusConfig.Listen *bool` with `DisableListener bool` (zero value listens; no shim before v0.1.0); S1 is documented now and its fix is a carry-over (below); the unmatched-404 parity defect stays an unassigned carry-over. Refreshed: specs telemetry-setup, request-observer and otel-tracing, design (slice 8 and the decisions it names), tasks (group 9; task 7.6's GREEN text corrected). `openspec validate otel-observability --strict` passes.
 - **Evidence:** scratch reproductions `otelsetup_config_repro_test.go.txt` (C1, W1), `otelsetup_logger_repro_test.go.txt` (W3), `flake_repro_test.go.txt` (W4); each becomes the RED step of its task in group 9.
@@ -67,11 +74,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### One unreproduced failure of the core test suite (2026-11-18)
-- **Status:** open (unconfirmed)
-- **Target:** unassigned
+- **Status:** closed: cause found and fixed in otel-observability task 9.6
+- **Target:** otel-observability
 - **Context:** During slice 5, one `GOWORK=off go test -race -count=1 ./...` run of the core module ended in `FAIL` for package `github.com/kartaladev/srvr`; the failing test's output was cut off by `tail`. Six further full runs (three `./...`, three `.`) passed. No test was identified, so it is a hypothesis, not a defect.
 - **Evidence:** unverified: output lost; later runs now keep full output in a file.
-- **Suggested action:** if it recurs, keep the full output and reproduce the named test with a targeted high `-count` run.
+- **Suggested action:** if it recurs, keep the full output and reproduce the named test with a targeted high `-count` run. Resolved 2026-11-18: the verification of this change caught it with its name, `TestPanicRecovery/string ... http: CloseIdleConnections called`. Cause: a test-harness race, not a srvr defect. Parallel tests shared `http.DefaultClient`, and every `startServer` cleanup called `http.DefaultClient.CloseIdleConnections()`, breaking a connection another test was reusing mid-request. Reproduced by `TestHarness_CleanupKeepsOtherClients` and fixed with a client per started server in every module's helpers (task 9.6). The archived `core-server` entry "One unreproduced failure of the core test suite" (closed there with a different, proven cause) also mentions earlier failures whose names were cut off. Those unnamed failures fit this race as well, but that cannot be confirmed after the fact. The archived file is left unchanged.
 
 ### Slice 4 notes (2026-11-18)
 - **Status:** closed: applied

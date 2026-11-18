@@ -43,7 +43,7 @@ func TestHostileValues(t *testing.T) {
 				// encoding is checked on the record instead.
 				req.Header["User-Agent"] = []string{"curl/8.0"}
 			}
-			res, err := http.DefaultClient.Do(req)
+			res, err := clientFor(req.URL.String()).Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}

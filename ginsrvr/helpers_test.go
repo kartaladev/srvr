@@ -137,7 +137,6 @@ func start(t *testing.T, srv *ginsrvr.Server) string {
 	})
 
 	t.Cleanup(func() {
-		http.DefaultClient.CloseIdleConnections()
 		cancel()
 		if err := wait(); err != nil {
 			t.Errorf("Start = %v at cleanup", err)
@@ -152,6 +151,8 @@ func start(t *testing.T, srv *ginsrvr.Server) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("not ready")
 	}
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
 }
@@ -199,7 +200,7 @@ func do(t *testing.T, method, url string, body io.Reader, header map[string]stri
 		req.Header.Set(k, v)
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(url).Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

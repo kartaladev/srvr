@@ -2,8 +2,11 @@ package srvr_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -262,7 +265,7 @@ func TestObserver_Abort(t *testing.T) {
 	obs, base := observed(t, on("", "/users/{id}", func(http.ResponseWriter, *http.Request) error { panic(http.ErrAbortHandler) }))
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/users/42", nil)
-	if res, err := http.DefaultClient.Do(req); err == nil {
+	if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 		_ = res.Body.Close()
 		t.Fatalf("status %d, want an aborted connection", res.StatusCode)
 	}
@@ -276,7 +279,7 @@ func TestObserver_Abort(t *testing.T) {
 }
 
 // TestObserver_RequestInfo pins what Begin learns: the header reader, the
-// path only with IncludePath, and the ignore-incoming flag.
+// path only with IncludePath, the ignore-incoming flag and the scheme.
 func TestObserver_RequestInfo(t *testing.T) {
 	t.Parallel()
 
@@ -285,10 +288,12 @@ func TestObserver_RequestInfo(t *testing.T) {
 		opts   []srvr.Option
 		path   string
 		ignore bool
+		tls    bool
 	}{
-		{"defaults", nil, "", false},
-		{"include path", []srvr.Option{srvr.WithAccessLogIncludePath()}, "/ping", false},
-		{"ignore incoming", []srvr.Option{srvr.WithIgnoreIncomingTraceContext()}, "", true},
+		{"defaults", nil, "", false, false},
+		{"include path", []srvr.Option{srvr.WithAccessLogIncludePath()}, "/ping", false, false},
+		{"ignore incoming", []srvr.Option{srvr.WithIgnoreIncomingTraceContext()}, "", true, false},
+		{"TLS", nil, "", false, true},
 	}
 
 	for _, tt := range tests {
@@ -311,13 +316,21 @@ func TestObserver_RequestInfo(t *testing.T) {
 				return ctx, nil
 			})
 
-			base, _ := loggedServer(t, okRoute("/ping"), append(tt.opts, srvr.WithObserver(obs))...)
-			do(t, http.MethodGet, base+"/ping", nil, map[string]string{"X-Probe": "yes"})
+			opts := append(slices.Clone(tt.opts), srvr.WithObserver(obs))
+			scheme := "http"
+
+			if tt.tls {
+				scheme = "https"
+				getTLS(t, okRoute("/ping"), "/ping", map[string]string{"X-Probe": "yes"}, opts...)
+			} else {
+				base, _ := loggedServer(t, okRoute("/ping"), opts...)
+				do(t, http.MethodGet, base+"/ping", nil, map[string]string{"X-Probe": "yes"})
+			}
 
 			mu.Lock()
 			defer mu.Unlock()
 
-			if got.Path != tt.path || got.IgnoreIncomingTrace != tt.ignore || got.Method != http.MethodGet || got.Scheme != "http" {
+			if got.Path != tt.path || got.IgnoreIncomingTrace != tt.ignore || got.Method != http.MethodGet || got.Scheme != scheme {
 				t.Errorf("RequestInfo = %+v", got)
 			}
 
@@ -326,4 +339,35 @@ func TestObserver_RequestInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// getTLS serves conf over TLS (a test certificate on a WithListener
+// listener) and sends GET path with header through a client trusting it.
+func getTLS(t *testing.T, conf configFunc, path string, header map[string]string, opts ...srvr.Option) {
+	t.Helper()
+
+	cert := httptest.NewUnstartedServer(nil) // only for its certificate and client
+	cert.StartTLS()
+	client := cert.Client()
+	cfg := cert.TLS.Clone()
+	cert.Close()
+
+	srv, err := srvr.New(append([]srvr.Option{srvr.WithListener(tls.NewListener(listen(t), cfg)), srvr.WithLogOutput(io.Discard)}, opts...)...)
+	mustNil(t, err)
+	mustNil(t, srv.Register(conf))
+	startServer(t, srv)
+	t.Cleanup(client.CloseIdleConnections) // before the server stops
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+srv.Addr()+path, http.NoBody)
+	mustNil(t, err)
+
+	for k, v := range header {
+		req.Header.Set(k, v)
+	}
+
+	res, err := client.Do(req)
+	mustNil(t, err)
+
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
 }

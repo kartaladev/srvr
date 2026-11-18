@@ -48,7 +48,7 @@ A server configured with `WithObserver(o)` SHALL call `o.Begin(ctx, RequestInfo)
 | net/http | panics with `http.ErrAbortHandler` | `0` | `true` | `false` | `0` |
 | gin | panics with `http.ErrAbortHandler` | `0` | `true` | `false` | `0` |
 | fiber | panics with `http.ErrAbortHandler` | `500` | `false` | `false` | the problem body length (documented fiber exception: fasthttp has no abort sentinel, so the panic is recovered like any other) |
-| fiber | streams the body `streamed` with `SendStream` and then returns `errors.New("late")` | `200` | `false` | `true` | the access record's response size |
+| fiber | streams the body `streamed` with `SendStream` and its declared length `8`, then returns `errors.New("late")` | `200` | `false` | `true` | the access record's response size (`8`) |
 
 ### Requirement: Observers sit between the access log and recovery
 The observer SHALL run inside trace-context handling and the access log and outside panic recovery and error rendering (ginprblm middleware, fiberprblm error handler), so it sees the request's trace id at `Begin` and the final rendered status, including recovered panics, returned errors and unmatched 404/405, at end. The observer SHALL NOT render errors itself.

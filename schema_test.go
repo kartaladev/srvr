@@ -92,7 +92,7 @@ func TestLogSchemaGolden(t *testing.T) {
 
 	for path, want := range map[string][]string{"/panic": goldenPanicKeys, "/abort": goldenAbortedKeys} {
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+path, nil)
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_, _ = io.Copy(io.Discard, res.Body)
 			res.Body.Close()
 		}

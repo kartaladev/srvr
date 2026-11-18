@@ -36,6 +36,10 @@ func setUp(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
 		}
 	})
 
+	if addr := s.MetricsAddr(); addr != "" {
+		registerClient(t, addr) // its cleanup runs before Shutdown
+	}
+
 	return s
 }
 
@@ -48,7 +52,7 @@ func fetch(t *testing.T, url string) (int, string) {
 		t.Fatal(err)
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(url).Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}

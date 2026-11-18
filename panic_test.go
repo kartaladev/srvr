@@ -40,7 +40,7 @@ func TestPanicRecovery(t *testing.T) {
 
 			if tt.aborted {
 				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/panic", nil)
-				if res, err := http.DefaultClient.Do(req); err == nil {
+				if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 					res.Body.Close()
 					t.Fatalf("got a response %d, want an aborted connection", res.StatusCode)
 				}
@@ -90,7 +90,7 @@ func TestLateError(t *testing.T) {
 			})
 
 			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/late", nil)
-			res, err := http.DefaultClient.Do(req)
+			res, err := clientFor(req.URL.String()).Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}

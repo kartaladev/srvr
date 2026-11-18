@@ -44,7 +44,6 @@ func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 	go func() { done <- srv.Start(ctx) }()
 
 	t.Cleanup(func() {
-		http.DefaultClient.CloseIdleConnections()
 		cancel()
 
 		if err := <-done; err != nil {
@@ -59,6 +58,8 @@ func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not become ready")
 	}
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
 }
@@ -76,7 +77,7 @@ func send(t *testing.T, method, url, body string) int {
 		req.Body = http.NoBody
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(url).Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

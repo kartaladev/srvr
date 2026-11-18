@@ -16,7 +16,7 @@ func inFlight(url string) <-chan int {
 
 	go func() {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
-		res, err := http.DefaultClient.Do(req)
+		res, err := clientFor(req.URL.String()).Do(req)
 		if err != nil {
 			out <- -1
 

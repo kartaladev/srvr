@@ -56,7 +56,7 @@ func TestFiberStreamNotBuffered(t *testing.T) {
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(req.URL.String()).Do(req)
 	if err != nil {
 		t.Fatalf("no response while the stream is open: %v", err)
 	}

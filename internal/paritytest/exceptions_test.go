@@ -65,7 +65,7 @@ func disconnecting(t *testing.T, base, path string, entered <-chan struct{}) {
 		defer close(done)
 
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_ = res.Body.Close()
 		}
 	}()
@@ -350,7 +350,7 @@ func TestParity_Exceptions(t *testing.T) {
 		defer cancel()
 
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/x", nil)
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_ = res.Body.Close()
 			t.Fatalf("got %d, want no response", res.StatusCode)
 		}

@@ -198,7 +198,6 @@ func run(t *testing.T, srv server) string {
 	go func() { done <- srv.Start(ctx) }()
 
 	t.Cleanup(func() {
-		http.DefaultClient.CloseIdleConnections()
 		cancel()
 		select {
 		case err := <-done:
@@ -215,6 +214,8 @@ func run(t *testing.T, srv server) string {
 	case <-time.After(5 * time.Second):
 		t.Fatal("not ready")
 	}
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
 }
@@ -250,7 +251,7 @@ func send(t *testing.T, method, url string, header map[string]string) (*http.Res
 		req.Header.Set(k, v)
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(url).Do(req)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -58,9 +58,6 @@ func startServer(t *testing.T, srv *srvr.Server) string {
 	go func() { done <- srv.Start(ctx) }()
 
 	t.Cleanup(func() {
-		// Idle client connections, including ones the transport dialed
-		// speculatively and never used, would hold the drain for up to 5s.
-		http.DefaultClient.CloseIdleConnections()
 		cancel()
 		select {
 		case err := <-done:
@@ -73,6 +70,8 @@ func startServer(t *testing.T, srv *srvr.Server) string {
 	})
 
 	waitReady(t, srv, done)
+
+	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
 }
@@ -99,7 +98,7 @@ func do(t *testing.T, method, url string, body io.Reader, header map[string]stri
 		req.Header.Set(k, v)
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := clientFor(url).Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

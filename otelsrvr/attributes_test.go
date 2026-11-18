@@ -133,7 +133,7 @@ func sendRaw(t *testing.T, method, url string) {
 		t.Fatalf("NewRequest: %v", err)
 	}
 
-	if res, err := http.DefaultClient.Do(req); err == nil {
+	if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 		_ = res.Body.Close()
 	}
 }

@@ -75,7 +75,7 @@ func TestPropagation(t *testing.T) {
 				req.Header.Set("traceparent", tt.traceparent)
 			}
 
-			res, err := http.DefaultClient.Do(req)
+			res, err := clientFor(req.URL.String()).Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -103,7 +103,7 @@ func TestFiberForcedCancel(t *testing.T) {
 
 	go func() {
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/block", nil)
-		if res, err := http.DefaultClient.Do(req); err == nil {
+		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_ = res.Body.Close()
 		}
 	}()

@@ -70,7 +70,7 @@ func TestSpanCorrelation(t *testing.T) {
 		})
 	}), []srvr.Option{srvr.WithLogOutput(logs)}, otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(tp))
 
-	res, err := http.Get(base + "/fail")
+	res, err := clientFor(base).Get(base + "/fail")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSpanCorrelationUnsampled(t *testing.T) {
 				req.Header.Set("traceparent", tt.traceparent)
 			}
 
-			res, err := http.DefaultClient.Do(req)
+			res, err := clientFor(req.URL.String()).Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}
