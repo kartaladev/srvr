@@ -78,27 +78,27 @@
 
 ## 5. Slice: derived loggers, concurrency, late records and faults
 
-- [ ] 5.1 Derived loggers share the buffer (triage-debug-buffer / Scenario: Derived loggers, all rows); verify `go test -race -run TestDebugBuffer_Derived` passes
+- [x] 5.1 Derived loggers share the buffer (triage-debug-buffer / Scenario: Derived loggers, all rows); verify `go test -race -run TestDebugBuffer_Derived` passes
   - RED: table with `With`, `WithGroup`, default logger and a derived context value; fails because derived handlers lose the buffer, attributes or context, or nest `srvr.buffered` under the group, or `trace_id` under the group (assert top-level `trace_id`, relying on core-server's replay)
   - GREEN: entries store the derived `logHandler` (with its recorded steps) and the call-time context; replay adds the marker ahead of the steps
   - REFACTOR: /simplify
-- [ ] 5.2 Concurrent logging in one request (triage-debug-buffer / Scenario: Concurrent logging in one request, both rows); verify `go test -race -count=20 -run TestDebugBuffer_Concurrent` passes
+- [x] 5.2 Concurrent logging in one request (triage-debug-buffer / Scenario: Concurrent logging in one request, both rows); verify `go test -race -count=20 -run TestDebugBuffer_Concurrent` passes
   - RED: table; fails with a data race or lost counts
   - GREEN: mutex-guarded append and counters
   - REFACTOR: /simplify
-- [ ] 5.3 Late records after the request ends (triage-debug-buffer / Scenario: Late records, all rows); verify `go test -race -run TestDebugBuffer_Late` passes
+- [x] 5.3 Late records after the request ends (triage-debug-buffer / Scenario: Late records, all rows); verify `go test -race -run TestDebugBuffer_Late` passes
   - RED: table with goroutines logging after completion; fails because late records are appended or written twice
   - GREEN: seal under the mutex at the outcome point, sealed buffers fall back to the level rule
   - REFACTOR: /simplify
-- [ ] 5.4 Fault-tolerant flush (triage-debug-buffer / Scenario: Faulty handler during flush, all rows); verify `go test -race -run TestDebugBuffer_Faults` passes
+- [x] 5.4 Fault-tolerant flush (triage-debug-buffer / Scenario: Faulty handler during flush, all rows); verify `go test -race -run TestDebugBuffer_Faults` passes
   - RED: table with erroring and panicking consumer handler; fails because flushing stops or the response changes
   - GREEN: per-entry guarded replay counting `LogWriteErrors()`
   - REFACTOR: /simplify
-- [ ] 5.5 Redaction, truncation and consumer level filters on flushed records (triage-debug-buffer / Scenario: Redaction and truncation apply to flushed records; Scenario: Consumer handler with its own level filter); verify `go test -race -run 'TestDebugBuffer_Redaction|TestDebugBuffer_ConsumerFilter'` passes
+- [x] 5.5 Redaction, truncation and consumer level filters on flushed records (triage-debug-buffer / Scenario: Redaction and truncation apply to flushed records; Scenario: Consumer handler with its own level filter); verify `go test -race -run 'TestDebugBuffer_Redaction|TestDebugBuffer_ConsumerFilter'` passes
   - RED: tables including the error-value and `msg` rows; fails if replay bypasses truncation or calls `Enabled`
   - GREEN: replay through the stored derived handler's `Handle` only
   - REFACTOR: /simplify
-- [ ] 5.6 Verify slice end to end, confirm seal, replay-guard and derived-handler branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): make debug buffering safe under concurrency and faults`
+- [x] 5.6 Verify slice end to end, confirm seal, replay-guard and derived-handler branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): make debug buffering safe under concurrency and faults`
 
 ## 6. Slice: engine parity and unusual endings
 

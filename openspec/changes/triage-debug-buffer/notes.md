@@ -170,3 +170,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** 4.1 failed for the expected reason (fixed threshold) and passed with `FlushStatus` resolved. In 4.2 the lowered rows already passed after 4.1, while the rejected rows failed until the 100-599 range check; the rejected rows now sit in `TestDebugBuffer_InvalidLimits`, with accepted boundary rows 100 and 599. In 4.3 and 4.4 the behaviour already existed: `writeAccess` discards when it suppresses the record (slice 2), and `Handle` evaluates the level at call time. So the RED step was replaced by mutation checks, each reverted, and both tests fail under their mutation: `TestDebugBuffer_Suppressed` when the `written` check is removed from `flushBuffer`, and `TestDebugBuffer_LevelVar` when `Handle` prefers the buffer over the call-time level. 4.3 also fixed two rows of the spec delta (separate entry above). /simplify: the "a later `WithLogConfig` replaces `DebugBuffer`" rule now lives on `WithLogConfig`, and the buffer options point to it; the test tables are simpler (`boolInt` removed, the threshold column dropped). Skipped: a row-wrapper helper for `TestDebugBuffer_Config` (low value).
 - **Evidence:** `GOWORK=off go test -race ./...`, `go vet` and `golangci-lint` pass; `newBufferPolicy`, `validateDebugBuffer`, `staticLevel`, `parseLevel` and `shouldFlush` are at 100% in `go tool cover -func`.
 - **Suggested action:** none.
+
+### Slice 5 (tasks 5.1-5.6): outcome
+- **Status:** closed: recorded
+- **Target:** triage-debug-buffer
+- **Context:** this slice is tests only. The behaviours it specifies already existed by design from slices 2-3: entries keep the derived `logHandler` and the call-time context, the buffer has a mutex, it is sealed at the outcome point, replay is guarded per record and does not call `Enabled`, and records are truncated when buffered. No RED could fail, so each test was checked against a targeted mutation, each reverted:
+  - buffering with `context.Background()` makes the "derived context" row of `TestDebugBuffer_Derived` fail;
+  - removing the mutex from `add` makes `TestDebugBuffer_Concurrent` report 14 data races;
+  - removing the sealed check from `add` makes `TestDebugBuffer_LateKeepsNothing` fail ("a late record holds 512 bytes of the budget");
+  - asking `baseEnabled` on replay makes both rows of `TestDebugBuffer_ConsumerFilter` fail;
+  - skipping truncation when buffering makes four rows of `TestDebugBuffer_Redaction` fail.
+
+  The engine test `TestDebugBuffer_LateKeepsNothing` covers a risk the public tests cannot see: a record added after the seal would never be written, but it would hold budget forever. /simplify replaced three consumer-handler wrapper types with one `hookHandler`, and four hand-built servers with `consumerServer`.
+- **Evidence:** `GOWORK=off go test -race ./...`, `go vet ./...` and `golangci-lint run ./...` pass; every function in `engine/debugbuffer.go` is at 100% in `go tool cover -func`.
+- **Suggested action:** none.

@@ -285,3 +285,32 @@ func TestStaticLevel(t *testing.T) {
 		})
 	}
 }
+
+// TestDebugBuffer_LateKeepsNothing covers triage-debug-buffer /
+// Requirement: Records after the request ends are not buffered: a record
+// logged after the outcome neither reaches the sealed buffer nor holds
+// budget, whether it comes through Handle (Enabled was asked before the
+// seal) or after Enabled is asked.
+func TestDebugBuffer_LateKeepsNothing(t *testing.T) {
+	t.Parallel()
+
+	c := bufferedCore(t, func(*Settings) {})
+	ctx := c.BeginRequest(t.Context(), nil)
+	c.WriteAccess(ctx, AccessInfo{Method: "GET", Status: 500})
+
+	if c.log.Enabled(ctx, slog.LevelDebug) {
+		t.Error("DEBUG enabled after the request ended")
+	}
+
+	if err := c.log.Handle(ctx, entryOf(t, c, 512)); err != nil {
+		t.Fatal(err)
+	}
+
+	if used := c.log.buffering.budget.used.Load(); used != 0 {
+		t.Errorf("a late record holds %d bytes of the budget", used)
+	}
+
+	if n := len(requestFrom(ctx).buffer.entries); n != 0 {
+		t.Errorf("the sealed buffer holds %d records", n)
+	}
+}
