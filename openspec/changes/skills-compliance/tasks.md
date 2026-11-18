@@ -92,15 +92,15 @@
 
 ## 5. Slice: engine-support and engine API
 
-- [ ] 5.1 Typed `ConfigError` (engine-support / Scenario: Configuration errors name their field, all rows; Scenario: srvr names are the engine declarations still green); verify `go test -race -run 'TestConfigError|TestSentinels'` passes
+- [x] 5.1 Typed `ConfigError` (engine-support / Scenario: Configuration errors name their field, all rows; Scenario: srvr names are the engine declarations still green); verify `go test -race -run 'TestConfigError|TestSentinels'` passes
   - RED: the five rows with `errors.As` into `*srvr.ConfigError`; fails because no such type exists (add the alias first so RED is `false`, not a compile error)
   - GREEN: `type ConfigError struct{ Field, Value, Reason string }` with `Error()` keeping today's text and `Unwrap()` returning `ErrConfig`; `NewConfigError`; gopls rename of every `ConfigError(` call; `srvr.ConfigError` alias
   - REFACTOR: /simplify
-- [ ] 5.2 Pure renames with gopls: `engine.RouteError` to `RouteErrorf`, `engine.ForEngine` to `Only` (parameter `engineName`), `ginsrvr.WithEngine` to `WithGinEngine` (engine-support / Scenario: Engine-specific option placement; gin-engine / Scenario: Engine hook, renamed rows); verify `go build ./...` and `go test -race ./...` pass in core, `ginsrvr` and `fibersrvr`, and `grep -rn 'WithEngine(\|ForEngine(\|RouteError(' --include=*.go` finds nothing
-- [ ] 5.3 Narrow `Core` and `RequestState` accessors: replace `Core.Settings()` with `Core.MaxHeaderBytesSet()`, unexport `RequestState.Route`/`Location` behind `Route()`, `SetRoute`, `Location()`, `SetLocation`; verify with gopls find-references that no caller remains, and `go test -race ./...` passes in core, `ginsrvr` and `fibersrvr`
-- [ ] 5.4 `srvr.RouteCheck`, `srvr.Routes`, `srvr.Route` aliases; `WithRouteCheck` takes `srvr.RouteCheck`; the route-check `Example` imports only `srvr`; verify `go test -run Example` passes and `go doc ./ RouteCheck` shows the alias
-- [ ] 5.5 Record every rename and the `Settings()` removal in `CHANGELOG.md` with its replacement, and update `AGENTS.md` and `openspec/config.yaml` where they name `ginsrvr.WithEngine`; verify `grep -rn 'ginsrvr.WithEngine' --exclude-dir=archive .` finds only the CHANGELOG entry
-- [ ] 5.6 Verify the slice end to end, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` and `internal/paritytest`, run /simplify on the slice and commit `refactor(engine)!: type ConfigError and rename engine-support constructors and the gin hook`
+- [x] 5.2 Pure renames with gopls: `engine.RouteError` to `RouteErrorf`, `engine.ForEngine` to `Only` (parameter `engineName`), `ginsrvr.WithEngine` to `WithGinEngine` (engine-support / Scenario: Engine-specific option placement; gin-engine / Scenario: Engine hook, renamed rows); verify `go build ./...` and `go test -race ./...` pass in core, `ginsrvr` and `fibersrvr`, and `grep -rn 'WithEngine(\|ForEngine(\|RouteError(' --include=*.go` finds nothing
+- [x] 5.3 Narrow `Core` and `RequestState` accessors: replace `Core.Settings()` with `Core.MaxHeaderBytesSet()`, unexport `RequestState.Route`/`Location` behind `Route()`, `SetRoute`, `Location()`, `SetLocation`; verify with gopls find-references that no caller remains, and `go test -race ./...` passes in core, `ginsrvr` and `fibersrvr`
+- [x] 5.4 `srvr.RouteCheck`, `srvr.Routes`, `srvr.Route` aliases; `WithRouteCheck` takes `srvr.RouteCheck`; the route-check `Example` imports only `srvr`; verify `go test -run Example` passes and `go doc ./ RouteCheck` shows the alias
+- [x] 5.5 Record every rename and the `Settings()` removal in `CHANGELOG.md` with its replacement, and update `AGENTS.md` and `openspec/config.yaml` where they name `ginsrvr.WithEngine`; verify `grep -rn 'ginsrvr.WithEngine' --exclude-dir=archive .` finds only the CHANGELOG entry
+- [x] 5.6 Verify the slice end to end, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` and `internal/paritytest`, run /simplify on the slice and commit `refactor(engine)!: type ConfigError and rename engine-support constructors and the gin hook`
 
 ## 6. Slice: documentation
 

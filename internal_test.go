@@ -2,7 +2,6 @@ package srvr
 
 import (
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,8 +10,11 @@ import (
 )
 
 // TestOptionPrecedence covers server-lifecycle / Scenario: Option and config
-// precedence: options apply in argument order and a With<Struct> option
-// sets every field of its struct.
+// precedence for the listen address: options apply in argument order and a
+// With<Struct> option sets every field of its struct. The other settings'
+// precedence rows are observed through behaviour: TestLogConfig
+// (logconfig_test.go), TestAccessLogConfig, TestTrace_Ignore and
+// TestServiceNamePrecedence.
 func TestOptionPrecedence(t *testing.T) {
 	t.Parallel()
 
@@ -26,10 +28,6 @@ func TestOptionPrecedence(t *testing.T) {
 		{"WithConfig then WithAddr", []Option{WithConfig(Config{Addr: ":9090"}), WithAddr(":7070")}, listenAddr, ":7070"},
 		{"WithAddr then WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{Addr: ":9090"})}, listenAddr, ":9090"},
 		{"WithAddr then empty WithConfig", []Option{WithAddr(":7070"), WithConfig(Config{})}, listenAddr, ":8080"},
-		{"WithLogConfig then WithLogLevel", []Option{WithLogConfig(LogConfig{Level: "debug"}), WithLogLevel(slog.LevelWarn)}, logLevel, "WARN"},
-		{"WithAccessLogSkipPaths then empty WithAccessLogConfig", []Option{WithAccessLogSkipPaths("/healthz"), WithAccessLogConfig(AccessLogConfig{})}, skipPaths, 0},
-		{"WithServiceConfig then WithServiceName", []Option{WithServiceConfig(ServiceConfig{Name: "registration-api"}), WithServiceName("orders")}, serviceName, "orders"},
-		{"WithTraceConfig ignores incoming", []Option{WithTraceConfig(TraceConfig{IgnoreIncoming: true})}, ignoresIncoming, true},
 	}
 
 	for _, tt := range tests {
@@ -49,14 +47,6 @@ func TestOptionPrecedence(t *testing.T) {
 }
 
 func listenAddr(s *Server) any { return s.core.Config().Addr }
-
-func ignoresIncoming(s *Server) any { return s.core.Settings().Trace.IgnoreIncoming }
-
-func logLevel(s *Server) any { return s.core.Settings().Log.Level }
-
-func skipPaths(s *Server) any { return len(s.core.Settings().Access.SkipPaths) }
-
-func serviceName(s *Server) any { return s.core.Settings().Service.Name }
 
 // TestRequestState covers engine-support / Scenario: Request state after
 // the chain, net/http rows: a probe just inside the outermost stage reads
@@ -104,9 +94,9 @@ func TestRequestState(t *testing.T) {
 			if state == nil {
 				t.Fatal("no state")
 			}
-			if state.Route != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
+			if state.Route() != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
 				t.Fatalf("state route %q matched %v status %d failed %v; want %q %v %d %v",
-					state.Route, state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
+					state.Route(), state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
 			}
 		})
 	}

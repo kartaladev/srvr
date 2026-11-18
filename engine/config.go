@@ -71,14 +71,33 @@ type Settings struct {
 	Errs []error
 
 	// engineOpts are the engine-specific options, each read only by the
-	// engine it names (see ForEngine).
+	// engine it names (see Only).
 	engineOpts []engineOpt
 }
 
-// ConfigError returns an error wrapping ErrConfig that names field and
-// value, whose text is read through ValueText: a value may be consumer code.
-func ConfigError(field string, value any, reason string) error {
-	return fmt.Errorf("%w: %s %s: %s", ErrConfig, field, ValueText(value), reason)
+// ConfigError is the error construction returns for one invalid field:
+// errors.As reads Field, Value and Reason, and errors.Is matches
+// [ErrConfig].
+type ConfigError struct {
+	// Field names the setting, such as "Level" or "Listener".
+	Field string
+	// Value is the offending value's text.
+	Value string
+	// Reason says what is wrong with it.
+	Reason string
+}
+
+func (e *ConfigError) Error() string {
+	return ErrConfig.Error() + ": " + e.Field + " " + e.Value + ": " + e.Reason
+}
+
+// Unwrap returns [ErrConfig].
+func (e *ConfigError) Unwrap() error { return ErrConfig }
+
+// NewConfigError returns a *ConfigError naming field and value, whose text
+// is read through ValueText: a value may be consumer code.
+func NewConfigError(field string, value any, reason string) error {
+	return &ConfigError{Field: field, Value: ValueText(value), Reason: reason}
 }
 
 // Option configures a server of any srvr engine; consumers use it as
@@ -93,12 +112,12 @@ type engineOpt struct {
 	value        any
 }
 
-// ForEngine returns an Option that carries value for engine only, such
-// as ginsrvr.WithEngine for "gin". The engine reads it with
+// Only returns an Option that carries value for engine only, such
+// as ginsrvr.WithGinEngine for "gin". The engine reads it with
 // [Core.EngineOptions]; any other engine fails construction naming name.
-func ForEngine(engine, name string, value any) Option {
+func Only(engineName, name string, value any) Option {
 	return func(s *Settings) {
-		s.engineOpts = append(s.engineOpts, engineOpt{engine: engine, name: name, value: value})
+		s.engineOpts = append(s.engineOpts, engineOpt{engine: engineName, name: name, value: value})
 	}
 }
 
@@ -108,7 +127,7 @@ func newSettings(opts []Option) (Settings, error) {
 
 	for i, opt := range opts {
 		if opt == nil {
-			s.Errs = append(s.Errs, ConfigError("Option", i, "is nil"))
+			s.Errs = append(s.Errs, NewConfigError("Option", i, "is nil"))
 
 			continue
 		}
@@ -166,11 +185,11 @@ func validateAddr(s *Settings) error {
 
 	_, port, err := net.SplitHostPort(s.Addr)
 	if err != nil {
-		return ConfigError("Addr", strconv.Quote(s.Addr), err.Error())
+		return NewConfigError("Addr", strconv.Quote(s.Addr), err.Error())
 	}
 
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return ConfigError("Addr", strconv.Quote(s.Addr), fmt.Sprintf("port %q is not a number in 0-65535", port))
+		return NewConfigError("Addr", strconv.Quote(s.Addr), fmt.Sprintf("port %q is not a number in 0-65535", port))
 	}
 
 	return nil
@@ -185,7 +204,7 @@ func validateListener(s *Settings) error {
 			addr = TypeName(s.Listener)
 		}
 
-		return ConfigError("Listener", addr, fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
+		return NewConfigError("Listener", addr, fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
 	}
 
 	return nil
@@ -193,7 +212,7 @@ func validateListener(s *Settings) error {
 
 func validateShutdownTimeout(s *Settings) error {
 	if s.ShutdownTimeout < 0 {
-		return ConfigError("ShutdownTimeout", s.ShutdownTimeout, "must not be negative")
+		return NewConfigError("ShutdownTimeout", s.ShutdownTimeout, "must not be negative")
 	}
 
 	return nil
@@ -201,7 +220,7 @@ func validateShutdownTimeout(s *Settings) error {
 
 func validateMaxHeaderBytes(s *Settings) error {
 	if s.MaxHeaderBytes < 0 {
-		return ConfigError("MaxHeaderBytes", s.MaxHeaderBytes, "must not be negative")
+		return NewConfigError("MaxHeaderBytes", s.MaxHeaderBytes, "must not be negative")
 	}
 
 	return nil
@@ -214,7 +233,7 @@ func validateObservers(s *Settings) error {
 
 	for i, o := range s.Observers {
 		if IsNil(o) {
-			errs = append(errs, ConfigError("Observer", fmt.Sprintf("%d (%T)", i, o), "is nil"))
+			errs = append(errs, NewConfigError("Observer", fmt.Sprintf("%d (%T)", i, o), "is nil"))
 		}
 	}
 

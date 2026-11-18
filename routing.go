@@ -82,7 +82,7 @@ type Group struct {
 // followed by mw.
 func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 	if !isPath(prefix) {
-		g.b.errs = append(g.b.errs, engine.RouteError("group prefix %q does not start with \"/\"", prefix))
+		g.b.errs = append(g.b.errs, engine.RouteErrorf("group prefix %q does not start with \"/\"", prefix))
 	}
 
 	sub := &Group{b: g.b, prefix: collapseSlashes(g.prefix + prefix), middleware: slices.Clone(g.middleware)}
@@ -96,7 +96,7 @@ func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 func (g *Group) Use(mw ...Middleware) {
 	for i, m := range mw {
 		if m == nil {
-			g.b.errs = append(g.b.errs, engine.RouteError("middleware %d added to group %q is nil", i, g.prefix))
+			g.b.errs = append(g.b.errs, engine.RouteErrorf("middleware %d added to group %q is nil", i, g.prefix))
 		}
 	}
 
@@ -183,7 +183,7 @@ func (g *Group) add(method, path string, h http.Handler, loc engine.Location) {
 
 	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
 	if engine.IsNil(h) {
-		g.b.errs = append(g.b.errs, engine.RouteError("%q (%s): handler is nil", rt.key(), rt.owner))
+		g.b.errs = append(g.b.errs, engine.RouteErrorf("%q (%s): handler is nil", rt.key(), rt.owner))
 
 		return
 	}
@@ -212,7 +212,7 @@ func (g *Group) DELETE(path string, h HandlerFunc) { g.Handle(http.MethodDelete,
 // the trailing slash that gives a pattern its subtree meaning.
 func joinPattern(prefix, path string) (string, error) {
 	if !isPath(path) {
-		return "", engine.RouteError("path %q does not start with \"/\"", path)
+		return "", engine.RouteErrorf("path %q does not start with \"/\"", path)
 	}
 
 	joined := collapseSlashes(prefix + path)
@@ -244,7 +244,7 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 	for i, rt := range routes {
 		h, err := chain(rt.handler, rt.middleware)
 		if err != nil {
-			return engine.RouteError("%q (%s): %w", rt.key(), rt.owner, err)
+			return engine.RouteErrorf("%q (%s): %w", rt.key(), rt.owner, err)
 		}
 
 		h = withRoute(rt, h)
@@ -256,11 +256,11 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 
 		for _, earlier := range routes[:i] {
 			if conflicts(earlier.key(), rt.key()) {
-				return engine.RouteError("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
+				return engine.RouteErrorf("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
 			}
 		}
 
-		return engine.RouteError("%q (%s): %v", rt.key(), rt.owner, v)
+		return engine.RouteErrorf("%q (%s): %v", rt.key(), rt.owner, v)
 	}
 
 	return nil
@@ -326,7 +326,8 @@ func withRoute(rt route, h http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if req, ok := engine.StateFrom(r.Context()); ok {
-			req.Route, req.Location = pattern, loc
+			req.SetRoute(pattern)
+			req.SetLocation(loc)
 		}
 
 		h.ServeHTTP(w, r)

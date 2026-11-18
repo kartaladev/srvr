@@ -180,8 +180,8 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 	record := newOwnRecord(level, msg)
 	record.AddAttrs(slog.String(keyMethod, info.Method))
 
-	if req.Route != "" {
-		record.AddAttrs(slog.String(keyRoute, req.Route))
+	if req.route != "" {
+		record.AddAttrs(slog.String(keyRoute, req.route))
 	}
 
 	if status != 0 {

@@ -314,7 +314,7 @@ func (c *Core) httpRequestInfo(r *http.Request) RequestInfo {
 // describes.
 func (r *RequestState) result(info AccessInfo) ResultInfo {
 	res := ResultInfo{
-		Route: r.Route, Status: info.Status, Duration: info.Duration,
+		Route: r.route, Status: info.Status, Duration: info.Duration,
 		RequestBodySize: info.RequestBodySize, ResponseBodySize: info.BodySize,
 		ErrorKind: r.errorKind(), Aborted: r.aborted,
 	}

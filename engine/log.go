@@ -3,6 +3,7 @@ package engine
 import (
 	"cmp"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -65,13 +66,16 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 		return &logHandler{base: ls.Handler, maxBytes: ls.maxAttrBytes()}, nil
 	}
 
+	// Every invalid field is reported, Level first.
+	var errs []error
+
 	var leveler slog.Leveler = slog.LevelInfo
 	if ls.LevelVar != nil {
 		leveler = ls.LevelVar
 	} else if ls.Level != "" {
 		var l slog.Level
 		if err := l.UnmarshalText([]byte(ls.Level)); err != nil {
-			return nil, ConfigError("Level", strconv.Quote(ls.Level), "is not a log/slog level such as debug, info, warn, error or info-4")
+			errs = append(errs, NewConfigError("Level", strconv.Quote(ls.Level), "is not a log/slog level such as debug, info, warn, error or info-4"))
 		}
 
 		leveler = l
@@ -93,7 +97,11 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 	case "text":
 		base = slog.NewTextHandler(out, opts)
 	default:
-		return nil, ConfigError("Format", strconv.Quote(ls.Format), "is not json or text")
+		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+	}
+
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
 	return &logHandler{base: base, maxBytes: ls.maxAttrBytes()}, nil
@@ -111,7 +119,7 @@ func (ls *LogSettings) checkOwnHandler() error {
 		{"Output", ls.Output != nil},
 	} {
 		if c.set {
-			return ConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler")
+			return NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler")
 		}
 	}
 

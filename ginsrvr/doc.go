@@ -19,7 +19,7 @@
 // srvr.LoggerFromContext(c) work on *gin.Context, a wrong method gets a 405
 // problem with a sorted Allow header and a trailing-slash mismatch gets a
 // 404 problem, as on net/http. It trusts no proxy for c.ClientIP. Use
-// [WithEngine] to customise the engine.
+// [WithGinEngine] to customise the engine.
 //
 // # Gin's global mode
 //

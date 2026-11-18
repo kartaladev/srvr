@@ -395,9 +395,9 @@ func TestServeGoroutine(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/ok")))
 			done := startWith(context.Background(), t, srv)
 
-			if !serveOnRunning() {
-				t.Fatal("no serveOn goroutine while serving")
-			}
+			// The goroutine exists once Ready is closed, but its stack shows
+			// serveOn only once it has been scheduled.
+			eventually(t, serveOnRunning, "no serveOn goroutine while serving")
 			if stuck, ok := ln.(*stuckListener); ok {
 				receive(t, stuck.accepting, "Serve never called Accept")
 			}

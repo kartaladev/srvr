@@ -241,8 +241,8 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 		wantErr string      // "" when construction succeeds
 	}{
 		{"nothing else", nil, ""},
-		{"a nil WithEngine hook", ginsrvr.WithEngine(nil), "WithEngine"},
-		{"a WithEngine hook that panics", ginsrvr.WithEngine(func(*gin.Engine) { panic("boom") }), "boom"},
+		{"a nil WithGinEngine hook", ginsrvr.WithGinEngine(nil), "WithGinEngine"},
+		{"a WithGinEngine hook that panics", ginsrvr.WithGinEngine(func(*gin.Engine) { panic("boom") }), "boom"},
 	}
 
 	for _, tt := range tests {

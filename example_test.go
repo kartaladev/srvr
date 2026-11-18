@@ -10,7 +10,6 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 )
 
 // Hello is a route configurer for the net/http engine.
@@ -193,7 +192,7 @@ func (healthRoutes) Configure(g *srvr.Group) {
 // A route check asserts the route table at startup: Start fails before
 // binding when a required route is missing.
 func ExampleWithRouteCheck() {
-	requireHealth := func(_ context.Context, routes engine.Routes) error {
+	requireHealth := func(_ context.Context, routes srvr.Routes) error {
 		for _, r := range routes {
 			fmt.Printf("%s %s (%s)\n", r.Method, r.Pattern, r.Configurer)
 			if r.Method == http.MethodGet && r.Pattern == "/healthz" {

@@ -99,7 +99,7 @@ func NewLifecycle[C any](c *Core) *Lifecycle[C] {
 // typed-nil conf returns an error wrapping [ErrRouteConfig] in any state.
 func (l *Lifecycle[C]) Register(conf C) error {
 	if IsNil(conf) {
-		return RouteError("configurer %T is nil", conf)
+		return RouteErrorf("configurer %T is nil", conf)
 	}
 
 	l.mu.Lock()
@@ -135,7 +135,7 @@ func (l *Lifecycle[C]) Addr() string {
 // engine shares.
 func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) (Runner, Routes, error)) error {
 	if ctx == nil {
-		return ConfigError("Start context", "<nil>", "is nil")
+		return NewConfigError("Start context", "<nil>", "is nil")
 	}
 
 	// stepCtx is what the starting steps receive: Shutdown cancels it.
@@ -170,7 +170,7 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 
 	addr, err := listenerAddr(ln)
 	if err != nil {
-		return l.fail(ctx, ConfigError("Listener", TypeName(ln), err.Error()))
+		return l.fail(ctx, NewConfigError("Listener", TypeName(ln), err.Error()))
 	}
 
 	r := l.serve(ctx, ln, addr, runner)
@@ -418,7 +418,7 @@ func (l *Lifecycle[C]) stopRun(drainCtx context.Context, r *run) {
 // contract every engine shares.
 func (l *Lifecycle[C]) Shutdown(ctx context.Context) error {
 	if ctx == nil {
-		return ConfigError("Shutdown context", "<nil>", "is nil")
+		return NewConfigError("Shutdown context", "<nil>", "is nil")
 	}
 
 	l.mu.Lock()
@@ -505,7 +505,7 @@ type guardedListener struct {
 func (l *guardedListener) Accept() (conn net.Conn, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			conn, err = nil, ConfigError("Listener", TypeName(l.Listener), "Accept panicked: "+ValueText(v))
+			conn, err = nil, NewConfigError("Listener", TypeName(l.Listener), "Accept panicked: "+ValueText(v))
 		}
 	}()
 

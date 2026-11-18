@@ -132,7 +132,7 @@ func TestFiberConfig(t *testing.T) {
 	}{
 		{"invalid level", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "verbose"})}, "Level"},
 		{"nil listener", []srvr.Option{srvr.WithListener(nil)}, "Listener"},
-		{"an option of another engine", []srvr.Option{engine.ForEngine("gin", "ginsrvr.WithEngine", func() {})}, "ginsrvr.WithEngine"},
+		{"an option of another engine", []srvr.Option{engine.Only("gin", "ginsrvr.WithGinEngine", func() {})}, "ginsrvr.WithGinEngine"},
 	}
 
 	for _, tt := range rejected {

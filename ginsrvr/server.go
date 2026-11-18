@@ -62,7 +62,7 @@ func New(opts ...srvr.Option) (*Server, error) {
 	return s, nil
 }
 
-// WithEngine adds hook, which customises the gin engine at construction,
+// WithGinEngine adds hook, which customises the gin engine at construction,
 // before srvr installs its pipeline. srvr first sets the engine's trusted
 // proxies to none (gin trusts every proxy by default, so c.ClientIP would
 // believe X-Forwarded-For from anyone); a hook may loosen that with
@@ -74,8 +74,8 @@ func New(opts ...srvr.Option) (*Server, error) {
 // pipeline, so New rejects such a hook, a nil hook and a hook that panics
 // with an error wrapping srvr.ErrConfig. Register routes through
 // [Server.Register] instead.
-func WithEngine(hook func(*gin.Engine)) srvr.Option {
-	return engine.ForEngine(engineName, "ginsrvr.WithEngine", hook)
+func WithGinEngine(hook func(*gin.Engine)) srvr.Option {
+	return engine.Only(engineName, "ginsrvr.WithGinEngine", hook)
 }
 
 // newEngine returns the gin engine: trusted proxies set to none, the
@@ -103,19 +103,19 @@ func newEngine(core *engine.Core, hooks []any, requestStage gin.HandlerFunc) (*g
 	return e, nil
 }
 
-// applyHook runs one WithEngine hook under recover and rejects it when it
+// applyHook runs one WithGinEngine hook under recover and rejects it when it
 // added middleware or routes.
 func applyHook(e *gin.Engine, h any) (err error) {
 	hook, _ := h.(func(*gin.Engine))
 	if hook == nil {
-		return engine.ConfigError("WithEngine", "<nil>", "hook is nil")
+		return engine.NewConfigError("WithGinEngine", "<nil>", "hook is nil")
 	}
 
 	name := engine.FuncLocation(hook).Function()
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = engine.ConfigError("WithEngine", name, "hook panicked: "+engine.ValueText(v))
+			err = engine.NewConfigError("WithGinEngine", name, "hook panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -124,7 +124,7 @@ func applyHook(e *gin.Engine, h any) (err error) {
 	hook(e)
 
 	if len(e.Handlers) != handlers || len(e.Routes()) != routes {
-		return engine.ConfigError("WithEngine", name, "hook added middleware or routes, which would run outside srvr's pipeline; use Register")
+		return engine.NewConfigError("WithGinEngine", name, "hook added middleware or routes, which would run outside srvr's pipeline; use Register")
 	}
 
 	return nil
@@ -151,7 +151,8 @@ func (s *Server) requestStage(c *gin.Context) {
 	state, ok := engine.StateFrom(c.Request.Context())
 	if ok {
 		if route := c.FullPath(); route != "" {
-			state.Route, state.Location = route, s.locations[handlerKey(c.Handler())]
+			state.SetRoute(route)
+			state.SetLocation(s.locations[handlerKey(c.Handler())])
 		}
 	}
 
@@ -296,7 +297,7 @@ func handlerKey(h gin.HandlerFunc) uintptr { return engine.FuncPointer(h) }
 func checkHandlers(routes gin.RoutesInfo, c srvr.RouteConfigurer[*gin.RouterGroup]) error {
 	for _, r := range routes {
 		if r.HandlerFunc == nil {
-			return engine.RouteError("%q (%T): handler is nil", r.Method+" "+r.Path, c)
+			return engine.RouteErrorf("%q (%T): handler is nil", r.Method+" "+r.Path, c)
 		}
 	}
 

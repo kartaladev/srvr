@@ -335,10 +335,10 @@ func TestGinConsumerFaults(t *testing.T) {
 		}
 	})
 
-	t.Run("WithEngine hook panics with a hostile value", func(t *testing.T) {
+	t.Run("WithGinEngine hook panics with a hostile value", func(t *testing.T) {
 		t.Parallel()
 
-		srv, err := ginsrvr.New(srvr.WithLogOutput(io.Discard), ginsrvr.WithEngine(func(*gin.Engine) { panic(selfPanicError{}) }))
+		srv, err := ginsrvr.New(srvr.WithLogOutput(io.Discard), ginsrvr.WithGinEngine(func(*gin.Engine) { panic(selfPanicError{}) }))
 		if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "<panic in Error(): ginsrvr_test.selfPanicError>") {
 			t.Fatalf("New = %v, %v", srv, err)
 		}

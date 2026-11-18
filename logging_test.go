@@ -472,7 +472,7 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 	}{
 		{"nothing else", nil, ""},
 		{"invalid prblm option", srvr.WithProblemOptions(prblm.WithNamespace("not a uri")), "ProblemOptions"},
-		{"an option of another engine", engine.ForEngine("gin", "ginsrvr.WithEngine", func() {}), "ginsrvr.WithEngine"},
+		{"an option of another engine", engine.Only("gin", "ginsrvr.WithGinEngine", func() {}), "ginsrvr.WithGinEngine"},
 	}
 
 	for _, tt := range tests {
@@ -506,5 +506,19 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 				t.Fatalf("a record through slog.Default() reached the server's handler: %v; New error: %v", reached, err)
 			}
 		})
+	}
+}
+
+// TestServiceNamePrecedence covers the service row of server-lifecycle /
+// Scenario: Option and config precedence: a later WithServiceName wins
+// over an earlier WithServiceConfig.
+func TestServiceNamePrecedence(t *testing.T) {
+	t.Parallel()
+
+	_, out := loggedServer(t, okRoute("/x"),
+		srvr.WithServiceConfig(srvr.ServiceConfig{Name: "registration-api"}), srvr.WithServiceName("orders"))
+
+	if got := out.waitRecord(t, "server.started")["service.name"]; got != "orders" {
+		t.Fatalf("service.name = %v, want orders", got)
 	}
 }
