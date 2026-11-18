@@ -10,6 +10,13 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 1 decisions during apply (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** (1) /simplify altitude review moved the observer seam into the access stage: `Core.BeginObservers` begins observers (called by `LogAccess`, and by fibersrvr's `requestStage` in slice 2), `writeAccess` runs the end functions from `engine.RequestState` before the record, with `ResultInfo` built from `AccessInfo` (which gains `RequestBodySize`). Design D1 records it. This also makes the end functions run for `http.ErrAbortHandler` (`observer_test.go` `TestObserver_Abort`, RED: `the end function did not run for an aborted request`). (2) `RequestInfo` has method, scheme and host; the planned flavor (protocol version) is postponed until an attribute needs it (Gall). (3) Task 2.1's `grep -c sdk` check prints 2, not 0: `go.opentelemetry.io/auto/sdk` is imported by the OTel API's own `internal/global` package, it is not the SDK. The guard is `otelsrvr/deps_test.go` `TestNoSDKDependency`, which rejects `go.opentelemetry.io/otel/sdk...` and `.../exporters...`. (4) The `otelsrvr` module requires `go.opentelemetry.io/otel/sdk/metric` for its tests; Go has no test-only require, and the non-test package graph does not import it (pinned by the same guard). (5) Tasks 2.4 and 2.5 passed at their first run because 2.3's GREEN already placed the stage and filled the fields; a mutation (stage moved inside recovery) made `TestObserver_Placement/panic` fail (`end status, kind = 0, "panic", want 500, "panic"`), so the test is a working guard.
+- **Evidence:** as named above.
+- **Suggested action:** none.
+
 ### Carry-over decisions 2026-11-18
 - **Status:** closed: decided at consolidation
 - **Target:** otel-observability

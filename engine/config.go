@@ -62,6 +62,7 @@ type Settings struct {
 	ProblemOptions []prblm.Option
 	ErrorHook      ErrorHook
 	RouteChecks    []RouteCheck
+	Observers      []Observer
 	// Errs collects mistakes options detect while they are applied.
 	Errs []error
 

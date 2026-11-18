@@ -93,6 +93,12 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 		req := requestFrom(ctx) // set by StartTrace, the outer stage
 		req.rec = rec
 
+		// Observers begin inside the access stage and end in its record,
+		// so they see the final status, including an abort.
+		if octx := c.BeginObservers(ctx, httpRequestInfo(r)); octx != ctx {
+			r = r.WithContext(octx)
+		}
+
 		defer func() {
 			// http.ErrAbortHandler is re-raised past the recovery stage so
 			// net/http aborts the connection; it is recorded first.
@@ -128,14 +134,17 @@ type AccessInfo struct {
 	UserAgent  string
 	Status     int
 	BodySize   int64
-	Duration   time.Duration
+	// RequestBodySize is the request's declared Content-Length, 0 when
+	// unknown.
+	RequestBodySize int64
+	Duration        time.Duration
 }
 
 // httpAccess returns the access information of a net/http request.
 func httpAccess(r *http.Request, rec *responseRecorder, d time.Duration) AccessInfo {
 	return AccessInfo{
 		Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery, RemoteAddr: r.RemoteAddr, UserAgent: r.UserAgent(),
-		Status: rec.statusCode(), BodySize: rec.bytes, Duration: d,
+		Status: rec.statusCode(), BodySize: rec.bytes, RequestBodySize: max(r.ContentLength, 0), Duration: d,
 	}
 }
 
@@ -148,10 +157,12 @@ func (c *Core) WriteAccess(ctx context.Context, info AccessInfo) {
 	}
 }
 
-// writeAccess writes the access record of a finished request; a zero
-// info.Status, an aborted request whose response never started, omits the
-// status.
+// writeAccess runs the request's observer end functions, then writes its
+// access record; a zero info.Status, an aborted request whose response
+// never started, omits the status.
 func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessInfo) {
+	req.ends.run(req.result(info))
+
 	status := info.Status
 	aborted := req.aborted
 	fail := req.failure

@@ -10,30 +10,30 @@
 
 ## 2. Slice: observer hook and duration metric on net/http
 
-- [ ] 2.1 Create module `github.com/kartaladev/srvr/otelsrvr` (go 1.27) requiring only `go.opentelemetry.io/otel`, `/metric`, `/trace` and the srvr core through `replace ../` until it is tagged (SDK only in `_test.go` via a test-only require), add it to `go.work` and a CI job (no `release-modules` target exists; tagging is the "Workflow follow-up" step); verify `GOWORK=off go list -deps ./otelsrvr | grep -c sdk` prints `0` for non-test packages
-- [ ] 2.2 Add a dependency-guard test in the core module asserting it imports no `go.opentelemetry.io` package; verify `go test -run TestCoreHasNoOTel` passes
-- [ ] 2.3 Observer called once per request on net/http (request-observer / Scenario: Begin and end per engine, net/http rows); verify `go test -race -run TestObserver_NetHTTP` passes
+- [x] 2.1 Create module `github.com/kartaladev/srvr/otelsrvr` (go 1.27) requiring only `go.opentelemetry.io/otel`, `/metric`, `/trace` and the srvr core through `replace ../` until it is tagged (SDK only in `_test.go` via a test-only require), add it to `go.work` and a CI job (no `release-modules` target exists; tagging is the "Workflow follow-up" step); verify `GOWORK=off go list -deps ./otelsrvr | grep -c sdk` prints `0` for non-test packages
+- [x] 2.2 Add a dependency-guard test in the core module asserting it imports no `go.opentelemetry.io` package; verify `go test -run TestCoreHasNoOTel` passes
+- [x] 2.3 Observer called once per request on net/http (request-observer / Scenario: Begin and end per engine, net/http rows); verify `go test -race -run TestObserver_NetHTTP` passes
   - RED: table over the net/http rows (including the unmatched row) with a recording observer; fails because `WithObserver` does not exist
   - GREEN: `Observer`, `RequestInfo`, `ResultInfo` in `engine` with srvr aliases, `WithObserver`, the `Core.Observe` http stage between `LogAccess` and `LimitBody`, reading route, status and failure from `engine.RequestState`
   - REFACTOR: Extract Function for building `ResultInfo` from the request state, then /simplify
-- [ ] 2.4 Observer placement (request-observer / Scenario: Observer view of the request, net/http rows); verify `go test -race -run TestObserver_Placement` passes
+- [x] 2.4 Observer placement (request-observer / Scenario: Observer view of the request, net/http rows); verify `go test -race -run TestObserver_Placement` passes
   - RED: table asserting trace id at Begin and status/kind at end, including the unmatched `GET /nope` row with kind `error`; fails if placed outside trace context or inside recovery
   - GREEN: order the middleware accordingly
   - REFACTOR: /simplify
-- [ ] 2.5 Result fields (request-observer / Scenario: Result fields, all rows); verify `go test -race -run TestObserver_Result` passes
+- [x] 2.5 Result fields (request-observer / Scenario: Result fields, all rows); verify `go test -race -run TestObserver_Result` passes
   - RED: table including unmatched, 405 and late-error rows; fails on sizes or committed flag
   - GREEN: populate sizes, route, committed from the request state
   - REFACTOR: /simplify
-- [ ] 2.6 Duration recorded through an injected provider (otel-metrics / Scenario: Duration per engine, net/http row; Scenario: Provider selection, all rows); verify `cd otelsrvr && go test -race -run TestDuration` passes
+- [x] 2.6 Duration recorded through an injected provider (otel-metrics / Scenario: Duration per engine, net/http row; Scenario: Provider selection, all rows); verify `cd otelsrvr && go test -race -run TestDuration` passes
   - RED: table with ManualReader, global, no-op and nil provider; fails because `otelsrvr.New` does not exist
   - GREEN: `otelsrvr.New`, options, histogram in seconds, scope name
   - REFACTOR: Introduce Parameter Object for options, then /simplify
-- [ ] 2.7 Godoc and an `Example` wiring `otelsrvr` with an SDK ManualReader in a test; verify `go test -run Example` passes
-- [ ] 2.8 Verify slice end to end (net/http request -> collected data point) and confirm observer begin/end and record are covered in `go tool cover -func`; in the core module and `otelsrvr`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): record request duration through an engine-neutral observer`
+- [x] 2.7 Godoc and an `Example` wiring `otelsrvr` with an SDK ManualReader in a test; verify `go test -run Example` passes
+- [x] 2.8 Verify slice end to end (net/http request -> collected data point) and confirm observer begin/end and record are covered in `go tool cover -func`; in the core module and `otelsrvr`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsrvr): record request duration through an engine-neutral observer`
 
 ## 3. Slice: observer on gin and fiber
 
-- [ ] 3.1 Observer on gin (request-observer / Scenario: Begin and end per engine, gin rows; Scenario: Observer view of the request, gin row; otel-metrics / Scenario: Duration per engine, gin row); verify `cd ginsrvr && go test -race -run TestObserver` passes with a recording observer, and the otel-metrics gin row passes in the test-only `internal/paritytest` module (ginsrvr's go.mod gains no OTel requirement)
+- [ ] 3.1 Observer on gin (as implemented in slice 1, gin is served through `LogAccess`, so the RED may pass at once: record it and keep the test as the guard) (request-observer / Scenario: Begin and end per engine, gin rows; Scenario: Observer view of the request, gin row; otel-metrics / Scenario: Duration per engine, gin row); verify `cd ginsrvr && go test -race -run TestObserver` passes with a recording observer, and the otel-metrics gin row passes in the test-only `internal/paritytest` module (ginsrvr's go.mod gains no OTel requirement)
   - RED: table; fails because ginsrvr does not call the observer
   - GREEN: the shared `Core.Observe` http stage around the gin engine, between `LogAccess` and `LimitBody` as on net/http (design D1 as merged), outside the whole gin chain; end from `engine.RequestState` (route set by `requestStage` from `c.FullPath()`, failure classified after `c.Next()`)
   - REFACTOR: /simplify

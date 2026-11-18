@@ -134,7 +134,7 @@ func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, 
 }
 
 // pipeline wraps the router in the per-request stages, outermost first:
-// trace context, access log, body limit, panic recovery, unmatched-route
+// trace context, access log (which begins the observers), body limit, panic recovery, unmatched-route
 // answers, router.
 func (s *Server) pipeline(mux *http.ServeMux) http.Handler {
 	return s.core.StartTrace(s.stages(mux))

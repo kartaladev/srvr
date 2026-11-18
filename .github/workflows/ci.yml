@@ -71,6 +71,28 @@ jobs:
       - name: test
         run: go test -race ./...
 
+  otelsrvr:
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: otelsrvr
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: otelsrvr/go.mod
+      - name: vet
+        run: go vet ./...
+      - name: lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          working-directory: otelsrvr
+      - name: test
+        run: go test -race ./...
+
   paritytest:
     runs-on: ubuntu-latest
     env:
