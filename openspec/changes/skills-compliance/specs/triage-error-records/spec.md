@@ -23,7 +23,7 @@ A failed-request record SHALL carry `error.fingerprint`: 16 lowercase hex charac
 |-------|--------|----------|
 | `FOO1 /nope` (unmatched) | `FOO2 /nope` (unmatched) | equal |
 | `FOO1 /nope` (unmatched) | `GET /nope` (unmatched) | different |
-| `PURGE /files` on a `Mount` handler returning `errors.New("a")` | `BREW /files` on the same handler returning `errors.New("a")` | equal |
+| `PURGE /files` on a method-less route (`Handle("", "/files", h)`) returning `errors.New("a")` | `BREW /files` on the same route returning `errors.New("a")` | equal |
 | `QUERY /search` returning `errors.New("a")` | `POST /search` returning `errors.New("a")` | different |
 | `get /nope` (unmatched, lowercase) | `GET /nope` (unmatched) | different |
 

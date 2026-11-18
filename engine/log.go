@@ -27,10 +27,13 @@ type LogConfig struct {
 	// AddSource adds the caller's file and line as "source". Default off:
 	// least noise.
 	AddSource bool `json:"add_source" yaml:"add_source" env:"ADD_SOURCE"`
-	// MaxAttrBytes caps every string attribute, error text and message.
-	// Default 1024 bytes; a negative value disables the cap, which loosens
-	// a safety default. Error values still reach the handler as their
-	// guarded text, a plain string, whatever the cap.
+	// MaxAttrBytes caps every string attribute, error text and message,
+	// and every other slog.Any value by its formatted text: one that fits
+	// is written unchanged, a larger one is replaced by its text cut.
+	// Default 1024 bytes, so one careless value cannot flood the log
+	// pipeline; a negative value disables the cap, which loosens a safety
+	// default. Error values still reach the handler as their guarded text,
+	// a plain string, whatever the cap.
 	MaxAttrBytes int `json:"max_attr_bytes" yaml:"max_attr_bytes" env:"MAX_ATTR_BYTES"`
 }
 
@@ -402,9 +405,14 @@ func cutString(s string, maxBytes int) (string, bool) {
 	return s[:n] + truncatedSuffix, true
 }
 
-// ownText is a string srvr sized itself (an exception message or stack
-// with its own, larger limit); the record handler writes it as is.
-type ownText string
+// owned is a value srvr bounded itself (an exception message or stack
+// with its own, larger limit; error.chain with at most maxChainErrors
+// types); the record handler writes the wrapped value as is, never cut by
+// MaxAttrBytes.
+type owned struct{ v slog.Value }
+
+// ownAttr returns the attribute key holding v as srvr's own value.
+func ownAttr(key string, v slog.Value) slog.Attr { return slog.Any(key, owned{v}) }
 
 // truncator cuts the values of one record or step.
 type truncator struct {
@@ -412,8 +420,8 @@ type truncator struct {
 	cut      bool
 }
 
-// attr returns a with every string, error text and resolved LogValuer
-// cut, recursing into groups.
+// attr returns a with every string, error text, value of any other kind
+// (capAny) and resolved LogValuer cut, recursing into groups.
 func (t *truncator) attr(a slog.Attr) slog.Attr {
 	v := a.Value.Resolve()
 
@@ -427,8 +435,8 @@ func (t *truncator) attr(a slog.Attr) slog.Attr {
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(t.attrs(v.Group())...)}
 	case slog.KindAny:
 		switch x := v.Any().(type) {
-		case ownText:
-			return slog.String(a.Key, string(x))
+		case owned:
+			return slog.Attr{Key: a.Key, Value: x.v}
 		case error:
 			// The handler would format the error again; the text is ready,
 			// read guarded against a typed nil and a panicking Error.
@@ -436,10 +444,36 @@ func (t *truncator) attr(a slog.Attr) slog.Attr {
 			t.cut = t.cut || cut
 
 			return slog.String(a.Key, s)
+		default:
+			return t.capAny(a.Key, v)
 		}
 	}
 
 	return slog.Attr{Key: a.Key, Value: v}
+}
+
+// capAny returns v unchanged when its formatted text fits maxBytes (the
+// base handler then renders it as usual), and that text cut otherwise. Its
+// formatting is guarded: a value whose String panics becomes the
+// ValueText placeholder. A negative maxBytes keeps every value.
+func (t *truncator) capAny(key string, v slog.Value) slog.Attr {
+	if t.maxBytes < 0 {
+		return slog.Attr{Key: key, Value: v}
+	}
+
+	text, panicked := valueText(v.Any())
+	if panicked {
+		return slog.String(key, text)
+	}
+
+	s, cut := cutString(text, t.maxBytes)
+	if !cut {
+		return slog.Attr{Key: key, Value: v}
+	}
+
+	t.cut = true
+
+	return slog.String(key, s)
 }
 
 // attrs returns attrs with their values cut.
@@ -493,8 +527,10 @@ func needsRewrite(r slog.Record, maxBytes int) bool {
 }
 
 // mayNeedRewrite reports whether v must be rewritten for the base handler:
-// a string longer than maxBytes; srvr's own text or an error, always handed
-// on as a string; or a group or LogValuer, which may hold any of these.
+// a string longer than maxBytes; srvr's own value or an error, always
+// unwrapped or handed on as text; any other value of KindAny while a limit
+// is set, whose size is only known once formatted; or a group or
+// LogValuer, which may hold any of these.
 func mayNeedRewrite(v slog.Value, maxBytes int) bool {
 	switch v.Kind() {
 	case slog.KindString:
@@ -502,10 +538,12 @@ func mayNeedRewrite(v slog.Value, maxBytes int) bool {
 	case slog.KindGroup, slog.KindLogValuer:
 		return true
 	case slog.KindAny:
-		_, isOwn := v.Any().(ownText)
-		_, isErr := v.Any().(error)
-
-		return isOwn || isErr
+		switch v.Any().(type) {
+		case owned, error:
+			return true
+		default:
+			return maxBytes >= 0
+		}
 	default:
 		return false
 	}

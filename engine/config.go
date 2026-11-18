@@ -57,6 +57,8 @@ type Settings struct {
 	Log      LogSettings
 	Access   AccessLogConfig
 	Service  ServiceConfig
+	// Redactor is applied to error text; RedactSecrets unless an option
+	// set another.
 	Redactor func(string) string
 	// ReadBuild reads the binary's build information: debug.ReadBuildInfo,
 	// replaced in tests.
@@ -114,11 +116,26 @@ func newSettings(opts []Option) (Settings, error) {
 		opt(&s)
 	}
 
+	s.resolveDefaults()
+
 	if errs := slices.Concat(s.Errs, s.validate()); len(errs) > 0 {
 		return Settings{}, errors.Join(errs...)
 	}
 
 	return s, nil
+}
+
+// resolveDefaults fills the defaults chosen after every option applied
+// and copies what the caller still owns, so no option has to remember to:
+// the error redactor is RedactSecrets unless an option set one, and the
+// access log's SkipPaths is a copy, so changing the caller's slice after
+// New never changes which records are written.
+func (s *Settings) resolveDefaults() {
+	if s.Redactor == nil {
+		s.Redactor = RedactSecrets
+	}
+
+	s.Access.SkipPaths = slices.Clone(s.Access.SkipPaths)
 }
 
 // validate reports every invalid field.
