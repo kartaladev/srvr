@@ -1,6 +1,7 @@
 package srvr_test
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -471,6 +472,11 @@ func TestDebugBuffer_InvalidLimits(t *testing.T) {
 		{name: "nil option", buffer: srvr.WithDebugBuffer(nil), wantErr: true},
 		{name: "MaxRecords option -1", buffer: srvr.WithDebugBuffer(srvr.MaxRecords(-1)), wantErr: true, field: "MaxRecords"},
 		{name: "BufferLevel option WARN above INFO", buffer: srvr.WithDebugBuffer(srvr.BufferLevel(slog.LevelWarn)), wantErr: true, field: "Level"},
+		// Flush threshold, rejected rows, and the accepted bounds.
+		{name: "FlushStatus 99", buffer: srvr.WithDebugBuffer(srvr.FlushAtStatus(99)), wantErr: true, field: "FlushStatus"},
+		{name: "FlushStatus 600", buffer: srvr.WithDebugBuffer(srvr.FlushAtStatus(600)), wantErr: true, field: "FlushStatus"},
+		{name: "FlushStatus 100", buffer: srvr.WithDebugBuffer(srvr.FlushAtStatus(100))},
+		{name: "FlushStatus 599", buffer: srvr.WithDebugBuffer(srvr.FlushAtStatus(599))},
 	}
 
 	for _, tt := range tests {
@@ -490,6 +496,191 @@ func TestDebugBuffer_InvalidLimits(t *testing.T) {
 				t.Fatalf("New = %v, want a server", err)
 			case tt.wantErr && (!errors.Is(err, srvr.ErrConfig) || !errors.As(err, &ce) || !strings.Contains(err.Error(), tt.field)):
 				t.Fatalf("New = %v, want ErrConfig naming %q", err, tt.field)
+			}
+		})
+	}
+}
+
+// jsonLogConfig returns the LogConfig decoded from document, a constant
+// of the test, panicking on a mistake in it.
+func jsonLogConfig(document string) srvr.LogConfig {
+	var c srvr.LogConfig
+	if err := json.Unmarshal([]byte(document), &c); err != nil {
+		panic(err)
+	}
+
+	return c
+}
+
+// TestDebugBuffer_Config covers triage-debug-buffer / Scenario:
+// Configuration sources.
+func TestDebugBuffer_Config(t *testing.T) {
+	t.Parallel()
+
+	enabled400 := srvr.DebugBufferConfig{Enabled: true, FlushStatus: 400}
+
+	tests := []struct {
+		name    string
+		opts    []srvr.Option
+		written bool
+	}{
+		{"WithDebugBuffer()", []srvr.Option{srvr.WithDebugBuffer()}, false},
+		{"FlushAtStatus(400)", []srvr.Option{srvr.WithDebugBuffer(srvr.FlushAtStatus(400))}, true},
+		{"JSON enabled, 400", []srvr.Option{srvr.WithLogConfig(jsonLogConfig(`{"debug_buffer":{"enabled":true,"flush_status":400}}`))}, true},
+		{"JSON enabled", []srvr.Option{srvr.WithLogConfig(jsonLogConfig(`{"debug_buffer":{"enabled":true}}`))}, false},
+		{"JSON 400, not enabled", []srvr.Option{srvr.WithLogConfig(jsonLogConfig(`{"debug_buffer":{"flush_status":400}}`))}, false},
+		{"config enabled, 400", []srvr.Option{srvr.WithDebugBufferConfig(enabled400)}, true},
+		{"config 400, not enabled", []srvr.Option{srvr.WithDebugBufferConfig(srvr.DebugBufferConfig{FlushStatus: 400})}, false},
+		{"config 400, then option 500", []srvr.Option{srvr.WithDebugBufferConfig(enabled400), srvr.WithDebugBuffer(srvr.FlushAtStatus(500))}, false},
+		{"option 500, then config 400", []srvr.Option{srvr.WithDebugBuffer(srvr.FlushAtStatus(500)), srvr.WithDebugBufferConfig(enabled400)}, true},
+		{"BufferLevel INFO, 400", []srvr.Option{srvr.WithDebugBuffer(srvr.BufferLevel(slog.LevelInfo), srvr.FlushAtStatus(400))}, false},
+		{"option 400, then WithLogConfig", []srvr.Option{srvr.WithDebugBuffer(srvr.FlushAtStatus(400)), srvr.WithLogConfig(srvr.LogConfig{Format: "json"})}, false},
+		{"WithLogConfig, then option 400", []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Format: "json"}), srvr.WithDebugBuffer(srvr.FlushAtStatus(400))}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			trail := requestRecords(t, http.MethodGet, "/x", logDebug(returning(prblm.ErrNotFound), "ctx"), tt.opts...)
+			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.written {
+				t.Fatalf("ctx written = %v, want %v: %v", got, tt.written, messages(trail))
+			}
+		})
+	}
+}
+
+// TestDebugBuffer_ThresholdConfig covers triage-debug-buffer / Scenario:
+// Flush threshold, lowered rows; the rejected rows are in
+// TestDebugBuffer_InvalidLimits.
+func TestDebugBuffer_ThresholdConfig(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		status  int
+		written bool
+	}{
+		{399, false},
+		{400, true},
+		{404, true},
+	} {
+		t.Run(strconv.Itoa(tt.status), func(t *testing.T) {
+			t.Parallel()
+
+			trail := requestRecords(t, http.MethodGet, "/x", logDebug(status(tt.status), "ctx"), srvr.WithDebugBuffer(srvr.FlushAtStatus(400)))
+			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.written {
+				t.Fatalf("ctx written = %v, want %v: %v", got, tt.written, messages(trail))
+			}
+		})
+	}
+}
+
+// TestDebugBuffer_Suppressed covers triage-debug-buffer / Scenario:
+// Suppressed access record. The handler writes the status itself: only
+// http.request.completed records can be suppressed.
+func TestDebugBuffer_Suppressed(t *testing.T) {
+	t.Parallel()
+
+	skip := srvr.WithAccessLogConfig(srvr.AccessLogConfig{SkipPaths: []string{"/healthz"}})
+	flush400 := srvr.WithDebugBuffer(srvr.FlushAtStatus(400))
+
+	for _, tt := range []struct {
+		name    string
+		opts    []srvr.Option
+		status  int
+		written bool
+		record  bool // an http.request.completed record is written
+	}{
+		{"skip path, 400", []srvr.Option{flush400, skip}, http.StatusNotFound, false, false},
+		{"disabled, 400", []srvr.Option{flush400, srvr.WithAccessLogConfig(srvr.AccessLogConfig{Disabled: true})}, http.StatusNotFound, false, false},
+		{"level ERROR, 400", []srvr.Option{flush400, srvr.WithLogLevel(slog.LevelError)}, http.StatusNotFound, false, false},
+		{"none, 400", []srvr.Option{flush400}, http.StatusNotFound, true, true},
+		{"skip path, 500", []srvr.Option{srvr.WithDebugBuffer(), skip}, http.StatusInternalServerError, true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, out := loggedServer(t, func(g *srvr.Group) {
+				g.GET("/healthz", logDebug(status(tt.status), "ctx"))
+				g.GET("/barrier", returning(errors.New("boom")))
+			}, tt.opts...)
+			if got := get(t, base+"/healthz").status; got != tt.status {
+				t.Fatalf("status %d, want %d", got, tt.status)
+			}
+
+			// The next request on the same keep-alive connection is read
+			// only after the previous one, its records included, finished.
+			get(t, base+"/barrier")
+			eventually(t, func() bool { return len(out.where(t, "http.route", "/barrier")) == 1 }, "no barrier record")
+
+			records := out.records(t)
+			if got := len(where(records, "msg", "ctx")) == 1; got != tt.written {
+				t.Errorf("ctx written = %v, want %v: %v", got, tt.written, messages(records))
+			}
+
+			var want []string
+			if tt.record {
+				want = []string{"http.request.completed"}
+			}
+
+			if got := messages(where(records, "http.route", "/healthz")); !slices.Equal(got, want) {
+				t.Errorf("/healthz access records %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestDebugBuffer_LevelVar covers triage-debug-buffer / Scenario: Runtime
+// level change during a request.
+func TestDebugBuffer_LevelVar(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		newLevel      slog.Level
+		afterBuffered bool
+	}{
+		{slog.LevelDebug, false},
+		{slog.LevelWarn, true},
+	} {
+		t.Run(tt.newLevel.String(), func(t *testing.T) {
+			t.Parallel()
+
+			lv := new(slog.LevelVar) // INFO
+			before, proceed := make(chan struct{}), make(chan struct{})
+
+			h := func(_ http.ResponseWriter, r *http.Request) error {
+				logger := srvr.LoggerFromContext(r.Context())
+				logger.DebugContext(r.Context(), "before")
+				close(before)
+				<-proceed
+				logger.DebugContext(r.Context(), "after")
+
+				return errors.New("boom")
+			}
+
+			base, out := loggedServer(t, func(g *srvr.Group) { g.GET("/x", h) }, srvr.WithLogLevelVar(lv), srvr.WithDebugBuffer())
+
+			done := make(chan response, 1)
+			go func() { done <- get(t, base+"/x") }()
+
+			receive(t, before, "the handler did not log before")
+			lv.Set(tt.newLevel)
+			close(proceed)
+			receive(t, done, "no response")
+
+			trail := requestTrail(t, out)
+			for _, c := range []struct {
+				msg      string
+				buffered bool
+			}{{"before", true}, {"after", tt.afterBuffered}} {
+				got := where(trail, "msg", c.msg)
+				if len(got) != 1 {
+					t.Fatalf("%s written %d times: %v", c.msg, len(got), messages(trail))
+				}
+
+				if _, marked := got[0]["srvr.buffered"]; marked != c.buffered {
+					t.Errorf("%s: srvr.buffered present = %v, want %v", c.msg, marked, c.buffered)
+				}
 			}
 		})
 	}

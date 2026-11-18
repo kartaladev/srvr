@@ -87,7 +87,7 @@ A request SHALL flush its buffer when its failure status is at or above the flus
 | `600` | (none) | construction error wrapping `srvr.ErrConfig` naming `FlushStatus` |
 
 #### Scenario: Suppressed access record
-- **Given** buffering enabled with flush threshold `<threshold>`, access logging configured with `<access>`, and a handler for `GET /healthz` that logs `DEBUG` `ctx` and ends with `<status>`
+- **Given** buffering enabled with flush threshold `<threshold>`, access logging configured with `<access>`, and a handler for `GET /healthz` that logs `DEBUG` `ctx` and writes `<status>` itself
 - **When** the request completes
 - **Then** the `ctx` record is `<written>` and the access record is `<record>`
 
@@ -97,8 +97,8 @@ A request SHALL flush its buffer when its failure status is at or above the flus
 | `400` | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `404` | not written | not written |
 | `400` | `AccessLogConfig{Disabled: true}` | `404` | not written | not written |
 | `400` | (none), with log level `ERROR` | `404` | not written | not written |
-| `400` | (none) | `404` | written | `http.request.failed` |
-| (default) | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `500` | written | `http.request.failed` |
+| `400` | (none) | `404` | written | `http.request.completed` |
+| (default) | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `500` | written | `http.request.completed` |
 
 ### Requirement: Records at or above the log level are never duplicated
 Records at or above the effective log level SHALL be written immediately and SHALL NOT be buffered; records below the buffer level SHALL be dropped. Each record SHALL appear in the output at most once.

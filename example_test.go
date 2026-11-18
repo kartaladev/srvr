@@ -293,3 +293,22 @@ func ExampleWithDebugBuffer() {
 	// DEBUG step two buffered: true
 	// ERROR http.request.failed buffered: false
 }
+
+// Debug buffering configured by a loader, here from JSON, with the rest of
+// the log settings: requests failing with 400 or above flush their DEBUG
+// records.
+func ExampleDebugBufferConfig() {
+	var logs srvr.LogConfig
+	if err := json.Unmarshal([]byte(`{"level":"info","debug_buffer":{"enabled":true,"flush_status":400,"max_records":50}}`), &logs); err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%+v\n", logs.DebugBuffer)
+
+	_, err := srvr.New(srvr.WithLogConfig(logs))
+	fmt.Println("New:", err)
+
+	// Output:
+	// {Enabled:true Level: FlushStatus:400 MaxRecords:50 MaxBytes:0 TotalBytes:0}
+	// New: <nil>
+}

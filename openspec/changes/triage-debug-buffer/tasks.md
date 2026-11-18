@@ -57,24 +57,24 @@
 
 ## 4. Slice: configuration
 
-- [ ] 4.1 Options and config struct (triage-debug-buffer / Scenario: Configuration sources, all rows); verify `go test -race -run TestDebugBuffer_Config` passes
+- [x] 4.1 Options and config struct (triage-debug-buffer / Scenario: Configuration sources, all rows); verify `go test -race -run TestDebugBuffer_Config` passes
   - RED: table including JSON documents decoded into `LogConfig` and both `WithLogConfig` order rows; fails because `LogConfig.DebugBuffer` does not exist
   - GREEN: `DebugBufferConfig{Enabled, Level, FlushStatus, MaxRecords, MaxBytes, TotalBytes}` with json/yaml/env tags, `WithDebugBufferConfig`, options `BufferLevel`, `FlushAtStatus`, `MaxRecords`, `MaxBytes`, `TotalBytes`, applied in argument order with the later one winning
   - REFACTOR: Combine Functions into Transform for config resolution, then /simplify
-- [ ] 4.2 Lowered and rejected thresholds (triage-debug-buffer / Scenario: Flush threshold, lowered and rejected rows); verify `go test -race -run TestDebugBuffer_ThresholdConfig` passes
+- [x] 4.2 Lowered and rejected thresholds (triage-debug-buffer / Scenario: Flush threshold, lowered and rejected rows); verify `go test -race -run TestDebugBuffer_ThresholdConfig` passes
   - RED: table with `399`/`400`/`404`, `99`, `600`; fails because thresholds are fixed
   - GREEN: configurable threshold with range validation
   - REFACTOR: /simplify
-- [ ] 4.3 Discard when the access record is suppressed (triage-debug-buffer / Scenario: Suppressed access record, all rows); verify `go test -race -run TestDebugBuffer_Suppressed` passes
+- [x] 4.3 Discard when the access record is suppressed (triage-debug-buffer / Scenario: Suppressed access record, all rows); verify `go test -race -run TestDebugBuffer_Suppressed` passes
   - RED: table with skip path, disabled access log and a log level that disables the access record's level at threshold `400`, plus the `500` row that skip never suppresses; fails because the buffer flushes without an access record
   - GREEN: `writeAccess` discards the buffer when it suppresses the access record or the base handler does not enable its level
   - REFACTOR: /simplify
-- [ ] 4.4 Runtime level change mid-request (triage-debug-buffer / Scenario: Runtime level change during a request, all rows); verify `go test -race -count=20 -run TestDebugBuffer_LevelVar` passes
+- [x] 4.4 Runtime level change mid-request (triage-debug-buffer / Scenario: Runtime level change during a request, all rows); verify `go test -race -count=20 -run TestDebugBuffer_LevelVar` passes
   - RED: table synchronising the handler with the level change; fails if the level is captured at request start
   - GREEN: call-time level evaluation through the `Leveler`
   - REFACTOR: /simplify
-- [ ] 4.5 Godoc for `DebugBufferConfig` fields with defaults and reasons, and on `WithDebugBuffer`/`WithDebugBufferConfig` stating that a later `WithLogConfig` replaces `LogConfig.DebugBuffer`; an `Example` loading it from JSON; verify `go test -run Example` passes
-- [ ] 4.6 Verify slice end to end, confirm resolution and validation branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): configure debug buffering by option or config struct`
+- [x] 4.5 Godoc for `DebugBufferConfig` fields with defaults and reasons, and on `WithDebugBuffer`/`WithDebugBufferConfig` stating that a later `WithLogConfig` replaces `LogConfig.DebugBuffer`; an `Example` loading it from JSON; verify `go test -run Example` passes
+- [x] 4.6 Verify slice end to end, confirm resolution and validation branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): configure debug buffering by option or config struct`
 
 ## 5. Slice: derived loggers, concurrency, late records and faults
 

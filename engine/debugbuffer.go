@@ -12,25 +12,43 @@ import (
 	"unsafe"
 )
 
-// DebugBufferConfig configures per-request debug buffering. Consumers use
-// it as srvr.DebugBufferConfig, inside LogConfig or with
-// srvr.WithDebugBufferConfig; every zero field is the default.
+// DebugBufferConfig configures per-request debug buffering (see
+// srvr.WithDebugBuffer for what it does and costs). Consumers use it as
+// srvr.DebugBufferConfig, in LogConfig.DebugBuffer, which a configuration
+// loader fills with the other log settings, or with
+// srvr.WithDebugBufferConfig. Every zero field is the default; a field
+// other than Enabled has no effect while Enabled is false. Invalid values
+// fail construction naming the field.
 type DebugBufferConfig struct {
-	// Enabled turns buffering on. Default off.
+	// Enabled turns buffering on. Default off: buffering makes every
+	// below-level call with a request context build a record, holds
+	// per-request memory and puts DEBUG content in the log on failure,
+	// costs a consumer should choose knowingly.
 	Enabled bool `json:"enabled" yaml:"enabled" env:"ENABLED"`
 	// Level is the lowest level buffered, a log/slog level name such as
 	// "debug" or "info-4". Default "debug", the level production
-	// normally drops.
+	// normally drops. It must not be above a log level set by name (equal
+	// to it, nothing is buffered); with a LevelVar or a consumer's handler
+	// it is not checked.
 	Level string `json:"level" yaml:"level" env:"LEVEL"`
+	// FlushStatus is the lowest failure status whose buffer is written,
+	// 100-599. Default 500: server faults are what triage is for, and 4xx
+	// are usually the client's mistakes. A recovered panic always flushes.
+	FlushStatus int `json:"flush_status" yaml:"flush_status" env:"FLUSH_STATUS"`
 	// MaxRecords caps the records one request buffers; the oldest are
-	// evicted. Default 100.
+	// evicted and counted in srvr.debug_buffer.dropped. Default 100,
+	// enough for a request's story. It must not be negative.
 	MaxRecords int `json:"max_records" yaml:"max_records" env:"MAX_RECORDS"`
-	// MaxBytes caps the estimated bytes one request buffers; the oldest
-	// records are evicted. Default 64 KiB.
+	// MaxBytes caps the estimated bytes one request buffers: the record's
+	// text after truncation to LogConfig.MaxAttrBytes plus a fixed
+	// overhead per record. The oldest records are evicted, and a single
+	// record larger than MaxBytes is dropped. Default 64 KiB, bounded
+	// memory with headroom. It must not be negative.
 	MaxBytes int `json:"max_bytes" yaml:"max_bytes" env:"MAX_BYTES"`
 	// TotalBytes caps the estimated bytes all requests of the server
-	// buffer together; a record that does not fit is dropped. Default
-	// 16 MiB.
+	// buffer together; a record that does not fit is dropped and the
+	// request's srvr.debug_buffer.truncated is true. Default 16 MiB, which
+	// bounds memory under a load spike. It must be at least MaxBytes.
 	TotalBytes int `json:"total_bytes" yaml:"total_bytes" env:"TOTAL_BYTES"`
 }
 
@@ -80,7 +98,7 @@ func (b *budget) release(n int) { b.used.Add(-int64(n)) }
 func newBufferPolicy(c DebugBufferConfig) *bufferPolicy {
 	p := &bufferPolicy{
 		level:       slog.LevelDebug,
-		flushStatus: http.StatusInternalServerError,
+		flushStatus: cmp.Or(c.FlushStatus, http.StatusInternalServerError),
 		maxRecords:  cmp.Or(c.MaxRecords, defaultBufferRecords),
 		maxBytes:    cmp.Or(c.MaxBytes, defaultBufferBytes),
 		budget:      &budget{limit: int64(cmp.Or(c.TotalBytes, defaultBufferTotal))},
@@ -93,9 +111,9 @@ func newBufferPolicy(c DebugBufferConfig) *bufferPolicy {
 	return p
 }
 
-// validateDebugBuffer checks an enabled debug buffer configuration: no
-// negative limit, a budget that fits one request's buffer, and a level
-// name not above a static log level.
+// validateDebugBuffer checks an enabled debug buffer configuration: a
+// flush status in 100-599, no negative limit, a budget that fits one
+// request's buffer, and a level name not above a static log level.
 func validateDebugBuffer(s *Settings) error {
 	c := s.Log.DebugBuffer
 	if !c.Enabled {
@@ -112,6 +130,10 @@ func validateDebugBuffer(s *Settings) error {
 		}
 
 		errs = append(errs, err)
+	}
+
+	if c.FlushStatus != 0 && (c.FlushStatus < 100 || c.FlushStatus > 599) {
+		errs = append(errs, NewConfigError("DebugBuffer.FlushStatus", c.FlushStatus, "is not an HTTP status in 100-599 (0 means the default 500)"))
 	}
 
 	errs = append(errs,

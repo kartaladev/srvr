@@ -238,8 +238,10 @@ func WithAccessLogIncludeClientAddress() Option {
 	return func(s *engine.Settings) { s.Access.IncludeClientAddress = true }
 }
 
-// WithLogConfig sets every field of [LogConfig], replacing what earlier
-// level options set.
+// WithLogConfig sets every field of [LogConfig], replacing what any
+// earlier log option set, LogConfig.DebugBuffer included: a
+// [WithDebugBuffer] or [WithDebugBufferConfig] before it has no effect.
+// Pass it first, or set its DebugBuffer field.
 func WithLogConfig(c LogConfig) Option {
 	return func(s *engine.Settings) {
 		s.Log.LogConfig = c
@@ -443,6 +445,10 @@ type DebugBufferOption func(*DebugBufferConfig)
 // the record is flushed, so it shows changes made after it was logged.
 // Records logged without the request's context, such as with
 // context.Background() in a goroutine, follow the level rule unbuffered.
+//
+// opts change the defaults (see [DebugBufferConfig]) in argument order. A
+// nil opt fails New. A later [WithLogConfig] replaces the whole
+// configuration.
 func WithDebugBuffer(opts ...DebugBufferOption) Option {
 	return func(s *engine.Settings) {
 		s.Log.DebugBuffer.Enabled = true
@@ -466,6 +472,13 @@ func BufferLevel(l slog.Level) DebugBufferOption {
 	return func(c *DebugBufferConfig) { c.Level = l.String() }
 }
 
+// FlushAtStatus sets [DebugBufferConfig].FlushStatus: requests failing with
+// status n or above flush their buffer. A threshold below the default
+// 500, such as 400, logs more client-error context.
+func FlushAtStatus(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.FlushStatus = n }
+}
+
 // MaxRecords caps the records one request buffers (default 100); the
 // oldest are evicted and counted as dropped.
 func MaxRecords(n int) DebugBufferOption {
@@ -486,7 +499,10 @@ func TotalBytes(n int) DebugBufferOption {
 	return func(c *DebugBufferConfig) { c.TotalBytes = n }
 }
 
-// WithDebugBufferConfig sets every field of [DebugBufferConfig].
+// WithDebugBufferConfig sets every field of [DebugBufferConfig], a zero
+// field meaning its default, replacing what earlier [WithDebugBuffer]
+// options set; a later WithDebugBuffer changes the fields its options
+// name. A later [WithLogConfig] replaces the whole configuration.
 func WithDebugBufferConfig(c DebugBufferConfig) Option {
 	return func(s *engine.Settings) { s.Log.DebugBuffer = c }
 }
