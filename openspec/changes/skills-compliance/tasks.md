@@ -6,40 +6,40 @@
 - [x] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `skills-compliance` or `unassigned` (adopt, defer or close), in particular "Engine modules duplicate the core's test helpers", "otelsrvr's go.mod requires the OpenTelemetry SDK for its tests", "Public engine package stability before v1" and `triage-debug-buffer` task 7.1 (adopted by D4); verify none is left undecided
 - [x] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code, re-locating every audit finding with gopls (definitions and references, not line numbers); verify `openspec validate skills-compliance --strict` passes
 - [x] 1.4 Record the consolidation outcome and every audit finding (with its evidence and which task fixes it, or why it is closed) at the top of `openspec/changes/skills-compliance/notes.md`; verify the file lists all seven audit areas
-- [ ] 1.5 Commit the consolidation as `docs(openspec): consolidate skills-compliance against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.5 Commit the consolidation as `docs(openspec): consolidate skills-compliance against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: log safety defaults in the core
 
-- [ ] 2.1 Sampled flag from the hex value (trace-context / Scenario: Sampled flag, both tables); verify `go test -race -run TestSampledFlag ./internal/tracectx/ ./...` passes in core
+- [x] 2.1 Sampled flag from the hex value (trace-context / Scenario: Sampled flag, both tables); verify `go test -race -run TestSampledFlag ./internal/tracectx/ ./...` passes in core
   - RED: `TestSampledFlag` with one case per row (`00`-`ff` accepted, `0B`, `0g`, `1` rejected); fails for `0a`, `0b`, `fe`, `ff` as the audit probe showed
   - GREEN: decode the flags with `hex.Decode` into one byte and test bit 0
   - REFACTOR: Inline the misleading comment into a correct one; /simplify
-- [ ] 2.2 Fingerprint uses the normalised method (triage-error-records / Scenario: Fingerprint stability, both tables); verify `go test -race -run TestFingerprint` passes in core and `otelsrvr`
+- [x] 2.2 Fingerprint uses the normalised method (triage-error-records / Scenario: Fingerprint stability, both tables); verify `go test -race -run TestFingerprint` passes in core and `otelsrvr`
   - RED: extend the fingerprint table with the client-chosen-method rows (`FOO1`/`FOO2`, `PURGE`/`BREW` on `Mount`, `QUERY`/`POST`, lowercase `get`); fails because every method hashes differently
   - GREEN: `engine.MethodLabel`; `fingerprint` hashes it
   - REFACTOR: Replace `otelsrvr`'s `knownMethods` lookup with `engine.MethodLabel` (Remove Duplication), keeping its attribute mapping; /simplify
-- [ ] 2.3 Skip paths copied at construction (structured-logging / Scenario: Caller mutates skip paths after New, all rows); verify `go test -race -run TestAccessLogSkipPathsCopied` passes
+- [x] 2.3 Skip paths copied at construction (structured-logging / Scenario: Caller mutates skip paths after New, all rows); verify `go test -race -run TestAccessLogSkipPathsCopied` passes
   - RED: table over `WithAccessLogConfig`, `WithAccessLogSkipPaths` and the concurrent-mutation row; fails for the `WithAccessLogConfig` rows
   - GREEN: `slices.Clone(c.SkipPaths)` inside `WithAccessLogConfig`
   - REFACTOR: none expected; /simplify
-- [ ] 2.4 `slog.Any` values capped (structured-logging / Scenario: Capping slog.Any values, within-cap, over-cap and faulty-value tables); verify `go test -race -run TestTruncate_AnyValues` passes
+- [x] 2.4 `slog.Any` values capped (structured-logging / Scenario: Capping slog.Any values, within-cap, over-cap and faulty-value tables); verify `go test -race -run TestTruncate_AnyValues` passes
   - RED: one case per row, including the exactly-1024-byte struct, the group and `With` rows, `MaxAttrBytes: -1` and the panicking `String`; fails for every over-cap row
   - GREEN: `truncator.attr` formats other `KindAny` values with `ValueText`, keeps the value when it fits and cuts otherwise; `mayNeedRewrite` reports `KindAny`
   - REFACTOR: Extract Function `capAny` out of the kind switch; /simplify
-- [ ] 2.5 Default redaction of request error text (triage-error-records / Scenario: Default redaction, masked-by-default rows); verify `go test -race -run TestDefaultRedaction` passes
+- [x] 2.5 Default redaction of request error text (triage-error-records / Scenario: Default redaction, masked-by-default rows); verify `go test -race -run TestDefaultRedaction` passes
   - RED: one case per masked-by-default row, including the unmasked email, path, `?=x` and empty rows; fails because the text is written unredacted
   - GREEN: `engine.RedactSecrets` with two precompiled patterns; `Core.redact` uses it when no redactor is set
   - REFACTOR: Extract Variable for each pattern with a comment naming what it matches; /simplify
-- [ ] 2.6 Redaction overrides (triage-error-records / Scenario: Default redaction, overrides rows; existing Scenario: Redacting error text still green); verify `go test -race -run 'TestDefaultRedaction|TestRedact'` passes
+- [x] 2.6 Redaction overrides (triage-error-records / Scenario: Default redaction, overrides rows; existing Scenario: Redacting error text still green); verify `go test -race -run 'TestDefaultRedaction|TestRedact'` passes
   - RED: the four override rows, including both orders of `WithoutErrorRedaction` and `WithErrorRedactor`; fails because `WithoutErrorRedaction` does not exist (add it first as a no-op so RED is a wrong value, not a compile error)
   - GREEN: `WithoutErrorRedaction()` sets the identity redactor; godoc names it a loosening
   - REFACTOR: /simplify
-- [ ] 2.7 Default redaction of panics and lifecycle text (triage-error-records / Scenario: Default redaction of panics and lifecycle text, all rows); verify `go test -race -run TestDefaultRedaction_Lifecycle` passes
+- [x] 2.7 Default redaction of panics and lifecycle text (triage-error-records / Scenario: Default redaction of panics and lifecycle text, all rows); verify `go test -race -run TestDefaultRedaction_Lifecycle` passes
   - RED: rows for a panicking handler (message and stack), a failing `BeforeDrain` hook and a panicking configurer; fails if any path bypasses `redact`
   - GREEN: route any bypassing path through `exceptionMessage`
   - REFACTOR: /simplify
-- [ ] 2.8 Document the defaults: godoc on `WithErrorRedactor`, `WithoutErrorRedaction`, `LogConfig.MaxAttrBytes`; `LOGGING.md` sections on default redaction, `slog.Any` capping and the normalised fingerprint method; `CHANGELOG.md` "Unreleased" entries; verify `go test -run Example` and `go doc ./ WithoutErrorRedaction` show the text
-- [ ] 2.9 Verify the slice end to end (an httptest request whose handler returns a `*url.Error` with `?api_key=` yields a masked `exception.message`), confirm `RedactSecrets`, `capAny`, `MethodLabel` and `parse` branches in `go tool cover -func`, run gopls diagnostics on changed files, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core and `otelsrvr`, run /simplify on the slice and commit `fix(core): redact secrets, cap any-valued attributes and bound fingerprints by default`
+- [x] 2.8 Document the defaults: godoc on `WithErrorRedactor`, `WithoutErrorRedaction`, `LogConfig.MaxAttrBytes`; `LOGGING.md` sections on default redaction, `slog.Any` capping and the normalised fingerprint method; `CHANGELOG.md` "Unreleased" entries; verify `go test -run Example` and `go doc ./ WithoutErrorRedaction` show the text
+- [x] 2.9 Verify the slice end to end (an httptest request whose handler returns a `*url.Error` with `?api_key=` yields a masked `exception.message`), confirm `RedactSecrets`, `capAny`, `MethodLabel` and `parse` branches in `go tool cover -func`, run gopls diagnostics on changed files, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core and `otelsrvr`, run /simplify on the slice and commit `fix(core): redact secrets, cap any-valued attributes and bound fingerprints by default`
 
 ## 3. Slice: lifecycle robustness
 

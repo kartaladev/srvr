@@ -487,28 +487,12 @@ func attributes(method attribute.KeyValue, scheme string, res srvr.ResultInfo) [
 	return attrs
 }
 
-// knownMethods are the methods semantic conventions name; any other,
-// including a different case, is _OTHER.
-var knownMethods = map[string]attribute.KeyValue{
-	http.MethodConnect: semconv.HTTPRequestMethodConnect,
-	http.MethodDelete:  semconv.HTTPRequestMethodDelete,
-	http.MethodGet:     semconv.HTTPRequestMethodGet,
-	http.MethodHead:    semconv.HTTPRequestMethodHead,
-	http.MethodOptions: semconv.HTTPRequestMethodOptions,
-	http.MethodPatch:   semconv.HTTPRequestMethodPatch,
-	http.MethodPost:    semconv.HTTPRequestMethodPost,
-	http.MethodPut:     semconv.HTTPRequestMethodPut,
-	http.MethodTrace:   semconv.HTTPRequestMethodTrace,
-	"QUERY":            semconv.HTTPRequestMethodQuery,
-}
-
-// methodAttr returns the http.request.method attribute of method.
+// methodAttr returns the http.request.method attribute of method: the
+// method when semantic conventions name it, _OTHER for any other method,
+// including a different case. It shares engine.MethodLabel with srvr's
+// error fingerprints, so the two never disagree on the set.
 func methodAttr(method string) attribute.KeyValue {
-	if kv, ok := knownMethods[method]; ok {
-		return kv
-	}
-
-	return semconv.HTTPRequestMethodOther
+	return semconv.HTTPRequestMethodKey.String(engine.MethodLabel(method))
 }
 
 // errorType returns the error.type of res, or "" when it did not fail:

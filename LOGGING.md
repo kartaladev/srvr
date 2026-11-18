@@ -17,7 +17,7 @@ listed in this document.
 | `time`, `level`, `msg` | string | every record | slog's own keys; `msg` is the event name |
 | `srvr.log.schema` | number | every srvr record | schema version |
 | `trace_id`, `span_id` | string | every record written with a request context | W3C trace context, always top-level |
-| `srvr.attr.truncated` | bool | a record with a cut value | a string attribute, error text or message was cut to `MaxAttrBytes` (default 1024) and ends in `…[truncated]` |
+| `srvr.attr.truncated` | bool | a record with a cut value | a string attribute, error text, message or `slog.Any` value was cut to `MaxAttrBytes` (default 1024) and ends in `…[truncated]` |
 | `service.name` | string | lifecycle and failed records | `ServiceConfig.Name`, default `unknown_service:<executable>` |
 | `service.version` | string | lifecycle and failed records | `ServiceConfig.Version`, default the module version from build information |
 | `vcs.revision` | string | lifecycle and failed records, when known | commit from build information |
@@ -52,8 +52,8 @@ status the error would have been answered with, so a late 5xx error is `ERROR` a
 | `error.kind` | string | `panic` for recovered and aborting panics |
 | `error.chain` | array of string | Go types from outermost to innermost, breadth-first, at most 32 levels and 64 errors |
 | `srvr.error.truncated` | bool | the chain walk hit a limit or an `Unwrap` panicked |
-| `error.fingerprint` | string | 16 hex characters from method, route and the type chain (panics: panic value type and top application frame), never message text |
-| `exception.message` | string | full error text, or the panic value; at most 8 KiB; passes the `WithErrorRedactor` redactor |
+| `error.fingerprint` | string | 16 hex characters from method, route and the type chain (panics: panic value type and top application frame), never message text; a method outside the semantic-convention set counts as `_OTHER` |
+| `exception.message` | string | full error text, or the panic value; at most 8 KiB; passes the redactor (see [Redaction](#redaction)) |
 | `exception.type` | string | Go type of a panic value |
 | `exception.stacktrace` | string | goroutine stack at the panic, at most 32 KiB; redacted like the message |
 | `srvr.stacktrace.truncated` | bool | the stack was cut |
@@ -76,8 +76,8 @@ goes to logs, never to 5xx responses.
 | `server.config.warning` | WARN, once per server, for a configuration that works but is likely unintended: at construction for engine settings, at `Start` for route-dependent ones; it never fails either | `srvr.warning.code` (stable snake_case: `gin_debug_mode`, `fiber_header_limit_capped`), `srvr.warning.message` |
 
 Lifecycle records carry the service keys and never `trace_id`. Their `exception.message` is built
-like a request failure record's: it passes the `WithErrorRedactor` redactor (`[redaction failed]`
-when the redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`. With a negative
+like a request failure record's: it passes the redactor (see [Redaction](#redaction); `[redaction failed]`
+when a consumer redactor panics) and is limited to 8 KiB, not to `MaxAttrBytes`. With a negative
 `MaxAttrBytes` nothing is cut, but `exception.*` text and `error` values still reach a consumer
 handler as plain strings. A consumer handler and the redactor are called synchronously: one that
 blocks stalls the request or the `Start`/`Shutdown` call writing the record.
@@ -97,9 +97,35 @@ response, and is neither detected nor logged. Adding this event kept `srvr.log.s
 
 | Event | Level | Keys |
 |-------|-------|------|
-| `otel.export.failed` | WARN, written by `otelsetup` only when `SetGlobal` installed its OpenTelemetry error handler, at most once per minute per error kind; written to the logger given with `otelsetup.WithLogger` (default `slog.Default()`) | `error.type` (the error's Go type), `exception.message` (the error text) |
+| `otel.export.failed` | WARN, written by `otelsetup` only when `SetGlobal` installed its OpenTelemetry error handler, at most once per minute per error kind; written to the logger given with `otelsetup.WithLogger` (default `slog.Default()`) | `error.type` (the error's Go type), `exception.message` (the error text, passed through srvr's default redactor) |
 
 It carries `srvr.log.schema` 1; adding it kept the version.
+
+## Redaction
+
+`exception.message` and `exception.stacktrace` of `http.request.failed`, `server.failed` and
+`server.shutdown_hook.failed` pass a redactor before they are written. With no option, srvr's default
+redactor (`engine.RedactSecrets`) replaces with `***`:
+
+- the value of every URL query parameter with a non-empty name (`?api_key=SECRET&amount=5` becomes
+  `?api_key=***&amount=***`);
+- the value of every `key=value`, `key: value` or `"key":"value"` pair whose key contains `token`, `key`,
+  `secret`, `password`, `passwd`, `authorization`, `cookie`, `session` or `credential`, in any case,
+  together with an auth scheme before it (`Authorization: Bearer abc` becomes `Authorization: ***`).
+
+A colon needs a space or a quote after it, so stack frames (`cookie.go:42`) and `host:port` stay
+readable. The default masks too much rather than too little: it may hide harmless text, never shows a
+matched secret. `WithErrorRedactor(fn)` replaces it; `WithoutErrorRedaction()` writes the text
+unredacted, which loosens a safety default. The last of the two options wins. The redactor did not
+change the schema: `exception.message` was always the text after the redactor.
+
+## Values of any kind
+
+An attribute your code logs with `slog.Any` (a map, slice, struct, `[]byte` or `fmt.Stringer`) is
+written unchanged when its formatted text (`fmt`, or `String()`) fits `MaxAttrBytes`. Otherwise it is
+replaced by that text cut like a string, and `srvr.attr.truncated` is set. A value whose `String`
+panics is written as `<panic formatting value>`. The size check uses formatted text, so it is
+approximate for values near the limit. A negative `MaxAttrBytes` keeps every value.
 
 ## Sample triage record
 

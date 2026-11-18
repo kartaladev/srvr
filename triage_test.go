@@ -1,12 +1,14 @@
 package srvr_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -277,6 +279,11 @@ func TestTriage_Fingerprint(t *testing.T) {
 			}
 		})
 		g.POST("/users", returning(errors.New("a")))
+		// A route for every method: Mount handlers return no error, so the
+		// "Mount handler" rows use a method-less srvr route.
+		g.Handle("", "/files", returning(errors.New("a")))
+		g.Handle("QUERY", "/search", returning(errors.New("a")))
+		g.POST("/search", returning(errors.New("a")))
 	})
 
 	fingerprint := func(method, path string) string {
@@ -302,6 +309,12 @@ func TestTriage_Fingerprint(t *testing.T) {
 		{"wrapped once vs twice", [2]string{"GET", "/users/1?e=once"}, [2]string{"GET", "/users/1?e=twice"}, false},
 		{"other route and method", [2]string{"GET", "/users/1"}, [2]string{"POST", "/users"}, false},
 		{"panics with other values", [2]string{"GET", "/users/1?e=panic&v=x"}, [2]string{"GET", "/users/1?e=panic&v=y"}, true},
+		// client-chosen methods
+		{"two unknown methods, unmatched", [2]string{"FOO1", "/nope"}, [2]string{"FOO2", "/nope"}, true},
+		{"unknown vs GET, unmatched", [2]string{"FOO1", "/nope"}, [2]string{"GET", "/nope"}, false},
+		{"two unknown methods on a route for every method", [2]string{"PURGE", "/files"}, [2]string{"BREW", "/files"}, true},
+		{"QUERY vs POST", [2]string{"QUERY", "/search"}, [2]string{"POST", "/search"}, false},
+		{"lowercase get vs GET, unmatched", [2]string{"get", "/nope"}, [2]string{"GET", "/nope"}, false},
 	}
 
 	for _, p := range pairs {
@@ -476,6 +489,152 @@ func TestTriage_PanicStackSize(t *testing.T) {
 			rec := failedRecord(t, func(http.ResponseWriter, *http.Request) error { recurse(depth); return nil })
 			if st := fmt.Sprint(rec["exception.stacktrace"]); len(st) > 32768 || rec["srvr.stacktrace.truncated"] != false {
 				t.Fatalf("stacktrace %d bytes, truncated %v", len(st), rec["srvr.stacktrace.truncated"])
+			}
+		})
+	}
+}
+
+// TestDefaultRedaction covers triage-error-records / Scenario: Default
+// redaction.
+func TestDefaultRedaction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		opts          []srvr.Option
+		text, message string
+	}{
+		// masked by default
+
+		{
+			"URL query values", nil,
+			`charge: Get "http://pay.local/v1/charge?api_key=SECRET&amount=5": dial tcp: refused`,
+			`charge: Get "http://pay.local/v1/charge?api_key=***&amount=***": dial tcp: refused`,
+		},
+		{"password pair", nil, "login failed: password=hunter2 user=bob", "login failed: password=*** user=bob"},
+		{"authorization header", nil, "upstream said Authorization: Bearer abc.def", "upstream said Authorization: ***"},
+		{"session cookie", nil, "bad cookie session_id=7f3a; Path=/", "bad cookie session_id=***; Path=/"},
+		{"upper-case token key", nil, "ACCESS_TOKEN=xyz rejected", "ACCESS_TOKEN=*** rejected"},
+		{"e-mail stays", nil, "duplicate key alice@example.com", "duplicate key alice@example.com"},
+		{"path stays", nil, "GET http://a.local/users/42 failed", "GET http://a.local/users/42 failed"},
+		{"odd query stays", nil, "query ?=x and ?& are odd", "query ?=x and ?& are odd"},
+		{"empty", nil, "", ""},
+		// overrides
+		{"WithErrorRedactor", []srvr.Option{srvr.WithErrorRedactor(strings.ToUpper)}, "password=hunter2", "PASSWORD=HUNTER2"},
+		{
+			"WithoutErrorRedaction",
+			[]srvr.Option{srvr.WithoutErrorRedaction()},
+			"login failed: password=hunter2", "login failed: password=hunter2",
+		},
+		{
+			"WithoutErrorRedaction, then WithErrorRedactor",
+			[]srvr.Option{srvr.WithoutErrorRedaction(), srvr.WithErrorRedactor(strings.ToUpper)},
+			"password=hunter2", "PASSWORD=HUNTER2",
+		},
+		{
+			"WithErrorRedactor, then WithoutErrorRedaction",
+			[]srvr.Option{srvr.WithErrorRedactor(strings.ToUpper), srvr.WithoutErrorRedaction()},
+			"password=hunter2", "password=hunter2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := failedRecord(t, returning(errors.New(tt.text)), tt.opts...)["exception.message"]; got != tt.message {
+				t.Fatalf("exception.message = %v, want %q", got, tt.message)
+			}
+		})
+	}
+
+	// The first row's text, from a real client error value.
+	t.Run("URL query values in a client error", func(t *testing.T) {
+		t.Parallel()
+
+		err := &url.Error{Op: "Get", URL: "http://pay.local/v1/charge?api_key=SECRET", Err: errors.New("dial tcp: refused")}
+		const want = `charge: Get "http://pay.local/v1/charge?api_key=***": dial tcp: refused`
+		if got := failedRecord(t, returning(fmt.Errorf("charge: %w", err)))["exception.message"]; got != want {
+			t.Fatalf("exception.message = %v, want %q", got, want)
+		}
+	})
+}
+
+// TestDefaultRedaction_Lifecycle covers triage-error-records / Scenario:
+// Default redaction of panics and lifecycle text.
+func TestDefaultRedaction_Lifecycle(t *testing.T) {
+	t.Parallel()
+
+	panicking := func(v any) srvr.HandlerFunc {
+		return func(http.ResponseWriter, *http.Request) error { panic(v) }
+	}
+
+	tests := []struct {
+		name              string
+		record            func(t *testing.T) map[string]any
+		attribute         string
+		contained, absent string
+	}{
+		{
+			name:      "handler panic message",
+			record:    func(t *testing.T) map[string]any { t.Helper(); return failedRecord(t, panicking("token=abc")) },
+			attribute: "exception.message", contained: "token=***", absent: "token=abc",
+		},
+		{
+			name: "handler panic stack",
+			record: func(t *testing.T) map[string]any {
+				t.Helper()
+				return failedRecord(t, panicking(errors.New("password=p")))
+			},
+			// a Go stack does not quote the panic value, so only absence is checked
+			attribute: "exception.stacktrace", absent: "password=p",
+		},
+		{
+			name: "BeforeDrain hook error",
+			record: func(t *testing.T) map[string]any {
+				t.Helper()
+				out := &logBuffer{}
+				srv := newServer(t, srvr.WithLogOutput(out), srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error {
+					return errors.New("secret=s")
+				}))
+				mustNil(t, srv.Register(okRoute("/x")))
+				done := startBackground(t, srv)
+				_ = srv.Shutdown(t.Context())
+				if err := receive(t, done, "Start did not return"); !errors.Is(err, srvr.ErrShutdownHook) {
+					t.Fatalf("Start = %v, want an error wrapping ErrShutdownHook", err)
+				}
+
+				return out.waitRecord(t, "server.shutdown_hook.failed")
+			},
+			attribute: "exception.message", contained: "secret=***", absent: "secret=s",
+		},
+		{
+			name: "configurer panic",
+			record: func(t *testing.T) map[string]any {
+				t.Helper()
+				out := &logBuffer{}
+				srv := newServer(t, srvr.WithLogOutput(out))
+				mustNil(t, srv.Register(configFunc(func(*srvr.Group) { panic("api_key=k") })))
+				if err := srv.Start(t.Context()); err == nil {
+					t.Fatal("Start = nil, want an error")
+				}
+
+				return out.waitRecord(t, "server.failed")
+			},
+			attribute: "exception.message", contained: "api_key=***", absent: "api_key=k",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, _ := tt.record(t)[tt.attribute].(string)
+			if strings.Contains(got, tt.absent) {
+				t.Fatalf("%s contains %q: %s", tt.attribute, tt.absent, got)
+			}
+			if tt.contained != "" && !strings.Contains(got, tt.contained) {
+				t.Fatalf("%s = %q, want it to contain %q", tt.attribute, got, tt.contained)
 			}
 		})
 	}

@@ -304,3 +304,68 @@ func TestTraceSourceProblem(t *testing.T) {
 		t.Errorf("problem trace_id = %v, want %s", id, supplied)
 	}
 }
+
+// TestSampledFlag covers trace-context / Scenario: Sampled flag, both
+// tables: the sampled flag is bit 0 of the flags byte read as hex, and a
+// malformed flags field starts a new, unsampled trace.
+func TestSampledFlag(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu  sync.Mutex
+		got = map[string]Trace{}
+	)
+	srv := newServer(t)
+	mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
+		g.GET("/read", func(_ http.ResponseWriter, r *http.Request) error {
+			tr, _ := srvr.TraceFromContext(r.Context())
+			mu.Lock()
+			got[r.Header.Get("traceparent")] = tr
+			mu.Unlock()
+
+			return nil
+		})
+	})))
+	base := startServer(t, srv)
+
+	tests := []struct {
+		flags    string
+		sampled  bool
+		newTrace bool
+	}{
+		{flags: "00"},
+		{flags: "01", sampled: true},
+		{flags: "02"},
+		{flags: "09", sampled: true},
+		{flags: "0a"},
+		{flags: "0b", sampled: true},
+		{flags: "0e"},
+		{flags: "0f", sampled: true},
+		{flags: "fe"},
+		{flags: "ff", sampled: true},
+		// rejected flags start a new trace
+		{flags: "0B", newTrace: true},
+		{flags: "0g", newTrace: true},
+		{flags: "1", newTrace: true},
+	}
+
+	for _, tt := range tests {
+		t.Run("flags "+tt.flags, func(t *testing.T) {
+			t.Parallel()
+
+			header := "00-" + incomingTrace + "-00f067aa0ba902b7-" + tt.flags
+			do(t, http.MethodGet, base+"/read", nil, map[string]string{"traceparent": header})
+
+			mu.Lock()
+			tr := got[header]
+			mu.Unlock()
+
+			if continued := tr.TraceID == incomingTrace; continued == tt.newTrace {
+				t.Fatalf("trace id = %q, new trace want %v", tr.TraceID, tt.newTrace)
+			}
+			if tr.Sampled != tt.sampled {
+				t.Fatalf("Sampled = %v, want %v", tr.Sampled, tt.sampled)
+			}
+		})
+	}
+}

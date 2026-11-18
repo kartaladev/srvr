@@ -193,7 +193,9 @@ func WithIgnoreIncomingTraceContext() Option {
 	return func(s *engine.Settings) { s.Trace.IgnoreIncoming = true }
 }
 
-// WithAccessLogConfig sets every field of [AccessLogConfig].
+// WithAccessLogConfig sets every field of [AccessLogConfig]. New copies
+// SkipPaths, so changing the caller's slice later never changes which
+// records are written.
 func WithAccessLogConfig(c AccessLogConfig) Option {
 	return func(s *engine.Settings) { s.Access = c }
 }
@@ -369,7 +371,10 @@ func WithErrorHook(fn ErrorHook) Option {
 
 // WithErrorRedactor applies fn to exception.message and
 // exception.stacktrace before they are logged, for example to mask e-mail
-// addresses in database errors. It applies to request failure records and
+// addresses in database errors. fn replaces srvr's default redactor
+// ([engine.RedactSecrets], which masks URL query values and secret-looking
+// key=value pairs), so a consumer redactor that should keep that masking
+// calls it itself. It applies to request failure records and
 // to the lifecycle records server.failed and server.shutdown_hook.failed,
 // whose exception.message is consumer text too (a hook's database close
 // error may carry a connection string); the 8 KiB message limit applies
@@ -390,4 +395,14 @@ func WithErrorRedactor(fn func(string) string) Option {
 
 		s.Redactor = fn
 	}
+}
+
+// WithoutErrorRedaction writes exception.message and exception.stacktrace
+// unredacted, which loosens a safety default: by default srvr masks URL
+// query values and secret-looking key=value pairs in error text (see
+// [engine.RedactSecrets]), because credentials in error text must not reach
+// the logs. Options apply in order: a later [WithErrorRedactor] replaces
+// this, and this replaces an earlier one.
+func WithoutErrorRedaction() Option {
+	return func(s *engine.Settings) { s.Redactor = func(text string) string { return text } }
 }

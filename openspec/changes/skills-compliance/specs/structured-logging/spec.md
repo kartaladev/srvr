@@ -36,7 +36,7 @@ An attribute holding a value of any other kind (a map, slice, struct, `[]byte` o
 | (none) | `slog.Any("v", nil)` | `nil` | the value as the handler renders it | (none) |
 
 ### Requirement: Access log configuration is copied at construction
-The skip paths a consumer passes, through `WithAccessLogConfig` or `WithAccessLogSkipPaths`, SHALL be copied when the option is applied, so changing the caller's slice afterwards never changes which records are written and never races with requests.
+The skip paths a consumer passes, through `WithAccessLogConfig` or `WithAccessLogSkipPaths`, SHALL be copied when `New` applies the options, so changing the caller's slice afterwards never changes which records are written and never races with requests.
 
 #### Scenario: Caller mutates skip paths after New
 - **Given** a server built with `<option>` holding the slice `s` with `/healthz`

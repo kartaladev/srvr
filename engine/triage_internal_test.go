@@ -168,3 +168,28 @@ type panicUnwrapError struct{}
 
 func (panicUnwrapError) Error() string { return "x" }
 func (panicUnwrapError) Unwrap() error { panic("unwrap") }
+
+// TestRedactSecrets pins what the default redactor keeps readable beyond
+// the spec rows: stack frames and host:port pairs whose names contain a
+// secret-looking word, and compact JSON pairs, which it masks.
+func TestRedactSecrets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ name, in, want string }{
+		{"stack frame", "\t/usr/local/go/src/net/http/cookie.go:42 +0x1c", "\t/usr/local/go/src/net/http/cookie.go:42 +0x1c"},
+		{"host and port", `Get "http://session-api.local:8443/x": refused`, `Get "http://session-api.local:8443/x": refused`},
+		{"compact JSON pair", `body {"token":"abc","n":1}`, `body {"token":"***","n":1}`},
+		{"spaced equals", "password = hunter2", "password = ***"},
+		{"basic auth", "authorization: Basic dXNlcjpwYXNz", "authorization: ***"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := RedactSecrets(tt.in); got != tt.want {
+				t.Fatalf("RedactSecrets(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

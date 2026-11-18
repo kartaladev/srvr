@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -137,22 +139,33 @@ func (e *guardedError) Unwrap() error { return e.err }
 
 // ValueText formats a panic value, guarded against a panicking String or
 // Error method (fmt would print its own %!v(PANIC=...) text instead).
-func ValueText(v any) (text string) {
+func ValueText(v any) string {
+	text, _ := valueText(v)
+
+	return text
+}
+
+// valueText returns the text of v like ValueText, and whether formatting
+// it panicked.
+func valueText(v any) (text string, panicked bool) {
 	defer func() {
 		if recover() != nil {
-			text = "<panic formatting value>"
+			text, panicked = panicFormatting, true
 		}
 	}()
 
 	switch x := v.(type) {
 	case error:
-		return errorText(x)
+		return errorText(x), false
 	case fmt.Stringer:
-		return x.String()
+		return x.String(), false
 	default:
-		return fmt.Sprint(v)
+		return fmt.Sprint(v), false
 	}
 }
+
+// panicFormatting is the text of a value whose formatting panicked.
+const panicFormatting = "<panic formatting value>"
 
 // maxCycleCheck bounds the errors hasCycle visits.
 const maxCycleCheck = 1 << 12
@@ -272,6 +285,25 @@ func fingerprint(parts ...string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
+// MethodOther is the [MethodLabel] of every method outside the set the
+// OpenTelemetry HTTP semantic conventions name.
+const MethodOther = "_OTHER"
+
+// MethodLabel returns method when the OpenTelemetry HTTP semantic
+// conventions name it (CONNECT, DELETE, GET, HEAD, OPTIONS, PATCH, POST,
+// PUT, QUERY, TRACE; case-sensitive), and [MethodOther] for any other
+// method. Fingerprints and metrics use it so a client choosing methods
+// cannot create unbounded groups or label values.
+func MethodLabel(method string) string {
+	switch method {
+	case http.MethodConnect, http.MethodDelete, http.MethodGet, http.MethodHead, http.MethodOptions,
+		http.MethodPatch, http.MethodPost, http.MethodPut, http.MethodTrace, "QUERY":
+		return method
+	default:
+		return MethodOther
+	}
+}
+
 // topFrame returns the first function in a panic stack after the panic
 // that belongs to the application: not runtime, prblm or srvr.
 func topFrame(stack []byte) string {
@@ -314,12 +346,51 @@ func isLibraryFrame(fn string) bool {
 	return false
 }
 
-// redact applies the consumer's redactor to text.
-func (c *Core) redact(text string) (out string) {
-	if c.settings.Redactor == nil {
-		return text
+// Parts of the patterns RedactSecrets uses.
+const (
+	// redactedValue replaces every masked value.
+	redactedValue = "***"
+	// secretKey is a key containing a secret-looking word.
+	secretKey = `[\w.-]*(?:token|key|secret|password|passwd|authorization|cookie|session|credential)[\w.-]*` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+	// secretSeparator is "=" or ":" between a key and its value, with
+	// optional quotes and spaces. A colon needs a space or a quote after
+	// it, so "session.go:42" in a stack trace and "host:port" stay
+	// readable.
+	secretSeparator = `"?\s*(?:=\s*"?|:\s+"?|:")` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+	// secretValue is the value up to a space or delimiter, with an auth
+	// scheme before it masked as part of it.
+	secretValue = `(?:(?:bearer|basic|digest|negotiate|token)\s+)?[^\s;,&"'<>]+` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+)
+
+var (
+	// queryValue matches a URL query parameter with a non-empty name and
+	// value ("?api_key=SECRET", "&amount=5"); group 1 keeps "?name=".
+	queryValue = regexp.MustCompile(`([?&][^=&?#\s"']+=)[^&#\s"']+`)
+	// secretPair matches a pair whose key contains a secret-looking word
+	// ("password=hunter2", "Authorization: Bearer abc", "session_id=7f3a",
+	// `"token":"x"`); group 1 keeps the key and separator.
+	secretPair = regexp.MustCompile(`(?i)(` + secretKey + secretSeparator + `)` + secretValue)
+)
+
+// RedactSecrets returns text with the values of URL query parameters and
+// of secret-looking key=value or "key: value" pairs (keys containing
+// token, key, secret, password, passwd, authorization, cookie, session or
+// credential, in any case) replaced by "***". It is srvr's default error
+// redactor: error text is free-form, so a pattern over the text is the
+// only general approach; it masks too much rather than too little, and a
+// consumer needing more installs its own redactor. Both patterns are RE2,
+// linear in the length of text.
+func RedactSecrets(text string) string {
+	if strings.ContainsAny(text, "?&") {
+		text = queryValue.ReplaceAllString(text, "${1}"+redactedValue)
 	}
 
+	return secretPair.ReplaceAllString(text, "${1}"+redactedValue)
+}
+
+// redact applies the configured redactor (RedactSecrets by default) to
+// text; a redactor that panics gives "[redaction failed]".
+func (c *Core) redact(text string) (out string) {
 	defer func() {
 		if recover() != nil {
 			out = "[redaction failed]"
@@ -336,7 +407,7 @@ func (c *Core) redact(text string) (out string) {
 func (c *Core) exceptionMessage(text string) slog.Attr {
 	msg, _ := cutString(c.redact(text), maxMessageBytes)
 
-	return slog.Any(keyExceptionMsg, ownText(msg))
+	return ownAttr(keyExceptionMsg, slog.StringValue(msg))
 }
 
 // triageAttrs returns the attributes that describe a failure for triage.
@@ -368,8 +439,8 @@ func (c *Core) errorAttrs(method string, req *RequestState, err error) []slog.At
 	attrs := []slog.Attr{
 		slog.String(keyErrorType, chain.innermost),
 		c.exceptionMessage(errorText(err)),
-		slog.Any(keyErrorChain, chain.types),
-		slog.String(keyFingerprint, fingerprint(append([]string{method, req.Route}, chain.types...)...)),
+		ownAttr(keyErrorChain, slog.AnyValue(chain.types)),
+		slog.String(keyFingerprint, fingerprint(append([]string{MethodLabel(method), req.Route}, chain.types...)...)),
 	}
 
 	if chain.truncated {
@@ -387,9 +458,9 @@ func (c *Core) panicAttrs(method string, req *RequestState, pe *prblm.PanicError
 	return append(panicKindAttrs(),
 		slog.String(keyExceptionType, valueType),
 		c.exceptionMessage(ValueText(pe.Value)),
-		slog.Any(keyStacktrace, ownText(stack)),
+		ownAttr(keyStacktrace, slog.StringValue(stack)),
 		slog.Bool(keyStackTruncated, stackCut),
-		slog.String(keyFingerprint, fingerprint(method, req.Route, errorKindPanic, valueType, topFrame(pe.Stack))),
+		slog.String(keyFingerprint, fingerprint(MethodLabel(method), req.Route, errorKindPanic, valueType, topFrame(pe.Stack))),
 	)
 }
 

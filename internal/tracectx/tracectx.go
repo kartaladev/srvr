@@ -88,9 +88,13 @@ func parse(h string) (Trace, bool) {
 		return Trace{}, false
 	}
 
-	// The sampled flag is the lowest bit of the last (lowercase hex) digit:
-	// '1', '3', ..., 'f' are all odd characters.
-	return Trace{TraceID: traceID, ParentSpanID: parentID, Sampled: flags[1]&1 == 1}, true
+	// The sampled flag is bit 0 of the flags byte, so the hex digits are
+	// decoded first: the ASCII codes of 'a'-'f' have the opposite parity of
+	// the values they stand for. isHex already accepted both digits.
+	var b [1]byte
+	_, _ = hex.Decode(b[:], []byte(flags))
+
+	return Trace{TraceID: traceID, ParentSpanID: parentID, Sampled: b[0]&1 == 1}, true
 }
 
 // isHex reports whether s is lowercase hex; callers pass fixed-length

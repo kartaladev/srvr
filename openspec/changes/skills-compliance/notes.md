@@ -54,3 +54,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `srvr.LogWriteErrors` keeps its name (low-confidence naming finding; the name is in the log-schema docs); `RouteRegistrar` stays (named in the project context as public shape); test files stay grouped by concern (commit `0470d34`); log-and-return of `server.failed` and `server.shutdown_hook.failed` stays (the records are schema commitments), with godoc noting that a caller logging the returned error logs it twice (task 6.1); `fibersrvr`'s per-request `context.WithCancel(base)` stays unless slice 8's fiber benchmark shows contention.
 - **Evidence:** unverified: design judgement.
 - **Suggested action:** none.
+
+### TestStart_Stop deadline row can hang instead of failing under load
+- **Status:** open
+- **Target:** skills-compliance (task 8.2, sleep and timing hygiene)
+- **Context:** `TestStart_Stop/the_Start_context_deadline_passes` (`lifecycle_test.go`) gives `Start` a context with a `100ms` deadline created before `Start`, then blocks on `<-started` (line 90) waiting for the in-flight request to reach the handler. Under CPU load the deadline can pass before the request is served, the server stops, `inFlight` reports `-1`, and the test waits on `started` forever, until the package's 10-minute timeout, instead of failing. Found while repeating the core suite during slice 2; unrelated to that slice's code.
+- **Evidence:** `go test -race -count=1 .` in a loop beside a parallel build: `panic: test timed out after 10m0s` / `running tests: TestStart_Stop/the_Start_context_deadline_passes (9m56s)`, goroutine `TestStart_Stop.func4` at `lifecycle_test.go:90` in `chan receive, 9 minutes`. Not reproduced on demand: it needs load, so no deterministic RED test exists yet.
+- **Suggested action:** in task 8.2, start the deadline only after the request is in flight (or select on `started` together with the request's result and a bound), so a lost race fails fast with a message.
+
+### Slice 2 /simplify: efficiency items deferred to the benchmarks
+- **Status:** open
+- **Target:** skills-compliance (tasks 8.4 and 9.4)
+- **Context:** the slice 2 efficiency review (read-only, no measurement) found two costs on the logging hot path: with a limit set, any `slog.Any` value forces a record rebuild (`mayNeedRewrite`), and `capAny` formats every such value with `fmt` to measure it, after which the base handler formats a value that fits a second time. Suggested cheaper forms: skip formatting for small fixed-size kinds (`time.Time`, `netip.Addr`, scalars), or format into a counting writer that stops after `maxBytes+1`. A third item, a keyword pre-scan before `secretPair` in `RedactSecrets`, only touches failed requests; the cheap `?`/`&` pre-check for `queryValue` was applied. Design D2 already accepts the formatting cost pending a benchmark.
+- **Evidence:** unverified: code reading; `BenchmarkLogHandler` (task 8.4, with and without `slog.Any`) decides.
+- **Suggested action:** in task 9.4, apply a cheaper form only when the benchmark shows a gain of 10% or more, as for the other measured items.

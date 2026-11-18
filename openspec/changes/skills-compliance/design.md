@@ -52,7 +52,7 @@ Slice 1 works alone: it changes only the core and keeps every API. Each later sl
 ## Decisions
 
 ### D1. Default redactor in `engine`, applied when no redactor is set
-`engine.RedactSecrets(text string) string` masks URL query values and secret-looking pairs with two precompiled `regexp` patterns from the standard library. `Core.redact` uses it when `Settings.Redactor` is nil. `srvr.WithoutErrorRedaction()` sets `Settings.Redactor` to the identity function, so options keep applying in argument order with the later one winning. `otelsetup` calls `engine.RedactSecrets` on its export error text.
+`engine.RedactSecrets(text string) string` masks URL query values and secret-looking pairs with two precompiled `regexp` patterns from the standard library. Configuration resolution (`newSettings`, after every option applied) sets `Settings.Redactor` to it when no option set one, so `Core.redact` always calls the configured redactor. A colon separator needs a space or a quote after it, so stack frames (`cookie.go:42`) and `host:port` stay readable (pinned by `TestRedactSecrets`). `srvr.WithoutErrorRedaction()` sets `Settings.Redactor` to the identity function, so options keep applying in argument order with the later one winning. `otelsetup` calls `engine.RedactSecrets` on its export error text.
 
 - **Default:** on. **Override:** `WithErrorRedactor(fn)` replaces it; `WithoutErrorRedaction()` disables it, an explicitly named loosening.
 - **Alternative considered:** a list of URL parsers per token. Rejected: error text is free-form, so a pattern over the text is the only general approach; consumers with stricter needs install their own redactor.
@@ -97,7 +97,7 @@ Slice 1 works alone: it changes only the core and keeps every API. Each later sl
 - **Failure modes:** a missed reference fails to compile, which gopls rename prevents; `CHANGELOG.md` lists every rename for consumers.
 
 ### D6. Copies at construction
-`WithAccessLogConfig` clones `SkipPaths` (`slices.Clone`), and `otelsetup` clones `OTLP.Headers` (`maps.Clone`) when it resolves its configuration, matching `WithAccessLogSkipPaths` and `otelsrvr.WithConfig`.
+Configuration resolution (`newSettings`, after every option applied) clones `Access.SkipPaths` (`slices.Clone`), so no option has to remember to, and `otelsetup` clones `OTLP.Headers` (`maps.Clone`) when it resolves its configuration, matching `WithAccessLogSkipPaths` and `otelsrvr.WithConfig`.
 
 ### D7. Linters and CI
 `.golangci.yml` adds `thelper`, `tparallel`, `paralleltest`, `usetesting`, `sloglint`, `forcetypeassert`, `modernize`, `intrange` and `depguard`, with `depguard` allowing only the standard library and `github.com/kartaladev/prblm` in core non-test files. CI adds `govulncheck` per module, `go mod tidy -diff`, `go mod verify`, a coverage step using `-coverpkg=github.com/kartaladev/srvr/...` in workspace mode, a `1.27`/`stable` matrix with `fail-fast: false`, lint for `internal/paritytest`, `cache-dependency-path` per module, and `checkout@v6`/`setup-go@v6`. A `release` job runs on tags and fails if a released module's `go.mod` has a `replace`. The root Makefile's `MODULES` list drives `vet`, `lint`, `test`, `cover`, `tidy-check` and `vulncheck`; CI calls those targets.

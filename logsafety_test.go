@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -323,36 +325,7 @@ func TestTruncation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, out := loggedServer(t, func(g *srvr.Group) {
-				g.GET("/log", func(_ http.ResponseWriter, r *http.Request) error {
-					tt.log(srvr.LoggerFromContext(r.Context()))
-
-					return nil
-				})
-			}, tt.opts...)
-			get(t, base+"/log")
-
-			var rec map[string]any
-			eventually(t, func() bool {
-				for _, r := range out.records(t) {
-					if r["msg"] != "http.request.completed" {
-						rec = r
-					}
-				}
-
-				return rec != nil
-			}, "no handler record")
-
-			var v any = rec
-			for _, k := range tt.path {
-				v = v.(map[string]any)[k]
-			}
-			if v != tt.logged {
-				t.Fatalf("logged %v, want %v", short(v), short(tt.logged))
-			}
-			if _, has := rec["srvr.attr.truncated"]; has != tt.flag || (has && rec["srvr.attr.truncated"] != true) {
-				t.Fatalf("srvr.attr.truncated = %v, want %v", rec["srvr.attr.truncated"], tt.flag)
-			}
+			checkTruncation(t, handlerRecord(t, tt.log, tt.opts...), tt.path, tt.logged, tt.flag)
 		})
 	}
 }
@@ -520,4 +493,221 @@ func TestDisabledLimitKinds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAccessLogSkipPathsCopied covers structured-logging / Scenario:
+// Caller mutates skip paths after New.
+func TestAccessLogSkipPathsCopied(t *testing.T) {
+	t.Parallel()
+
+	withConfig := func(s []string) srvr.Option { return srvr.WithAccessLogConfig(srvr.AccessLogConfig{SkipPaths: s}) }
+	tests := []struct {
+		name     string
+		option   func(s []string) srvr.Option
+		requests int // more than one: the caller keeps mutating while they run
+	}{
+		{"WithAccessLogConfig", withConfig, 1},
+		{"WithAccessLogSkipPaths", func(s []string) srvr.Option { return srvr.WithAccessLogSkipPaths(s...) }, 1},
+		{"WithAccessLogConfig, mutated during 100 requests", withConfig, 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s := []string{"/healthz"}
+			base, out := loggedServer(t, func(g *srvr.Group) {
+				g.GET("/healthz", status(http.StatusOK))
+				g.GET("/barrier", status(http.StatusOK))
+			}, tt.option(s))
+
+			s[0] = "/other"
+			if tt.requests > 1 {
+				done, mutated := make(chan struct{}), make(chan struct{})
+				go func() {
+					defer close(mutated)
+					for {
+						select {
+						case <-done:
+							return
+						default:
+							s[0] = "/other"
+						}
+					}
+				}()
+				defer func() { close(done); <-mutated }()
+			}
+
+			for range tt.requests {
+				get(t, base+"/healthz")
+			}
+			get(t, base+"/barrier")
+			eventually(t, func() bool { return len(out.where(t, "http.route", "/barrier")) == 1 }, "no barrier record")
+
+			if n := len(out.where(t, "http.route", "/healthz")); n != 0 {
+				t.Fatalf("%d /healthz records written, want none:\n%s", n, out.String())
+			}
+		})
+	}
+}
+
+// bigValue is a struct whose formatted text (fmt) is "{" + S + "}".
+type bigValue struct{ S string }
+
+// TestTruncate_AnyValues covers structured-logging / Scenario: Capping
+// slog.Any values, all three tables.
+func TestTruncate_AnyValues(t *testing.T) {
+	t.Parallel()
+
+	bigHeader := http.Header{"X-A": {xs(5000)}}
+	list := make([]string, 50)
+	for i := range list {
+		list[i] = xs(100)
+	}
+	ints20 := []int{100, 2000, 3000, 4000} // "[100 2000 3000 4000]", 20 bytes
+
+	tests := []struct {
+		name   string
+		opts   []srvr.Option
+		log    func(l *slog.Logger)
+		path   []string
+		logged any
+		flag   bool
+	}{
+		// within the cap
+		{
+			"header", nil, func(l *slog.Logger) { l.Info("m", slog.Any("hdr", http.Header{"X-A": {"1"}})) },
+			[]string{"hdr"},
+			map[string]any{"X-A": []any{"1"}},
+			false,
+		},
+		{
+			"ints", nil, func(l *slog.Logger) { l.Info("m", slog.Any("ids", []int{1, 2, 3})) },
+			[]string{"ids"},
+			[]any{1.0, 2.0, 3.0},
+			false,
+		},
+		{
+			"struct of exactly 1024 bytes", nil, func(l *slog.Logger) { l.Info("m", slog.Any("p", bigValue{xs(1022)})) },
+			[]string{"p"},
+			map[string]any{"S": xs(1022)},
+			false,
+		},
+		// over the cap
+		{
+			"header with a 5000-byte value", nil, func(l *slog.Logger) { l.Info("m", slog.Any("hdr", bigHeader)) },
+			[]string{"hdr"},
+			fmt.Sprint(bigHeader)[:1024] + cut, true,
+		},
+		{
+			"50 strings of 100 bytes", nil, func(l *slog.Logger) { l.Info("m", slog.Any("list", list)) },
+			[]string{"list"},
+			fmt.Sprint(list)[:1024] + cut, true,
+		},
+		{
+			"struct of 1025 bytes in a group", nil, func(l *slog.Logger) { l.WithGroup("db").Info("m", slog.Any("p", bigValue{xs(1023)})) },
+			[]string{"db", "p"},
+			"{" + xs(1023) + cut, true,
+		},
+		{
+			"struct of 2000 bytes added with With", nil, func(l *slog.Logger) { l.With(slog.Any("p", bigValue{xs(1998)})).Info("m") },
+			[]string{"p"},
+			"{" + xs(1023) + cut, true,
+		},
+		{
+			"MaxAttrBytes 16",
+			[]srvr.Option{srvr.WithLogConfig(srvr.LogConfig{MaxAttrBytes: 16})},
+			func(l *slog.Logger) { l.Info("m", slog.Any("ids", ints20)) },
+			[]string{"ids"},
+			"[100 2000 3000 4" + cut, true,
+		},
+		{
+			"MaxAttrBytes -1",
+			[]srvr.Option{srvr.WithLogConfig(srvr.LogConfig{MaxAttrBytes: -1})},
+			func(l *slog.Logger) { l.Info("m", slog.Any("hdr", bigHeader)) },
+			[]string{"hdr"},
+			map[string]any{"X-A": []any{xs(5000)}},
+			false,
+		},
+		// hot path beyond the spec rows: an error beside the value makes the
+		// record be rewritten, and the disabled cap still keeps the value.
+		{
+			"MaxAttrBytes -1 beside an error",
+			[]srvr.Option{srvr.WithLogConfig(srvr.LogConfig{MaxAttrBytes: -1})},
+			func(l *slog.Logger) { l.Info("m", slog.Any("hdr", bigHeader), slog.Any("err", errors.New("e"))) },
+			[]string{"hdr"},
+			map[string]any{"X-A": []any{xs(5000)}},
+			false,
+		},
+		// faulty values
+		{
+			"panicking String", nil, func(l *slog.Logger) { l.Info("m", slog.Any("v", panickyStringer{})) },
+			[]string{"v"},
+			"<panic formatting value>", false,
+		},
+		{
+			"typed-nil pointer", nil, func(l *slog.Logger) { l.Info("m", slog.Any("v", (*bigValue)(nil))) },
+			[]string{"v"},
+			nil, false,
+		},
+		{"nil", nil, func(l *slog.Logger) { l.Info("m", slog.Any("v", nil)) }, []string{"v"}, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkTruncation(t, handlerRecord(t, tt.log, tt.opts...), tt.path, tt.logged, tt.flag)
+		})
+	}
+}
+
+// checkTruncation checks that rec holds logged at path and carries
+// srvr.attr.truncated exactly when flag is set.
+func checkTruncation(t *testing.T, rec map[string]any, path []string, logged any, flag bool) {
+	t.Helper()
+
+	var v any = rec
+	for _, k := range path {
+		m, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("no %v in %v", path, rec)
+		}
+		v = m[k]
+	}
+	if !reflect.DeepEqual(v, logged) {
+		t.Fatalf("logged %v, want %v", short(v), short(logged))
+	}
+	if _, has := rec["srvr.attr.truncated"]; has != flag || (has && rec["srvr.attr.truncated"] != true) {
+		t.Fatalf("srvr.attr.truncated = %v, want %v", rec["srvr.attr.truncated"], flag)
+	}
+}
+
+// handlerRecord starts a server configured with opts whose GET /log
+// handler calls log with the request logger, and returns the record log
+// wrote.
+func handlerRecord(t *testing.T, log func(l *slog.Logger), opts ...srvr.Option) map[string]any {
+	t.Helper()
+
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/log", func(_ http.ResponseWriter, r *http.Request) error {
+			log(srvr.LoggerFromContext(r.Context()))
+
+			return nil
+		})
+	}, opts...)
+	get(t, base+"/log")
+
+	var rec map[string]any
+	eventually(t, func() bool {
+		for _, r := range out.records(t) {
+			if r["msg"] != "http.request.completed" {
+				rec = r
+			}
+		}
+
+		return rec != nil
+	}, "no handler record")
+
+	return rec
 }
