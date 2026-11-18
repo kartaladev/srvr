@@ -25,6 +25,11 @@ once tagged.
 
 ### Changed
 
+- Requires `github.com/kartaladev/prblm` v0.2.0 (was v0.1.0) in every module. `ginsrvr` and
+  `fibersrvr` now import prblm's adapters from their new module paths,
+  `github.com/kartaladev/prblm/adapters/ginprblm` and `.../adapters/fiberprblm` (v0.2.0); the old
+  `prblm/ginprblm` and `prblm/fiberprblm` modules are no longer required. No srvr API or response
+  change.
 - **Breaking (API, pre-v1):** `ginsrvr.WithEngine` is renamed `ginsrvr.WithGinEngine`; construction
   errors about the hook name `WithGinEngine`.
 - **Breaking (API, `engine`, unstable before v1):** `engine.ConfigError(field, value, reason)` is

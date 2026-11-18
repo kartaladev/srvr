@@ -75,7 +75,7 @@ func TestSpanCorrelation(t *testing.T) {
 	}
 	defer res.Body.Close()
 
-	problem, err := prblm.Parse(res)
+	received, err := prblm.Parse(res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestSpanCorrelation(t *testing.T) {
 		t.Errorf("failed record %v/%v, server span %s/%s", failed["trace_id"], failed["span_id"], sc.TraceID(), sc.SpanID())
 	}
 
-	if id, _ := problem.Ext("trace_id"); id != sc.TraceID().String() {
+	if id, _ := received.Problem.Ext("trace_id"); id != sc.TraceID().String() {
 		t.Errorf("problem trace_id = %v, want %s", id, sc.TraceID())
 	}
 

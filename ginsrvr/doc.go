@@ -1,6 +1,6 @@
 // Package ginsrvr runs srvr servers on the Gin engine: the same lifecycle,
 // configuration (every srvr option and config struct), RFC 9457 problems
-// rendered by github.com/kartaladev/prblm/ginprblm, trace context and
+// rendered by github.com/kartaladev/prblm/adapters/ginprblm, trace context and
 // log records as srvr's net/http engine.
 //
 // Routes are contributed by srvr.RouteConfigurer[*gin.RouterGroup] values

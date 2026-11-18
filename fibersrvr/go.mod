@@ -8,8 +8,8 @@ replace github.com/kartaladev/srvr => ../
 
 require (
 	github.com/gofiber/fiber/v3 v3.7.0
-	github.com/kartaladev/prblm v0.1.0
-	github.com/kartaladev/prblm/fiberprblm v0.1.0
+	github.com/kartaladev/prblm v0.2.0
+	github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0
 	github.com/kartaladev/srvr v0.0.0-00010101000000-000000000000
 	github.com/valyala/fasthttp v1.78.0
 	go.uber.org/goleak v1.3.0

@@ -82,8 +82,8 @@ engine does not compile.
 | Module | Purpose | Dependencies |
 |--------|---------|--------------|
 | `github.com/kartaladev/srvr` | core and the net/http engine | standard library and prblm only |
-| [`ginsrvr`](ginsrvr) | Gin engine | gin, ginprblm |
-| [`fibersrvr`](fibersrvr) | Fiber v3 engine | fiber, fiberprblm, fasthttp |
+| [`ginsrvr`](ginsrvr) | Gin engine | gin, prblm/adapters/ginprblm |
+| [`fibersrvr`](fibersrvr) | Fiber v3 engine | fiber, prblm/adapters/fiberprblm, fasthttp |
 | [`otelsrvr`](otelsrvr) | OpenTelemetry metrics and tracing | OpenTelemetry API (its tests also require the SDK) |
 | `otelsetup` | OpenTelemetry SDK and exporter wiring (Prometheus, OTLP) for applications | OpenTelemetry SDK, OTLP exporters (HTTP and gRPC), Prometheus client |
 

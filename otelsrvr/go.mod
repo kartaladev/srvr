@@ -7,7 +7,7 @@ go 1.27
 replace github.com/kartaladev/srvr => ../
 
 require (
-	github.com/kartaladev/prblm v0.1.0
+	github.com/kartaladev/prblm v0.2.0
 	github.com/kartaladev/srvr v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/kartaladev/prblm/fiberprblm"
+	"github.com/kartaladev/prblm/adapters/fiberprblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
 	"github.com/valyala/fasthttp"

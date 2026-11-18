@@ -1,6 +1,6 @@
 // Package fibersrvr runs srvr servers on the Fiber v3 engine: the same
 // lifecycle, configuration (every srvr option and config struct), RFC 9457
-// problems rendered by github.com/kartaladev/prblm/fiberprblm, trace
+// problems rendered by github.com/kartaladev/prblm/adapters/fiberprblm, trace
 // context and log records as srvr's net/http engine.
 //
 // Routes are contributed by srvr.RouteConfigurer[fiber.Router] values
