@@ -80,11 +80,6 @@ func disconnecting(t *testing.T, base, path string, entered <-chan struct{}) {
 	<-done
 }
 
-type selfCycleError struct{}
-
-func (*selfCycleError) Error() string   { return "cyclic" }
-func (e *selfCycleError) Unwrap() error { return e }
-
 // TestParity_Exceptions covers engine-parity / Scenario: Documented
 // differences: one subtest per row, pinning the engine's actual behaviour.
 func TestParity_Exceptions(t *testing.T) {
@@ -333,26 +328,6 @@ func TestParity_Exceptions(t *testing.T) {
 		var ne net.Error
 		if _, err := conn.Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
 			t.Fatalf("read = %v, want no answer within 400ms", err)
-		}
-	})
-
-	// gin's c.Error never returns for a cyclic chain; the stuck handler
-	// goroutine cannot be stopped, so this runs once, waits a bounded time
-	// and leaves it behind until the test binary exits. It is deliberately
-	// not parallel (task 5.4): it runs alone, before the parallel subtests
-	// above resume, so they do not share the CPU its goroutine spins on.
-	t.Run("gin never completes c.Error with a cyclic chain", func(t *testing.T) {
-		base, _ := ginServer(t, func(g *gin.RouterGroup) {
-			g.GET("/x", func(c *gin.Context) { _ = c.Error(&selfCycleError{}) })
-		}, srvr.WithShutdownTimeout(100*time.Millisecond))
-
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		defer cancel()
-
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/x", nil)
-		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
-			_ = res.Body.Close()
-			t.Fatalf("got %d, want no response", res.StatusCode)
 		}
 	})
 }

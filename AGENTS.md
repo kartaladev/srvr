@@ -30,6 +30,8 @@ Never write production code without a failing test that demands it. Never refact
 
 There is no coverage percentage threshold, but every hot path must be tested and the coverage checked, not assumed: `go test -coverprofile=c.out ./... && go tool cover -func=c.out`. Hot paths: the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, `Start` and `Shutdown`, and log record construction including error-chain walking and redaction.
 
+Every module's tests run under goleak: each test package has a `TestMain` calling `goleak.VerifyTestMain` (a guard in `internal/paritytest` enforces it), and a goroutine that outlives its test is excused only by a named, commented ignore of one function in that package's `leakOptions`. A new goroutine started by srvr needs a test proving it ends when its owner stops.
+
 ### 2. Prove every defect claim with a failing test
 
 A suspected error or defect - in this code, a dependency or a framework, found while implementing, reviewing, debugging or planning - is a hypothesis until reproduced:
@@ -87,7 +89,7 @@ When a task group is complete and verified, run `/simplify` on that group's chan
 
 ## OpenSpec workflow
 
-- Changes are planned in order: `core-server` -> `gin-and-fiber-engines` -> `otel-observability` -> `scrty-integration` -> `triage-debug-buffer`.
+- Changes are planned in order: `core-server` -> `gin-and-fiber-engines` -> `otel-observability` -> `goroutine-leak-checks` -> `scrty-integration` -> `triage-debug-buffer`.
 - Task group 1 of every change is consolidation: sync with the main branch, decide earlier changes' `notes.md` carry-overs, refresh the change's artifacts against merged specs and code, and record the outcome. Do not skip it, even when the change looks current.
 - While applying, write every follow-up that does not belong to the current change - especially problems not tightly related to it - to the change's `notes.md` (status, target change, context, evidence, suggested action). Never fix such problems silently and never drop them.
 - Each spec scenario maps to one table-driven test, and each Examples row to one test case.

@@ -58,21 +58,21 @@
 
 ## 5. Slice: parity tests, every-package guard and project rules
 
-- [ ] 5.1 Leak check in `internal/paritytest` (test-quality / Scenario: A goroutine left running fails the module's tests, paritytest rows; Scenario: Each ignore is needed and narrow, paritytest rows); verify `go test -race ./...` passes in `internal/paritytest`
+- [x] 5.1 Leak check in `internal/paritytest` (test-quality / Scenario: A goroutine left running fails the module's tests, paritytest rows; Scenario: Each ignore is needed and narrow, paritytest rows); verify `go test -race ./...` passes in `internal/paritytest`
   - RED: add `goleak`, `TestMain` and `TestLeakCheck`; record the run failing on fasthttp and on the gin cyclic handler; `TestLeakIgnores` with the fasthttp rows and the "gin handler blocked on a channel never closed -> reported" row
   - GREEN: fasthttp ignores (as in `fibersrvr`, D3); move the gin cyclic subtest to `internal/paritytest/gincycle` (D4) with its own helpers, a named handler and a `TestMain` ignoring only that handler
   - REFACTOR: Move Function for the moved subtest's helpers, then /simplify
-- [ ] 5.2 The gin cyclic ignore is needed and narrow (test-quality / Scenario: Each ignore is needed and narrow, gincycle row); verify `go test -race ./gincycle` passes in `internal/paritytest`
+- [x] 5.2 The gin cyclic ignore is needed and narrow (test-quality / Scenario: Each ignore is needed and narrow, gincycle row); verify `go test -race ./gincycle` passes in `internal/paritytest`
   - RED: in `gincycle`, after the cyclic request `goleak.Find` without options reports the named handler and with the package's options reports nothing; run once without the ignore and record the binary's failure
   - GREEN: the ignore from 5.1
   - REFACTOR: /simplify
-- [ ] 5.3 Every test package runs the leak check (test-quality / Scenario: Every test package runs the leak check, all rows); verify `go test -race -run TestEveryTestPackageChecksLeaks .` passes in `internal/paritytest`
+- [x] 5.3 Every test package runs the leak check (test-quality / Scenario: Every test package runs the leak check, all rows); verify `go test -race -run TestEveryTestPackageChecksLeaks .` passes in `internal/paritytest`
   - RED: `TestEveryTestPackageChecksLeaks` with the accepted rows (the repository walk finds all nine packages) and the rejected rows on synthetic sources (no `TestMain`, `TestMain` without `goleak.VerifyTestMain`, no test files, unparsable file); fails until the decision function exists
   - GREEN: the walk and the decision function (D5)
   - REFACTOR: Split Phase (walk, then decide), then /simplify
-- [ ] 5.4 Add to `AGENTS.md`'s testing rules (rule 1) that every module's tests run under goleak (`TestMain` calling `goleak.VerifyTestMain`, exceptions only as named, commented ignores) and that a new goroutine started by srvr needs a test proving it ends; add `goroutine-leak-checks` before `scrty-integration` in the change order of `AGENTS.md` and `openspec/config.yaml`; verify by reading the diff
-- [ ] 5.5 Verify the change end to end: from every module's directory (`.`, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` with `GOWORK=off`; `internal/paritytest`) run vet, golangci-lint, `go test -race ./...` and coverage (unchanged or higher than at `52fdbfc`); then run every module's suite 5 times in the foreground (`go test -race -count=1 ./...`) and record that all passed; `pgrep -fl '\.test'` after each test command shows no binary of this repository; `openspec validate goroutine-leak-checks --strict` passes
-- [ ] 5.6 Re-read `notes.md` and make sure every open entry has a target; run /simplify on the slice's changes, re-run the parity tests, and commit `test(paritytest): fail parity tests on leaked goroutines and guard every package`; verify with `git log -1 --stat`
+- [x] 5.4 Add to `AGENTS.md`'s testing rules (rule 1) that every module's tests run under goleak (`TestMain` calling `goleak.VerifyTestMain`, exceptions only as named, commented ignores) and that a new goroutine started by srvr needs a test proving it ends; add `goroutine-leak-checks` before `scrty-integration` in the change order of `AGENTS.md` and `openspec/config.yaml`; verify by reading the diff
+- [x] 5.5 Verify the change end to end: from every module's directory (`.`, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` with `GOWORK=off`; `internal/paritytest`) run vet, golangci-lint, `go test -race ./...` and coverage (unchanged or higher than at `52fdbfc`); then run every module's suite 5 times in the foreground (`go test -race -count=1 ./...`) and record that all passed; `pgrep -fl '\.test'` after each test command shows no binary of this repository; `openspec validate goroutine-leak-checks --strict` passes
+- [x] 5.6 Re-read `notes.md` and make sure every open entry has a target; run /simplify on the slice's changes, re-run the parity tests, and commit `test(paritytest): fail parity tests on leaked goroutines and guard every package`; verify with `git log -1 --stat`
 
 ## Workflow follow-up
 
