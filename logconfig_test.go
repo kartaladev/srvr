@@ -691,3 +691,55 @@ func TestLogSchemaDocumented(t *testing.T) {
 		}
 	}
 }
+
+// TestLogSchemaDocumented_DebugBufferSample checks that the sample flushed
+// sequence in LOGGING.md has the pinned keys: every flushed record the
+// golden flushed keys, the failed record exactly the golden failed and
+// summary keys, written last.
+func TestLogSchemaDocumented_DebugBufferSample(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile("LOGGING.md")
+	mustNil(t, err)
+
+	_, sample, found := strings.Cut(string(doc), "**Sample flushed sequence**")
+	if !found {
+		t.Fatal("LOGGING.md has no sample flushed sequence")
+	}
+	_, sample, _ = strings.Cut(sample, "```json\n")
+	sample, _, _ = strings.Cut(sample, "```")
+
+	var records []map[string]any
+	for line := range strings.Lines(sample) {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("sample line %q: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	if len(records) < 2 {
+		t.Fatalf("sample has %d records, want flushed records and the failed record", len(records))
+	}
+
+	failed := records[len(records)-1]
+	want := slices.Sorted(slices.Values(slices.Concat(goldenKeys["http.request.failed"], goldenBufferSummaryKeys)))
+	if got := flatKeys(failed, ""); failed["msg"] != "http.request.failed" || !slices.Equal(got, want) {
+		t.Errorf("sample failed record keys = %v\nwant %v", got, want)
+	}
+
+	flushed := 0
+	for _, rec := range records[:len(records)-1] {
+		if rec["srvr.buffered"] != true {
+			continue
+		}
+		flushed++
+		for _, k := range goldenFlushedKeys {
+			if _, ok := rec[k]; !ok {
+				t.Errorf("sample flushed record %v lacks %q", rec, k)
+			}
+		}
+	}
+	if failed["srvr.debug_buffer.flushed"] != float64(flushed) {
+		t.Errorf("sample srvr.debug_buffer.flushed = %v, want %d", failed["srvr.debug_buffer.flushed"], flushed)
+	}
+}

@@ -474,3 +474,82 @@ func TestConfigError(t *testing.T) {
 		})
 	}
 }
+
+// disconnectWhile sends GET url, waits until entered is closed by the
+// handler, then cancels the request, so the client goes away while the
+// handler runs, and waits for the client to return.
+func disconnectWhile(t *testing.T, url string, entered <-chan struct{}) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); try(ctx, url) }()
+	receive(t, entered, "the handler did not start")
+	cancel()
+	receive(t, done, "the client did not return")
+}
+
+// TestClientClosedRequest covers error-responses / Scenario: Client
+// closed request.
+func TestClientClosedRequest(t *testing.T) {
+	t.Parallel()
+
+	quietCanceled := srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(context.Canceled, http.StatusServiceUnavailable)))
+
+	tests := []struct {
+		name string
+		// gone makes the client go away before the handler returns err.
+		gone    bool
+		err     error
+		opts    []srvr.Option
+		status  int
+		level   string
+		flushed bool
+	}{
+		{"client gone, context.Canceled", true, context.Canceled, nil, 499, "WARN", false},
+		{"client gone, wrapped context.Canceled", true, fmt.Errorf("query users: %w", context.Canceled), nil, 499, "WARN", false},
+		{"context live, context.Canceled", false, context.Canceled, nil, 500, "ERROR", true},
+		{"client gone, another error", true, errors.New("boom"), nil, 500, "ERROR", true},
+		{"client gone, consumer mapper for context.Canceled", true, context.Canceled, []srvr.Option{quietCanceled}, 503, "ERROR", true},
+		{"client gone, sentinel wrapping context.Canceled", true, fmt.Errorf("%w: %w", prblm.ErrUnavailable, context.Canceled), nil, 503, "ERROR", true},
+		{"client gone, status hint on context.Canceled", true, prblm.WithStatus(context.Canceled, http.StatusConflict), nil, 409, "WARN", false},
+		{"client gone, context.DeadlineExceeded", true, context.DeadlineExceeded, nil, 504, "ERROR", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entered := make(chan struct{})
+			h := logDebug(func(_ http.ResponseWriter, r *http.Request) error {
+				close(entered)
+				if tt.gone {
+					<-r.Context().Done()
+				}
+
+				return tt.err
+			}, "ctx")
+			base, out := loggedServer(t, func(g *srvr.Group) { g.GET("/x", h) },
+				append([]srvr.Option{srvr.WithDebugBuffer()}, tt.opts...)...)
+
+			if tt.gone {
+				disconnectWhile(t, base+"/x", entered)
+			} else if res := get(t, base+"/x"); res.status != tt.status || res.problem == nil || res.problem.Status != tt.status {
+				t.Fatalf("response %d, problem %+v, want %d", res.status, res.problem, tt.status)
+			}
+
+			trail := requestTrail(t, out)
+			access := trail[len(trail)-1]
+			problem, _ := access["problem"].(map[string]any)
+			if access["msg"] != "http.request.failed" || access["level"] != tt.level ||
+				access["http.response.status_code"] != float64(tt.status) || problem["status"] != float64(tt.status) {
+				t.Errorf("access record %v, want http.request.failed at %s with status %d", access, tt.level, tt.status)
+			}
+			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.flushed {
+				t.Errorf("ctx flushed = %v, want %v: %v", got, tt.flushed, messages(trail))
+			}
+		})
+	}
+}

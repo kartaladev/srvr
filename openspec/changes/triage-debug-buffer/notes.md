@@ -158,7 +158,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Spec fix: Suppressed access record rows 4-5 named the wrong record (task 4.3)
-- **Status:** closed: fixed in this change's spec delta; owner to confirm at review
+- **Status:** closed: fixed in this change's spec delta; confirmed at review 2026-11-19 (owner delegated: consistent with structured-logging, failed records are never suppressed)
 - **Target:** triage-debug-buffer
 - **Context:** in Scenario "Suppressed access record", rows 1-2 expect a skip path or a disabled access log to suppress a `404`. Only `http.request.completed` records can be suppressed (`structured-logging`: failed records never are), so the handler must write the status itself. Rows 4-5 then named the record `http.request.failed`, but a status the handler writes itself is recorded as `http.request.completed` (as in "Flush on failure", row "writes `500` directly"). The Given now says "writes `<status>` itself", and rows 4-5 name `http.request.completed`. No behaviour changed: the requirement text ("skip paths and a disabled access log only ever suppress statuses below 500") already implied this reading.
 - **Evidence:** `TestDebugBuffer_Suppressed` (`debugbuffer_test.go`) passes with the corrected rows. Temporarily removing the `written` check from `flushBuffer` makes rows 1-3 fail (mutation check, reverted). `openspec validate triage-debug-buffer --strict` passes.
@@ -184,3 +184,69 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   The engine test `TestDebugBuffer_LateKeepsNothing` covers a risk the public tests cannot see: a record added after the seal would never be written, but it would hold budget forever. /simplify replaced three consumer-handler wrapper types with one `hookHandler`, and four hand-built servers with `consumerServer`.
 - **Evidence:** `GOWORK=off go test -race ./...`, `go vet ./...` and `golangci-lint run ./...` pass; every function in `engine/debugbuffer.go` is at 100% in `go tool cover -func`.
 - **Suggested action:** none.
+
+### Slice 6 (tasks 6.1-6.5): outcome
+- **Status:** closed: recorded
+- **Target:** triage-debug-buffer
+- **Context:** the buffer is created and the flush decided in the shared `srvr/engine` pipeline, so net/http, gin and fiber flush identically (`TestDebugBuffer_Parity`); fiber's pooled context cannot carry A's records into B (`TestDebugBuffer_FiberReuse`); hijack, `http.ErrAbortHandler`, `http.TimeoutHandler`, streaming and disconnect endings are classified (`TestDebugBuffer_Endings`, `TestDebugBuffer_AbortOrder`); a disconnect is answered `499` by srvr's mapper `clientClosed` (design D11). The 6.5 review found:
+  - a `context.Canceled` returned while the request context had passed its deadline (a server-side timeout, such as a consumer timeout middleware) was answered `499` and its buffer discarded, blaming the client for a server timeout. RED: the new row "deadline exceeded (a server-side timeout), context.Canceled" of `TestClientClosed` (`engine/clientclosed_internal_test.go`) failed with `problem Client Closed Request, want declined` (`GOWORK=off go test -race -run TestClientClosed ./engine`). GREEN: the mapper requires `errors.Is(ctx.Err(), context.Canceled)`; the error-responses requirement, design D11, the `WithProblemOptions` godoc, `LOGGING.md` and `CHANGELOG.md` say so.
+  - design D11's forced-drain claim (a handler past the drain deadline returning `context.Canceled` gets `499` on every engine) was untested; `TestClientClosedRequest_ForcedDrain` (`internal/paritytest/problem_test.go`) now pins it and passes on all three engines.
+  - the probe ignores `prblm.WithoutBuiltins` (entry "Client-closed probe ignores prblm.WithoutBuiltins"); `TestClientClosed_ProbeFallback` guards the probe's reliance on prblm's `500` fallback.
+
+  /simplify: paritytest servers are built by `newNetServer`, `newGinServer` and `newFiberServer` and started by `start`, which returns a stop function (`run` uses it), so the forced-drain test reuses the harness and its per-server client; one `logBuffer.parse` replaces two copies of the decode loop; `debugEngines` return the base URL and the test sends once; the fiber disconnect row waits on a channel instead of sleeping 50ms; the `http.TimeoutHandler` row waits for its context instead of sleeping 100ms; `logging_test.go` reuses `hijack`; `fibersrvr` gained `logBuffer.where`; the mapper checks the error before the context. A `TotalBytes` option row was added to `TestDebugBuffer_InvalidLimits` (the option was at 0% coverage). Skipped: merging `TestDebugBuffer_AbortOrder` into `TestDebugBuffer_Endings` (each scenario keeps its own test) and reshaping the Endings `send` field (one row uses it).
+- **Evidence:** `make check` (vet, golangci-lint, `go test -race`, `go mod tidy -diff`, `go mod verify`, govulncheck with `GOWORK=off` in every module) passes; `gopls check` on every changed Go file reports nothing; `make cover` gives `engine` 99.9% with `clientClosed`, `writeAccess`, `shouldFlush` and `flushBuffer` at 100%; `openspec validate triage-debug-buffer --strict` passes.
+- **Suggested action:** none.
+
+### Session handoff 2026-11-19: slice 6 in progress, uncommitted
+- **Status:** closed: 6.3 and 6.4 done 2026-11-19 (entry below); 6.5 remains
+- **Target:** triage-debug-buffer
+- **Context:** slices 2-5 are committed (`293101b`, `0577c5f`, `c92f6bd`, `3358071`). The working tree holds slice 6 work, not committed because one test fails:
+  - 6.1 is done and marked: `internal/paritytest/debugbuffer_test.go`, `TestDebugBuffer_Parity`. It passes on all three engines. Removing the flush for requests without a net/http recorder makes the fiber row fail (mutation check, reverted).
+  - 6.2 is done and marked: `fibersrvr/debugbuffer_test.go`, `TestDebugBuffer_FiberReuse`, which passes.
+  - 6.3 is written but not marked: `TestDebugBuffer_Endings` and `TestDebugBuffer_AbortOrder` in `debugbuffer_test.go`. Every row passes except "client disconnects" (see the next entry).
+  - 6.4 and 6.5 are not started.
+- **Evidence:** `git status`; `go test -race -run 'TestDebugBuffer_(Endings|AbortOrder)' .`
+- **Suggested action:** the next session resolves the entry below, then finishes 6.3-6.5 and commits slice 6.
+
+### Client disconnect resolves to 500, so the buffer flushes (spec and design assumption unconfirmed)
+- **Status:** closed: fixed by option (a), owner delegated choice 2026-11-19; srvr's own prblm mapper (owner confirmed 2026-11-19 that srvr keeps it rather than moving it upstream)
+- **Target:** triage-debug-buffer
+- **Context:** design D3 assumes "prblm maps `context.Canceled` to a status below 500, so the buffer is not flushed", and the Unusual endings row "the client disconnects and the handler returns `context.Canceled`" expects `ctx` not written. With prblm v0.1.0 the returned `context.Canceled` resolves to a 500 problem, so the access record is `http.request.failed` at ERROR with `problem.status` 500, and the buffer flushes. Not yet checked: whether prblm has a mapper for `context.Canceled` that srvr should install, or whether core-server deliberately answers it as 500.
+- **Evidence:** `go test -count=1 -run 'TestDebugBuffer_Endings/client_disconnects' .` fails with "ctx written = true, want false: [ctx http.request.failed]". The access record has `http.response.status_code` 500, `problem.status` 500, `level` ERROR and `error.type` `*errors.errorString`.
+- **Suggested action:** the owner chooses one of three options. (a) srvr maps `context.Canceled` from a request whose client went away to a status below 500, such as 499: this changes core-server's triage records and needs its own spec rows. (b) The debug buffer treats a cancelled request context as not failed. (c) Change the row to expect a flush, and change D3. Keep the failing row as the RED step of whichever fix is chosen (AGENTS.md rule 2).
+- **Decision (2026-11-19):** option (a): an error matching `context.Canceled` answered while the request context is cancelled gets `499` "Client Closed Request"; a live request context keeps `500`. Rationale: prblm v0.1.0 (and v0.2.0) maps only `context.DeadlineExceeded` (`builtins.go:39`) and its `Handler.Respond` doc answers a cancelled request like any other; design D3 already assumed a status below 500; OpenTelemetry semantic conventions mark only `5xx` server spans as errors; a disconnect should not page or flush. Implemented as srvr's own prblm mapper `clientClosed` (`engine/clientclosed.go`), added by `Core.ProblemOptions` after the consumer's options. (It was briefly reverted on a coordinator redirect to move the rule into prblm; the owner then decided srvr keeps its own mapper.) RED: `go test -count=1 -run 'TestDebugBuffer_Endings/client_disconnects|TestClientClosedRequest' .` failed with "ctx written = true, want false: [ctx http.request.failed]" and "want http.request.failed at WARN with status 499" (record 500 ERROR). GREEN: the same command, `go test -race -run 'TestDebugBuffer_Endings|TestDebugBuffer_AbortOrder' .`, `TestClientClosed` in `./engine` and `TestClientClosedRequest_Parity` in `internal/paritytest` pass. Spec rows: `error-responses` delta (Scenario: Client closed request; Client closed request on every engine), `engine-parity` delta (fiber exception row), design D3/D11.
+
+### prblm: map a cancelled request to 499 (optional upstream)
+- **Status:** open: optional
+- **Target:** unassigned (prblm)
+- **Context:** srvr answers `context.Canceled` with a cancelled request context as `499` with its own prblm mapper (design D11). Any other prblm user has the same problem: prblm v0.1.0 and v0.2.0 map only `context.DeadlineExceeded` (`builtins.go:39`), and `Handler.Respond`'s doc answers a cancelled request like any other. If prblm adds a built-in rule later, srvr's mapper becomes redundant but harmless (srvr's runs first and gives the same answer). Fiber quirk for prblm's docs: `fiberprblm` resolves with `c.Context()`, and fasthttp never cancels it on a disconnect. Local prblm repository: `/Users/zakyalvan/Documents/RND/prblm` (main at `c7b4c67`).
+- **Evidence:** unverified for prblm itself (not tested there); srvr's behaviour is pinned by `TestClientClosedRequest`, `TestClientClosed` and `TestClientClosedRequest_Parity`.
+- **Suggested action:** the owner decides whether to propose the rule to prblm; if adopted, srvr keeps or removes its mapper after bumping prblm, with the tests above unchanged.
+
+### Sampling successful requests into the debug buffer
+- **Status:** open
+- **Target:** unassigned
+- **Context:** the debug buffer writes a request's below-level records only when it fails (status at or above `FlushStatus`, or a panic). Triage of slow or wrong-but-successful requests gets nothing. Other buffering libraries (AWS Powertools, .NET log buffering) leave this to sampling; srvr has no sampling, which proposal and design D1 kept out of scope.
+- **Evidence:** unverified: feature gap, not a defect; `TestDebugBuffer_Flush` "200" row pins the discard.
+- **Suggested action:** a later change specifies an opt-in rate (per server, deterministic by `trace_id` so a sampled trace is complete across services), its interaction with `TotalBytes` and the summary attributes, and a `srvr.debug_buffer.sampled` key (additive, schema unchanged).
+
+### On-demand flush (API to flush a request's buffer explicitly)
+- **Status:** open
+- **Target:** unassigned
+- **Context:** a handler that detects something worth keeping on a request that will still succeed (a retried call, a fallback taken) cannot ask for its buffer to be written; only the outcome at the access stage decides. A `srvr.FlushDebugBuffer(ctx)` (or a mark that forces the flush at the outcome point) would cover it, but it must define ordering against the access record, late calls after the seal, and concurrent calls.
+- **Evidence:** unverified: feature gap, not a defect.
+- **Suggested action:** a later change specifies the API (prefer marking the request to flush at the outcome point, which keeps the single-writer order of design D3), with rows for a call after the seal, from another goroutine, with buffering off, and on every engine.
+
+### TestShutdownHooks_Order failed once under a full -race run
+- **Status:** open: unconfirmed (AGENTS.md rule 2)
+- **Target:** unassigned
+- **Context:** one `GOWORK=off go test -race -count=1 ./...` run in the root on 2026-11-19 reported `--- FAIL: TestShutdownHooks_Order (0.11s)` while the paritytest and fibersrvr suites ran at the same time; no production code had changed relative to `HEAD` (only tests and docs). Likely the same CPU-contention timing sensitivity as the `TestShutdownHooks_Faulty` entry above. The failure message was not captured.
+- **Evidence:** `GOWORK=off go test -race -count=5 -run TestShutdownHooks_Order .` passes; the full run failure is not reproduced. Task 6.5 (2026-11-19) retried under load: `go test -race -count=3 ./...` in the root while the paritytest (`-count=2`) and fibersrvr (`-count=2`) suites ran at the same time, plus three `make check` runs; it passed every time, so there is still no failure output to capture.
+- **Suggested action:** rerun the full suite under load with `-count` and capture the message; if it reproduces, widen the timing bound as suggested for `TestShutdownHooks_Faulty`.
+
+### Client-closed probe ignores prblm.WithoutBuiltins
+- **Status:** open: accepted limitation, documented
+- **Target:** unassigned (resolves with "prblm: map a cancelled request to 499 (optional upstream)" or a prblm pre-fallback hook)
+- **Context:** `clientClosed` (`engine/clientclosed.go`) decides precedence by resolving the error with a package-level prblm handler holding prblm's default built-ins, not the consumer's configured handler. When a consumer passes `prblm.WithoutBuiltins()` through `WithProblemOptions`, a sentinel such as `prblm.ErrUnavailable` wrapping the cancellation still makes srvr's mapper decline, and the real handler, having no built-ins, answers the `500` fallback where the rule would give `499`. It fails toward the visible `500`, so nothing is hidden. srvr cannot read the consumer's prblm options without re-running their mappers, enrichers and hook. The probe also relies on prblm's fallback being `500`; `TestClientClosed_ProbeFallback` (`engine/clientclosed_internal_test.go`) now fails if that changes.
+- **Evidence:** a throwaway test `TestClientClosed_WithoutBuiltins` (`prblm.NewHandler(prblm.WithoutBuiltins(), prblm.WithMappers(clientClosedMapper)).Resolve(cancelledCtx, fmt.Errorf("%w: %w", prblm.ErrUnavailable, context.Canceled))`) failed with `status 500, want 499: with built-ins off nothing outranks the client-closed mapper` (`GOWORK=off go test -run TestClientClosed_WithoutBuiltins ./engine`); removed after the run, since the behaviour is kept. Documented in the `clientClosed` comment and the `WithProblemOptions` godoc.
+- **Suggested action:** if prblm gains a pre-fallback mapper step or a built-in 499 rule, drop the probe and this limitation with it.

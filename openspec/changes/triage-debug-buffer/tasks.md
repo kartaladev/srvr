@@ -102,20 +102,21 @@
 
 ## 6. Slice: engine parity and unusual endings
 
-- [ ] 6.1 Engine parity (triage-debug-buffer / Scenario: Engine parity, all rows); verify `go test -race -run TestDebugBuffer_Parity` passes in the parity test module for net/http, gin and fiber v3
+- [x] 6.1 Engine parity (triage-debug-buffer / Scenario: Engine parity, all rows); verify `go test -race -run TestDebugBuffer_Parity` passes in the parity test module for net/http, gin and fiber v3
   - RED: shared table run against each engine (httptest for net/http and gin, `app.Test` for fiber); fails on any engine whose outcome point does not flush
   - GREEN: put buffer creation and the flush decision in the shared request pipeline of `srvr/engine` that each engine's outcome signal already feeds (no engine-specific buffer code)
   - REFACTOR: /simplify
-- [ ] 6.2 Fiber context reuse (triage-debug-buffer / Scenario: Fiber context reuse); verify `go test -race -run TestDebugBuffer_FiberReuse` passes in `fibersrvr`
+- [x] 6.2 Fiber context reuse (triage-debug-buffer / Scenario: Fiber context reuse); verify `go test -race -run TestDebugBuffer_FiberReuse` passes in `fibersrvr`
   - RED: two sequential `app.Test` requests on one app; fails if A's records reach B
   - GREEN: buffer reachable only through srvr's per-request Go context
   - REFACTOR: /simplify
-- [ ] 6.3 Unusual endings (triage-debug-buffer / Scenario: Unusual endings, all rows; Scenario: Aborted request flush order, all rows); verify `go test -race -run 'TestDebugBuffer_Endings|TestDebugBuffer_AbortOrder'` passes
+- [x] 6.3 Unusual endings (triage-debug-buffer / Scenario: Unusual endings, all rows; Scenario: Aborted request flush order, all rows); verify `go test -race -run 'TestDebugBuffer_Endings|TestDebugBuffer_AbortOrder'` passes
   - RED: table with hijack, hijack plus panic, `http.ErrAbortHandler` panic, `http.TimeoutHandler`, streaming success and failure, client disconnect; fails on any row whose outcome is misread
   - GREEN: outcome classification for hijacked writers, `http.ErrAbortHandler` (flush, then core's aborted access record, then re-raise) and timeout-written statuses
+  - GREEN (design D11): srvr's own prblm mapper `clientClosed` answers `context.Canceled` with a cancelled request context as `499`, so a disconnect does not flush (`TestClientClosedRequest`, `TestClientClosedRequest_Parity`)
   - REFACTOR: /simplify
-- [ ] 6.4 Update `LOGGING.md` with buffering semantics, cost, ordering and limits, and a sample flushed sequence; write `notes.md` carry-overs for sampling successful requests and on-demand flush (Target: `unassigned`); verify the document matches the golden schema test
-- [ ] 6.5 Verify slice end to end on all three engines, confirm every engine's outcome branch is covered in `go tool cover -func` for each touched module, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): flush debug buffers identically on every engine`
+- [x] 6.4 Update `LOGGING.md` with buffering semantics, cost, ordering and limits, and a sample flushed sequence; write `notes.md` carry-overs for sampling successful requests and on-demand flush (Target: `unassigned`); verify the document matches the golden schema test
+- [x] 6.5 Verify slice end to end on all three engines, confirm every engine's outcome branch is covered in `go tool cover -func` for each touched module, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): flush debug buffers identically on every engine`
 
 ## 7. Slice: carried-over leak-check hardening (from goroutine-leak-checks)
 

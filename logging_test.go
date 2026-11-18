@@ -337,16 +337,7 @@ func TestAccessRecord_Streaming(t *testing.T) {
 
 			return http.NewResponseController(w).Flush()
 		})
-		g.GET("/hijack", func(w http.ResponseWriter, _ *http.Request) error {
-			conn, buf, err := http.NewResponseController(w).Hijack()
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			_, _ = buf.WriteString("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
-
-			return buf.Flush()
-		})
+		g.GET("/hijack", func(w http.ResponseWriter, _ *http.Request) error { return hijack(w) })
 		g.GET("/flush-first", func(w http.ResponseWriter, _ *http.Request) error {
 			return http.NewResponseController(w).Flush()
 		})

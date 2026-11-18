@@ -34,6 +34,13 @@ status the error would have been answered with, so a late 5xx error is `ERROR` a
 (`Disabled`, `SkipPaths`) suppresses only `http.request.completed` records below 500; an
 `http.request.failed` record is never suppressed.
 
+A handler error matching `context.Canceled` returned after the client went away (the request context
+is cancelled) is answered `499` "Client Closed Request" instead of `500`, so its record is
+`http.request.failed` at `WARN` with `problem.status` `499`: a disconnect is not a server fault. The
+same error while the request context is live or past its deadline (a server-side cancellation or timeout)
+stays `500` at `ERROR`. On
+fiber a disconnect is not detected, so it stays `500`.
+
 | Key | Type | Meaning |
 |-----|------|---------|
 | `http.request.method` | string | request method |
@@ -77,6 +84,51 @@ default 500, or a recovered panic), just before its access record. Adding these 
 | `srvr.debug_buffer.flushed` | number | the access record of a request that flushed (also with nothing buffered) | records written from the buffer |
 | `srvr.debug_buffer.dropped` | number | same | records evicted for the per-request limits, larger than `MaxBytes` on their own, or refused by the process-wide `TotalBytes` budget |
 | `srvr.debug_buffer.truncated` | bool | same | the process-wide budget refused at least one record |
+
+### Debug buffering
+
+**Semantics.** Off by default. With `WithDebugBuffer` (or `LogConfig.DebugBuffer.Enabled`), a record
+logged with a request's context, or through `srvr.LoggerFromContext`, below the log level and at or
+above `BufferLevel` (default `DEBUG`) is kept in that request's buffer instead of being dropped.
+Records at or above the log level are written at once, as always, and never written twice. When the
+request ends, the buffer is flushed if the request failed with a status at or above `FlushAtStatus`
+(default `500`; for a returned error, the status resolved for it even when another status was
+already sent), panicked, or was aborted with `http.ErrAbortHandler`. Otherwise it is discarded
+unwritten, including when the access record is suppressed (skip paths, a disabled access log, or a
+log level that disables the access record's level). A client disconnect answered `499` (see
+[Request events](#request-events)) does not flush. Records logged after the request ended, or with
+another context (such as `context.Background()` in a goroutine), follow the level rule unbuffered.
+
+**Cost.** Every below-level call made with a request context builds a full record (slog's `Enabled`
+short-circuit no longer applies to it) and the request holds it until it ends: about 5 KB and 5
+allocations for five buffered records, and about 11 more allocations to write them on failure
+(`BenchmarkDebugBuffer`). On failure the log gets `DEBUG` content, which can be more detailed than
+`INFO`; it passes the same truncation, redaction and `ReplaceAttr` as every record.
+
+**Ordering.** On a flush, the buffered records are written in the order they were logged, then the
+access record. They keep their original `time`, `level`, attributes, groups and `trace_id`, and carry
+`srvr.buffered` `true`. Records at or above the log level were written when logged, so an `INFO`
+record can precede earlier `DEBUG` records in the stream: order a `trace_id` by `time`. Flushed
+records reach your handler's `Handle` without its `Enabled` being asked again, so a handler that
+filters by level inside `Handle` drops them. A `slog.Any` value holding a pointer is rendered at flush
+time and shows later changes.
+
+**Limits.** Per request, `MaxRecords` (default 100) and `MaxBytes` (default 64 KiB, estimated from the
+truncated text plus a fixed overhead per record) evict the oldest records; a single record larger than
+`MaxBytes` is dropped. All requests of a server share `TotalBytes` (default 16 MiB); a record that does
+not fit is dropped and the request is marked truncated. The access record of a request that flushed
+reports `srvr.debug_buffer.flushed`, `srvr.debug_buffer.dropped` and `srvr.debug_buffer.truncated`.
+Invalid limits fail construction with an error naming the field (`DebugBuffer.MaxRecords` and so on).
+
+**Sample flushed sequence** (log level `INFO`; the handler logged two `DEBUG` records and an `INFO`
+checkpoint, then returned an error):
+
+```json
+{"time":"2026-11-19T10:00:00.002Z","level":"INFO","msg":"checkpoint","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
+{"time":"2026-11-19T10:00:00.001Z","level":"DEBUG","msg":"load user","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","srvr.buffered":true,"user.id":"42"}
+{"time":"2026-11-19T10:00:00.003Z","level":"DEBUG","msg":"insert user","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","srvr.buffered":true,"db.attempt":2}
+{"time":"2026-11-19T10:00:00.004Z","level":"ERROR","msg":"http.request.failed","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","srvr.log.schema":1,"http.request.method":"POST","http.route":"/users","http.response.status_code":500,"http.response.body.size":108,"duration_ms":4.1,"user_agent.original":"curl/8.0","problem":{"status":500,"type":"about:blank","title":"Internal Server Error"},"error.type":"syscall.Errno","exception.message":"insert user: dial: connection refused","error.chain":["*fmt.wrapError","*net.OpError","syscall.Errno"],"error.fingerprint":"9f2c4e1a7b3d5c60","code.function.name":"main.UsersAPI.Create","code.file.path":"/app/users.go","code.line.number":42,"service.name":"registration-api","service.version":"1.4.2","srvr.debug_buffer.flushed":2,"srvr.debug_buffer.dropped":0,"srvr.debug_buffer.truncated":false}
+```
 
 ## Lifecycle events
 

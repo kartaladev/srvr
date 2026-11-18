@@ -361,6 +361,15 @@ func setLogHandler(s *engine.Settings, field, from string, h slog.Handler) {
 // Do not pass [prblm.OnError]: prblm keeps a single hook and srvr installs
 // its own last, which records the error for the request's log record, so a
 // consumer OnError would never run. Use [WithErrorHook] instead.
+//
+// srvr adds one mapper after these: an error matching context.Canceled
+// returned while the request context is cancelled (the client went away)
+// is answered 499 "Client Closed Request" instead of prblm's 500, so a
+// disconnect is not logged or counted as a server fault. A mapper passed
+// here, prblm's built-in mappers and a prblm.WithStatus hint other than
+// 500 take precedence; a cancellation while the request is live, or past
+// its deadline (a server-side timeout), stays 500. The built-ins are
+// consulted even when prblm.WithoutBuiltins is passed here.
 func WithProblemOptions(opts ...prblm.Option) Option {
 	return func(s *engine.Settings) { s.ProblemOptions = slices.Concat(s.ProblemOptions, opts) }
 }
@@ -430,6 +439,9 @@ type DebugBufferOption func(*DebugBufferConfig)
 // order, with their original time and trace_id and srvr.buffered true;
 // on any other outcome they are discarded unwritten. Records at or above
 // the log level are written immediately as always, never twice.
+// A handler that returns context.Canceled after its client went away is
+// answered 499, so a disconnect does not flush (on fiber, which cannot
+// detect a disconnect, it stays a 500 and flushes).
 //
 // Default off, because it has costs a consumer should choose knowingly:
 // every below-level call made with a request context builds a full record

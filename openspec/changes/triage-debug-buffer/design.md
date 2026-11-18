@@ -121,7 +121,7 @@ Configuration check: an explicit `Level` above the static log level fails constr
 - *Streaming:* the outcome is known only when the handler returns. The buffer is held until then, bounded by the limits.
 - *Hijack/upgrade:* the outcome writer reports no status. That is treated as not failed unless the request panicked.
 - *`http.TimeoutHandler`:* writes 503 itself, which is seen as the final status.
-- *Client disconnect:* prblm maps `context.Canceled` to a status below 500, so the buffer is not flushed.
+- *Client disconnect:* prblm v0.1.0 does not map `context.Canceled` (it falls to its 500 fallback), so srvr maps it with its own prblm mapper (D11): an error matching `context.Canceled` returned while the request context is cancelled is answered `499`, below the threshold, so the buffer is not flushed. On fiber the disconnect cancels nothing, so it stays a `500` and flushes.
 - *Stream order is not time order:* records at or above the log level are written when logged, buffered ones at the end, so an `INFO` record can precede earlier `DEBUG` records in the stream (Flush on failure, `checkpoint` row). Flushed records keep their original `time`; `LOGGING.md` tells consumers to order a `trace_id` by `time`. .NET log buffering documents the same limitation. Decided 2026-11-17: no per-request sequence key is added; `time` plus write order is enough, and a new key would be a schema commitment.
 
 ### D4. Bounds: ring per request, shared byte budget
@@ -189,6 +189,16 @@ The counter counts records lost to base-handler errors and panics alike, not onl
 
 ### D10. The release is prepared by the plan and tagged on confirmation
 `RELEASING.md` already fixes the order: tag the core, then in each released module require that version and drop the `replace`, then tag the module. The slice does everything up to tagging (merged to `main`, changelog section, `make check`, release-guard dry run), then stops for the owner to confirm the version and the push. Tags are outward-facing and cannot be taken back once the module proxy caches them.
+
+### D11. A request the client closed is answered with 499, by srvr's own prblm mapper
+Decided 2026-11-19 (owner delegated the choice: option (a) of the notes entry "Client disconnect resolves to 500"; the owner then confirmed that srvr keeps its own prblm mapper rather than moving the rule upstream). `engine.Core.ProblemOptions` adds one prblm mapper, `clientClosed` (`engine/clientclosed.go`), after the consumer's prblm options, so every engine shares it. It answers `499` "Client Closed Request" (the nginx, grpc-gateway and Google AIP-193 convention), without `detail`, when the error matches `errors.Is(err, context.Canceled)` and the context prblm resolves with (the request context on every engine) is cancelled.
+
+- *Why:* prblm v0.1.0 maps only `context.DeadlineExceeded` (`504`); `Handler.Respond` answers a cancelled request like any other, so a disconnect became a `500` at `ERROR` that flushed the buffer. OpenTelemetry semantic conventions mark only `5xx` server spans as errors, and a disconnect should neither page nor flush. With `499` the access record is `http.request.failed` at `WARN` (the `4xx` level rule) with `problem.status` `499`: a value change, no key change, so `srvr.log.schema` stays 1.
+- *Server-side cancellation stays visible:* a `context.Canceled` returned while the request context is live is a server bug and stays `500`; so does one returned while the request context ended by its deadline (`ctx.Err()` is `context.DeadlineExceeded`, a server-side timeout such as a consumer timeout middleware), which the client did not cause. Only `ctx.Err()` matching `context.Canceled` counts as the client going away.
+- *Precedence:* the consumer's mappers, scoped mappers and describers run before it (prblm resolution order). It declines when prblm's built-ins or a `prblm.WithStatus` hint would answer with another status than the `500` fallback (for example `prblm.ErrUnavailable` wrapping the cancellation, or `context.DeadlineExceeded` joined to it), checked by resolving the error with a built-ins-only prblm handler, on this rare path only. A hint of exactly `500` cannot be told from the fallback and is answered `499`.
+- *Forced drain:* at the drain deadline net/http closes connections and fiber cancels its request contexts; a handler returning `context.Canceled` then also gets `499`. The client gets no response either way.
+- *fiber:* fasthttp does not detect a disconnect and srvr's fiber request context (derived from the server's base context) is cancelled only by a forced drain, so on fiber a disconnect stays `500` (engine-parity exception row).
+- *Alternatives considered:* a built-in rule upstream in prblm (not chosen: owner wants srvr to own the mapper; prblm may still adopt it later). (b) the buffer treats a cancelled request context as not failed: it would leave a `500` `ERROR` record for a disconnect and split the flush rule from the status. (c) expect a flush: a disconnect is not a server failure.
 
 ## Defaults
 

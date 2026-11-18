@@ -364,7 +364,7 @@ A hijacked connection or protocol upgrade SHALL discard its buffer unless a pani
 | is wrapped by `http.TimeoutHandler` with `10ms` and sleeps `100ms` | written |
 | streams 3 chunks with `200` and then returns `errors.New("broken")` | written |
 | streams 3 chunks with `200` and returns `nil` | not written |
-| the client disconnects and the handler returns `context.Canceled` | not written |
+| the client disconnects and the handler returns `context.Canceled` (answered `499`, error-responses / Scenario: Client closed request) | not written |
 
 #### Scenario: Aborted request flush order
 - **Given** buffering enabled on net/http and a handler that logs `DEBUG` `ctx` and then panics with `http.ErrAbortHandler`

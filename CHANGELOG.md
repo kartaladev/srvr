@@ -8,6 +8,12 @@ once tagged.
 
 ### Added
 
+- Per-request debug buffering, off by default: `srvr.WithDebugBuffer(opts...)` with `BufferLevel`,
+  `FlushAtStatus`, `MaxRecords`, `MaxBytes` and `TotalBytes`, or `srvr.WithDebugBufferConfig` /
+  `LogConfig.DebugBuffer`. Below-level records logged with a request context are written, marked
+  `srvr.buffered`, just before the access record of a request that fails with `500` or above or
+  panics; the access record gains `srvr.debug_buffer.flushed`, `dropped` and `truncated`. Additive
+  keys: `srvr.log.schema` stays `1`. See `LOGGING.md`.
 - `srvr.WithoutErrorRedaction()` writes error text unredacted, an explicit loosening of the new
   default redaction.
 - `engine.RedactSecrets`, srvr's default error redactor, and `engine.MethodLabel`.
@@ -28,6 +34,13 @@ once tagged.
   `RequestState.Location` are read with `Route()` and `Location()` and set with `SetRoute` and
   `SetLocation`.
 - An invalid `LogConfig.Level` and `Format` are both reported, `Level` first; only the first was.
+- A handler error matching `context.Canceled` returned after the client went away (the request
+  context is cancelled) is answered with a `499` "Client Closed Request" problem instead of `500`,
+  by a prblm mapper srvr adds after the consumer's, so its access record is `http.request.failed`
+  at `WARN` with `problem.status` `499` and a debug buffer is not flushed. A cancellation while the
+  request context is live, or past its deadline, stays `500`; the consumer's prblm mappers, prblm's built-ins and
+  `prblm.WithStatus` hints still win. On fiber a disconnect is not detected and stays `500`.
+  `srvr.log.schema` stays `1` (a value, not a key).
 
 - **Breaking (default log content):** with no redactor configured, `exception.message` and
   `exception.stacktrace` now mask URL query values and the values of secret-looking `key=value`,

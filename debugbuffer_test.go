@@ -475,6 +475,7 @@ func TestDebugBuffer_InvalidLimits(t *testing.T) {
 		{name: "Level warn with a handler", buffer: buffer(srvr.DebugBufferConfig{Level: "warn"}), handler: slog.DiscardHandler},
 		{name: "nil option", buffer: srvr.WithDebugBuffer(nil), wantErr: true},
 		{name: "MaxRecords option -1", buffer: srvr.WithDebugBuffer(srvr.MaxRecords(-1)), wantErr: true, field: "MaxRecords"},
+		{name: "TotalBytes option below the default MaxBytes", buffer: srvr.WithDebugBuffer(srvr.TotalBytes(1024)), wantErr: true, field: "TotalBytes"},
 		{name: "BufferLevel option WARN above INFO", buffer: srvr.WithDebugBuffer(srvr.BufferLevel(slog.LevelWarn)), wantErr: true, field: "Level"},
 		// Flush threshold, rejected rows, and the accepted bounds.
 		{name: "FlushStatus 99", buffer: srvr.WithDebugBuffer(srvr.FlushAtStatus(99)), wantErr: true, field: "FlushStatus"},
@@ -1083,5 +1084,128 @@ func TestDebugBuffer_ConsumerFilter(t *testing.T) {
 				t.Fatalf("ctx record lacks srvr.buffered: %v", ctx[0])
 			}
 		})
+	}
+}
+
+// hijack hands the connection over, answers 204 on it and closes it.
+func hijack(w http.ResponseWriter) error {
+	conn, buf, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, _ = buf.WriteString("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+
+	return buf.Flush()
+}
+
+// streams writes 3 chunks with 200, flushing each, then ends with err.
+func streams(err error) srvr.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) error {
+		for range 3 {
+			_, _ = w.Write([]byte("chunk"))
+			if ferr := http.NewResponseController(w).Flush(); ferr != nil {
+				return ferr
+			}
+		}
+
+		return err
+	}
+}
+
+// try sends a request whose connection may be aborted, reading what
+// arrives and ignoring transport errors.
+func try(ctx context.Context, url string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+
+	if res, err := clientFor(url).Do(req); err == nil {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}
+}
+
+// TestDebugBuffer_Endings covers triage-debug-buffer / Scenario: Unusual
+// endings.
+func TestDebugBuffer_Endings(t *testing.T) {
+	t.Parallel()
+
+	type ending struct {
+		name string
+		// conf registers GET /x, which logs DEBUG ctx and then ends.
+		conf func(g *srvr.Group)
+		// send requests base+"/x".
+		send    func(t *testing.T, url string)
+		written bool
+	}
+
+	plain := func(t *testing.T, url string) { t.Helper(); try(t.Context(), url) }
+	route := func(h srvr.HandlerFunc) func(g *srvr.Group) {
+		return func(g *srvr.Group) { g.GET("/x", logDebug(h, "ctx")) }
+	}
+
+	entered := make(chan struct{})
+	disconnect := func(t *testing.T, url string) { t.Helper(); disconnectWhile(t, url, entered) }
+
+	tests := []ending{
+		{"hijack", route(func(w http.ResponseWriter, _ *http.Request) error { return hijack(w) }), plain, false},
+		{"hijack then panic", route(func(w http.ResponseWriter, _ *http.Request) error { _ = hijack(w); panic("boom") }), plain, true},
+		{"panic with http.ErrAbortHandler", route(func(http.ResponseWriter, *http.Request) error { panic(http.ErrAbortHandler) }), plain, true},
+		{"http.TimeoutHandler", func(g *srvr.Group) {
+			g.Mount("/x", http.TimeoutHandler(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				srvr.LoggerFromContext(r.Context()).DebugContext(r.Context(), "ctx")
+				<-r.Context().Done() // the timeout cancels it
+			}), 10*time.Millisecond, ""))
+		}, plain, true},
+		{"stream then error", route(streams(errors.New("broken"))), plain, true},
+		{"stream", route(streams(nil)), plain, false},
+		{"client disconnects", route(func(_ http.ResponseWriter, r *http.Request) error {
+			close(entered)
+			<-r.Context().Done()
+
+			return r.Context().Err()
+		}), disconnect, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			base, out := loggedServer(t, tt.conf, srvr.WithDebugBuffer())
+			tt.send(t, base+"/x")
+
+			trail := requestTrail(t, out)
+			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.written {
+				t.Fatalf("ctx written = %v, want %v: %v; access %v", got, tt.written, messages(trail), trail[len(trail)-1])
+			}
+		})
+	}
+}
+
+// TestDebugBuffer_AbortOrder covers triage-debug-buffer / Scenario:
+// Aborted request flush order.
+func TestDebugBuffer_AbortOrder(t *testing.T) {
+	t.Parallel()
+
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/x", logDebug(func(http.ResponseWriter, *http.Request) error { panic(http.ErrAbortHandler) }, "ctx"))
+	}, srvr.WithDebugBuffer())
+	try(t.Context(), base+"/x")
+
+	trail := requestTrail(t, out)
+	if got := messages(trail); !slices.Equal(got, []string{"ctx", "http.request.failed"}) {
+		t.Fatalf("sequence %v", got)
+	}
+
+	if trail[0]["srvr.buffered"] != true {
+		t.Errorf("ctx record %v lacks srvr.buffered", trail[0])
+	}
+
+	access := trail[1]
+	if _, hasProblem := access["problem"]; hasProblem || access["level"] != "WARN" || access["error.kind"] != "panic" ||
+		access["error.type"] != "panic" || access["srvr.response.aborted"] != true {
+		t.Errorf("access record %v", access)
 	}
 }
