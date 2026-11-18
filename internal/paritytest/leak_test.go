@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -338,10 +341,10 @@ func testPackages(root string) (map[string][]source, error) {
 	return pkgs, err
 }
 
-// checkLeakCheck returns nil when the test files of dir run the leak check
-// (a TestMain calling goleak.VerifyTestMain) or when there are none, and
-// otherwise an error naming dir, or the file and parse error of a file
-// that does not parse.
+// checkLeakCheck returns nil when the test files of dir that a plain go
+// test builds run the leak check (a TestMain calling goleak.VerifyTestMain)
+// or when there are none, and otherwise an error naming dir, or the file
+// and error of a file whose build constraints or source do not parse.
 func checkLeakCheck(dir string, sources []source) error {
 	fset := token.NewFileSet()
 	files := make([]*ast.File, 0, len(sources))
@@ -349,6 +352,17 @@ func checkLeakCheck(dir string, sources []source) error {
 	var errs []error
 
 	for _, src := range sources {
+		built, err := builds(src)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %s: %w", dir, src.name, err))
+
+			continue
+		}
+
+		if !built {
+			continue
+		}
+
 		f, err := parser.ParseFile(fset, src.name, src.content, parser.SkipObjectResolution)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", dir, err))
@@ -363,11 +377,26 @@ func checkLeakCheck(dir string, sources []source) error {
 		return errors.Join(errs...)
 	}
 
-	if len(sources) == 0 || slices.ContainsFunc(files, verifiesTestMain) {
+	if len(files) == 0 || slices.ContainsFunc(files, verifiesTestMain) {
 		return nil
 	}
 
 	return fmt.Errorf("%s: no TestMain calling goleak.VerifyTestMain", dir)
+}
+
+// builds reports whether a plain go test builds src: build.Default, with
+// no extra tags, matches its //go:build (or legacy // +build) lines and its
+// _GOOS/_GOARCH file name suffixes. It errors on a malformed or repeated
+// //go:build line, which go build rejects too.
+func builds(src source) (bool, error) {
+	ctxt := build.Default
+	// MatchFile joins "" and the name; both hooks serve src from memory.
+	ctxt.JoinPath = func(elem ...string) string { return elem[len(elem)-1] }
+	ctxt.OpenFile = func(string) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(src.content)), nil
+	}
+
+	return ctxt.MatchFile("", src.name)
 }
 
 // verifiesTestMain reports whether f declares a TestMain that calls
@@ -434,6 +463,51 @@ func goleakName(f *ast.File) string {
 	return ""
 }
 
+// Synthetic test files for the guard's rows.
+const (
+	// verify is a test file whose TestMain runs the leak check.
+	verify = `package p
+
+import (
+	"testing"
+
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+`
+	// plain is a test file without TestMain.
+	plain = "package p\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"
+)
+
+// checkRow is one row of a guard table: checkLeakCheck of sources in the
+// directory "synthetic".
+type checkRow struct {
+	name    string
+	sources []source
+	reject  string // a text the rejection names; "" when accepted
+}
+
+// runCheckRows runs each row as a parallel subtest of t.
+func runCheckRows(t *testing.T, rows []checkRow) {
+	t.Helper()
+
+	for _, tt := range rows {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := checkLeakCheck("synthetic", tt.sources)
+
+			switch {
+			case tt.reject == "" && err != nil:
+				t.Fatalf("rejected: %v", err)
+			case tt.reject != "" && (err == nil || !strings.Contains(err.Error(), tt.reject)):
+				t.Fatalf("checkLeakCheck = %v, want a rejection naming %s", err, tt.reject)
+			}
+		})
+	}
+}
+
 // TestEveryTestPackageChecksLeaks covers test-quality / Scenario: Every
 // test package runs the leak check, all rows.
 func TestEveryTestPackageChecksLeaks(t *testing.T) {
@@ -466,43 +540,40 @@ func TestEveryTestPackageChecksLeaks(t *testing.T) {
 		}
 	})
 
-	const verify = `package p
-
-import (
-	"testing"
-
-	"go.uber.org/goleak"
-)
-
-func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
-`
-
-	tests := []struct {
-		name    string
-		sources []source
-		reject  string // a text the rejection names; "" when accepted
-	}{
+	runCheckRows(t, []checkRow{
 		{"a package whose TestMain calls goleak.VerifyTestMain", []source{{"leak_test.go", verify}}, ""},
 		{"TestMain calling goleak.VerifyTestMain through an import alias", []source{{"leak_test.go", strings.ReplaceAll(strings.Replace(verify, `"go.uber.org/goleak"`, `gl "go.uber.org/goleak"`, 1), "goleak.VerifyTestMain", "gl.VerifyTestMain")}}, ""},
-		{"a package with test files and no TestMain", []source{{"a_test.go", "package p\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"}}, "synthetic"},
+		{"a package with test files and no TestMain", []source{{"a_test.go", plain}}, "synthetic"},
 		{"a package whose TestMain calls m.Run without goleak.VerifyTestMain", []source{{"main_test.go", "package p\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\nfunc TestMain(m *testing.M) { os.Exit(m.Run()) }\n"}}, "synthetic"},
 		{"VerifyTestMain of another package", []source{{"main_test.go", "package p\n\nimport (\n\t\"testing\"\n\n\tgoleak \"example.com/notgoleak\"\n)\n\nfunc TestMain(m *testing.M) { goleak.VerifyTestMain(m) }\n"}}, "synthetic"},
 		{"a package without test files", nil, ""},
 		{"a test file that does not parse", []source{{"broken_test.go", "package p\n\nfunc {"}}, "broken_test.go"},
+	})
+}
+
+// TestGuardRejectsTestMainBehindBuildTag covers the carry-over of
+// goroutine-leak-checks: the guard looks for TestMain only in the test
+// files a plain go test builds, so a TestMain excluded by a build
+// constraint or a GOOS/GOARCH file name suffix does not count.
+func TestGuardRejectsTestMainBehindBuildTag(t *testing.T) {
+	t.Parallel()
+
+	otherOS := "plan9"
+	if runtime.GOOS == otherOS {
+		otherOS = "windows"
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := checkLeakCheck("synthetic", tt.sources)
-
-			switch {
-			case tt.reject == "" && err != nil:
-				t.Fatalf("rejected: %v", err)
-			case tt.reject != "" && (err == nil || !strings.Contains(err.Error(), tt.reject)):
-				t.Fatalf("checkLeakCheck = %v, want a rejection naming %s", err, tt.reject)
-			}
-		})
-	}
+	runCheckRows(t, []checkRow{
+		{"the only TestMain behind //go:build integration", []source{{"a_test.go", plain}, {"leak_test.go", "//go:build integration\n\n" + verify}}, "synthetic"},
+		{"the only TestMain behind //go:build ignore", []source{{"a_test.go", plain}, {"leak_test.go", "//go:build ignore\n\n" + verify}}, "synthetic"},
+		{"the only TestMain behind a legacy // +build integration line", []source{{"a_test.go", plain}, {"leak_test.go", "// +build integration\n\n" + verify}}, "synthetic"},
+		{"the only TestMain in a file for another GOOS", []source{{"a_test.go", plain}, {"leak_" + otherOS + "_test.go", verify}}, "synthetic"},
+		{"TestMain behind //go:build !integration", []source{{"a_test.go", plain}, {"leak_test.go", "//go:build !integration\n\n" + verify}}, ""},
+		{"TestMain behind a release tag the toolchain satisfies", []source{{"leak_test.go", "//go:build go1.1\n\n" + verify}}, ""},
+		{"TestMain in a file for this GOOS", []source{{"a_test.go", plain}, {"leak_" + runtime.GOOS + "_test.go", verify}}, ""},
+		{"every test file excluded", []source{{"a_test.go", "//go:build integration\n\n" + plain}}, ""},
+		{"an excluded file that does not parse", []source{{"leak_test.go", verify}, {"broken_test.go", "//go:build ignore\n\npackage p\n\nfunc {"}}, ""},
+		{"a malformed //go:build line", []source{{"leak_test.go", "//go:build (integration\n\n" + verify}}, "leak_test.go"},
+		{"two //go:build lines", []source{{"leak_test.go", "//go:build linux\n//go:build darwin\n\n" + verify}}, "leak_test.go"},
+	})
 }

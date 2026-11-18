@@ -11,14 +11,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 
 
 ### Carried over from goroutine-leak-checks: srvr's serve goroutine is an anonymous closure
-- **Status:** closed: fixed by skills-compliance (task 3.4: `(*Lifecycle[C]).serveOn`, leak rows of core, ginsrvr and fibersrvr match it; `internal/paritytest` has no serve row)
+- **Status:** closed: fixed by skills-compliance (task 3.4, commit `937de91`): `go l.serveOn(r)` in `engine/lifecycle.go`; the "never `Shutdown`" rows of core, `ginsrvr` and `fibersrvr` match `engine.(*Lifecycle[...]).serveOn` (`serveGoroutine` in each `leak_test.go`); `internal/paritytest` has no serve row
 - **Target:** triage-debug-buffer (owner decision, 2026-11-18)
 - **Context:** the "never `Shutdown`" leak rows of every engine identify srvr's serve goroutine by its frame `engine.(*Lifecycle[...]).serve.func1` (`go func() { r.served <- runner.Serve(ln) }()` in `engine/lifecycle.go`). The rows match the prefix `engine.(*Lifecycle[...]).serve`, so moving the goroutine into another function would break them with no behaviour change. Full entry: `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md`. Since commit 0470d34 the lifecycle goroutine tests live in each module's `leak_test.go`.
 - **Evidence:** `TestLifecycle_Goroutines/one_route,_Start_and_never_Shutdown` reports `github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serve.func1`.
 - **Suggested action:** add a small slice: give the serve goroutine a named unexported method (for example `(*Lifecycle[C]).serveOn`) and match that name in the leak rows of every engine. Internal only: no public API or behaviour change.
 
 ### Carried over from goroutine-leak-checks: the every-package guard accepts a TestMain behind a build tag
-- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.2)
+- **Status:** closed: fixed by triage-debug-buffer (task 7.2): `checkLeakCheck` (`internal/paritytest/leak_test.go`) skips the test files `build.Default.MatchFile` excludes (`//go:build` and legacy `// +build` lines, `_GOOS`/`_GOARCH` name suffixes) and rejects a malformed or repeated `//go:build` line naming the file; `TestGuardRejectsTestMainBehindBuildTag` (same file) is the restored RED test, which failed with `checkLeakCheck = <nil>, want a rejection naming synthetic` before the fix and passes after
 - **Target:** triage-debug-buffer (owner decision, 2026-11-18)
 - **Context:** the guard `TestEveryTestPackageChecksLeaks` (`checkLeakCheck`, now in `internal/paritytest/leak_test.go` since commit 0470d34) parses every `_test.go` file regardless of build constraints, so a package whose only goleak `TestMain` sits behind `//go:build integration` is accepted although a plain `go test` runs without the leak check. No package does this today. Full entry: `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md`.
 - **Evidence:** a temporary test, `TestGuardRejectsTestMainBehindBuildTag`, failed with "checkLeakCheck accepted a package whose only TestMain is behind //go:build integration" (not kept).
