@@ -325,17 +325,16 @@ func MethodLabel(method string) string {
 // topFrame returns the first function in a panic stack after the panic
 // that belongs to the application: not runtime, prblm or srvr.
 func topFrame(stack []byte) string {
-	lines := strings.Split(string(stack), "\n")
-
 	afterPanic := false
-	for _, line := range lines {
+	for line := range strings.Lines(string(stack)) {
+		line = strings.TrimSuffix(line, "\n")
 		if line == "" || line[0] == '\t' || strings.HasPrefix(line, "goroutine ") {
 			continue
 		}
 
 		fn := line
-		if i := strings.LastIndexByte(fn, '('); i > 0 {
-			fn = fn[:i]
+		if before, _, found := strings.CutLast(fn, "("); found && before != "" {
+			fn = before
 		}
 
 		if fn == "panic" {
@@ -355,7 +354,10 @@ func topFrame(stack []byte) string {
 // isLibraryFrame reports whether fn belongs to the runtime, net/http,
 // prblm or any package of the srvr module tree (engine modules included).
 func isLibraryFrame(fn string) bool {
-	for _, prefix := range []string{"runtime.", "runtime/debug.", "github.com/kartaladev/prblm.", "github.com/kartaladev/srvr.", "github.com/kartaladev/srvr/", "net/http."} {
+	for _, prefix := range []string{
+		"runtime.", "runtime/debug.", "github.com/kartaladev/prblm.",
+		"github.com/kartaladev/srvr.", "github.com/kartaladev/srvr/", "net/http.",
+	} {
 		if strings.HasPrefix(fn, prefix) {
 			return true
 		}
@@ -365,19 +367,21 @@ func isLibraryFrame(fn string) bool {
 }
 
 // Parts of the patterns RedactSecrets uses.
+//
+//nolint:gosec // G101: patterns that find secrets, not credentials.
 const (
 	// redactedValue replaces every masked value.
 	redactedValue = "***"
 	// secretKey is a key containing a secret-looking word.
-	secretKey = `[\w.-]*(?:token|key|secret|password|passwd|authorization|cookie|session|credential)[\w.-]*` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+	secretKey = `[\w.-]*(?:token|key|secret|password|passwd|authorization|cookie|session|credential)[\w.-]*`
 	// secretSeparator is "=" or ":" between a key and its value, with
 	// optional quotes and spaces. A colon needs a space or a quote after
 	// it, so "session.go:42" in a stack trace and "host:port" stay
 	// readable.
-	secretSeparator = `"?\s*(?:=\s*"?|:\s+"?|:")` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+	secretSeparator = `"?\s*(?:=\s*"?|:\s+"?|:")`
 	// secretValue is the value up to a space or delimiter, with an auth
 	// scheme before it masked as part of it.
-	secretValue = `(?:(?:bearer|basic|digest|negotiate|token)\s+)?[^\s;,&"'<>]+` //nolint:gosec // G101: a pattern that finds secrets, not a credential
+	secretValue = `(?:(?:bearer|basic|digest|negotiate|token)\s+)?[^\s;,&"'<>]+`
 )
 
 var (
@@ -478,7 +482,8 @@ func (c *Core) panicAttrs(method string, req *RequestState, pe *prblm.PanicError
 		c.exceptionMessage(ValueText(pe.Value)),
 		ownAttr(keyStacktrace, slog.StringValue(stack)),
 		slog.Bool(keyStackTruncated, stackCut),
-		slog.String(keyFingerprint, fingerprint(MethodLabel(method), req.route, errorKindPanic, valueType, topFrame(pe.Stack))),
+		slog.String(keyFingerprint,
+			fingerprint(MethodLabel(method), req.route, errorKindPanic, valueType, topFrame(pe.Stack))),
 	)
 }
 

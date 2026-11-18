@@ -46,12 +46,20 @@ func checkEndpoint(endpoint string) error {
 	return nil
 }
 
+// exporterFuncs holds the option constructors of one OTLP exporter
+// package, whose option type is O.
+type exporterFuncs[O any] struct {
+	url      func(string) O            // WithEndpointURL
+	endpoint func(string) O            // WithEndpoint
+	headers  func(map[string]string) O // WithHeaders
+}
+
 // exporterOptions returns the options of one OTLP exporter, set only for
 // the fields o sets so the SDK's environment fills the rest. An endpoint
 // URL is a base: for http/protobuf the signal path (/v1/metrics,
 // /v1/traces) is appended, as the SDK does for OTEL_EXPORTER_OTLP_ENDPOINT;
-// gRPC has no path. A host:port goes to withEndpoint, which uses TLS.
-func exporterOptions[O any](o OTLPConfig, signalPath string, withURL, withEndpoint func(string) O, withHeaders func(map[string]string) O) []O {
+// gRPC has no path. A host:port goes to with.endpoint, which uses TLS.
+func exporterOptions[O any](o OTLPConfig, signalPath string, with exporterFuncs[O]) []O {
 	var opts []O
 
 	switch {
@@ -61,13 +69,13 @@ func exporterOptions[O any](o OTLPConfig, signalPath string, withURL, withEndpoi
 			url = strings.TrimSuffix(url, "/") + signalPath
 		}
 
-		opts = append(opts, withURL(url))
+		opts = append(opts, with.url(url))
 	case o.Endpoint != "":
-		opts = append(opts, withEndpoint(o.Endpoint))
+		opts = append(opts, with.endpoint(o.Endpoint))
 	}
 
 	if len(o.Headers) > 0 {
-		opts = append(opts, withHeaders(o.Headers))
+		opts = append(opts, with.headers(o.Headers))
 	}
 
 	return opts
@@ -76,9 +84,13 @@ func exporterOptions[O any](o OTLPConfig, signalPath string, withURL, withEndpoi
 // metricExporter returns the OTLP metric exporter of o.
 func metricExporter(ctx context.Context, o OTLPConfig) (exp sdkmetric.Exporter, err error) {
 	if o.Protocol == ProtocolGRPC {
-		exp, err = otlpmetricgrpc.New(ctx, exporterOptions(o, "", otlpmetricgrpc.WithEndpointURL, otlpmetricgrpc.WithEndpoint, otlpmetricgrpc.WithHeaders)...)
+		exp, err = otlpmetricgrpc.New(ctx, exporterOptions(o, "", exporterFuncs[otlpmetricgrpc.Option]{
+			url: otlpmetricgrpc.WithEndpointURL, endpoint: otlpmetricgrpc.WithEndpoint, headers: otlpmetricgrpc.WithHeaders,
+		})...)
 	} else {
-		exp, err = otlpmetrichttp.New(ctx, exporterOptions(o, "/v1/metrics", otlpmetrichttp.WithEndpointURL, otlpmetrichttp.WithEndpoint, otlpmetrichttp.WithHeaders)...)
+		exp, err = otlpmetrichttp.New(ctx, exporterOptions(o, "/v1/metrics", exporterFuncs[otlpmetrichttp.Option]{
+			url: otlpmetrichttp.WithEndpointURL, endpoint: otlpmetrichttp.WithEndpoint, headers: otlpmetrichttp.WithHeaders,
+		})...)
 	}
 
 	if err != nil {
@@ -91,9 +103,13 @@ func metricExporter(ctx context.Context, o OTLPConfig) (exp sdkmetric.Exporter, 
 // spanExporter returns the OTLP span exporter of o.
 func spanExporter(ctx context.Context, o OTLPConfig) (exp sdktrace.SpanExporter, err error) {
 	if o.Protocol == ProtocolGRPC {
-		exp, err = otlptracegrpc.New(ctx, exporterOptions(o, "", otlptracegrpc.WithEndpointURL, otlptracegrpc.WithEndpoint, otlptracegrpc.WithHeaders)...)
+		exp, err = otlptracegrpc.New(ctx, exporterOptions(o, "", exporterFuncs[otlptracegrpc.Option]{
+			url: otlptracegrpc.WithEndpointURL, endpoint: otlptracegrpc.WithEndpoint, headers: otlptracegrpc.WithHeaders,
+		})...)
 	} else {
-		exp, err = otlptracehttp.New(ctx, exporterOptions(o, "/v1/traces", otlptracehttp.WithEndpointURL, otlptracehttp.WithEndpoint, otlptracehttp.WithHeaders)...)
+		exp, err = otlptracehttp.New(ctx, exporterOptions(o, "/v1/traces", exporterFuncs[otlptracehttp.Option]{
+			url: otlptracehttp.WithEndpointURL, endpoint: otlptracehttp.WithEndpoint, headers: otlptracehttp.WithHeaders,
+		})...)
 	}
 
 	if err != nil {

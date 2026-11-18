@@ -28,11 +28,11 @@ func TestMountFields(t *testing.T) {
 
 	pinned := map[string]bool{}
 
-	if err := checkFields(fiberFields); err != nil {
+	if err := checkFields(fiberFields()); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, f := range fiberFields {
+	for _, f := range fiberFields() {
 		pinned[f.owner.Name()+"."+f.name] = true
 	}
 
@@ -177,6 +177,45 @@ func TestWalkUnreadable(t *testing.T) {
 	}
 }
 
+// TestWalkMountUnreadable: a mount route whose group field is renamed or
+// retyped, as a consumer's fiber upgrade could make it, fails walkMount
+// with an error wrapping srvr.ErrRouteConfig naming fiber.Route.group,
+// instead of panicking or skipping the mount.
+func TestWalkMountUnreadable(t *testing.T) {
+	t.Parallel()
+
+	type renamedRoute struct{ owner *fiber.Group }
+
+	type retypedRoute struct{ group *fiber.App }
+
+	for _, tc := range []struct {
+		name  string
+		route any
+		want  string
+	}{
+		{"group renamed", renamedRoute{owner: &fiber.Group{}}, "field fiber.Route.group is missing"},
+		{"group retyped", retypedRoute{group: fiber.New()}, "field fiber.Route.group has type *fiber.App"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var o routeOwners
+
+			err := noPanic(t, func() error {
+				return o.walkMount(reflect.ValueOf(tc.route), "/api", "T", map[uintptr]bool{}, map[uintptr]bool{})
+			})
+
+			if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(fmt.Sprint(err), tc.want) {
+				t.Fatalf("walkMount = %v, want an error wrapping srvr.ErrRouteConfig containing %q", err, tc.want)
+			}
+
+			if len(o.routes) != 0 {
+				t.Fatalf("routes %v", o.routes)
+			}
+		})
+	}
+}
+
 // TestReadInternals: reading fiber's internals returns the reader's
 // error, and a panic while reading, a fiber change the type checks missed,
 // becomes an error wrapping srvr.ErrRouteConfig instead of crashing Start.
@@ -269,7 +308,7 @@ func TestInternalFieldCheck(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := checkFields(append(slices.Clone(fiberFields), tc.field))
+			err := checkFields(append(fiberFields(), tc.field))
 			if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "fiber "+fiberVersion()+":") {
 				t.Fatalf("checkFields = %v, want an error wrapping srvr.ErrRouteConfig containing %q and the fiber version", err, tc.want)
 			}
@@ -426,19 +465,15 @@ func newInternalServer(t *testing.T) *Server {
 
 // TestConfigure_FieldCheckFails: configure checks fiber's internals before
 // any configurer runs, so a renamed field fails it with an error wrapping
-// srvr.ErrRouteConfig and no configurer registers a route. It swaps the
-// package-level fiberFields, so it is serial: every parallel test of the
-// binary starts only after it has restored them.
-//
-//nolint:paralleltest // swaps the package-level fiberFields.
+// srvr.ErrRouteConfig and no configurer registers a route. The renamed
+// field is injected into this server only.
 func TestConfigure_FieldCheckFails(t *testing.T) {
+	t.Parallel()
+
 	type renamed struct{ other bool } //nolint:unused // stand-in type
 
-	saved := fiberFields
-	fiberFields = append(slices.Clone(saved), fiberField{reflect.TypeFor[renamed](), "mount", reflect.TypeFor[bool]()})
-	t.Cleanup(func() { fiberFields = saved })
-
 	srv := newInternalServer(t)
+	srv.fields = append(srv.fields, fiberField{reflect.TypeFor[renamed](), "mount", reflect.TypeFor[bool]()})
 	ran := false
 
 	const want = "field fibersrvr.renamed.mount is missing"

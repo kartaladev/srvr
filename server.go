@@ -159,7 +159,11 @@ func (s *Server) pipeline(mux *http.ServeMux) http.Handler {
 
 // stages are the per-request stages inside the trace context stage.
 func (s *Server) stages(mux *http.ServeMux) http.Handler {
-	return s.core.LogAccess(engine.LimitBody(s.core.Config().MaxRequestBodyBytes, s.core.Problems().Recover(s.answerUnmatched(mux))))
+	router := s.answerUnmatched(mux)
+	recovered := s.core.Problems().Recover(router)
+	limited := engine.LimitBody(s.core.Config().MaxRequestBodyBytes, recovered)
+
+	return s.core.LogAccess(limited)
 }
 
 // wrapHandler renders the errors h returns as problems, after guarding
@@ -191,7 +195,8 @@ func (s *Server) answerUnmatched(mux *http.ServeMux) http.Handler {
 		case http.StatusNotFound:
 			s.core.Problems().Write(w, r, prblm.ErrNotFound)
 		case http.StatusMethodNotAllowed:
-			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", rec.header.Get("Allow"))))
+			allow := prblm.WithHeader("Allow", rec.header.Get("Allow"))
+			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, allow))
 		default:
 			rec.replay(w)
 		}

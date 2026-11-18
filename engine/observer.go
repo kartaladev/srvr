@@ -218,7 +218,9 @@ func guardObservers(observers []Observer) []*guardedObserver {
 // function when Begin panics, and ctx when the returned context is nil or
 // does not carry the request state req (an observer must derive its
 // context from the one it got), so the request keeps srvr's state.
-func (c *Core) begin(ctx context.Context, req *RequestState, o *guardedObserver, info RequestInfo) (next context.Context, end func(ResultInfo)) {
+func (c *Core) begin(
+	ctx context.Context, req *RequestState, o *guardedObserver, info RequestInfo,
+) (next context.Context, end func(ResultInfo)) {
 	defer func() {
 		if v := recover(); v != nil {
 			c.observerFault(ctx, o, faultBeginPanic, v)
@@ -227,7 +229,9 @@ func (c *Core) begin(ctx context.Context, req *RequestState, o *guardedObserver,
 	}()
 
 	next, end = o.Begin(ctx, info)
-	if next != ctx && (next == nil || requestFrom(next) != req) {
+
+	replaced := next != ctx
+	if replaced && !carriesRequest(next, req) {
 		next = ctx
 	}
 
@@ -236,6 +240,12 @@ func (c *Core) begin(ctx context.Context, req *RequestState, o *guardedObserver,
 	}
 
 	return next, end
+}
+
+// carriesRequest reports whether ctx is non-nil and carries the request
+// state req.
+func carriesRequest(ctx context.Context, req *RequestState) bool {
+	return ctx != nil && requestFrom(ctx) == req
 }
 
 // sourceTrace makes the trace o's source supplies for ctx the request's, when it
@@ -283,7 +293,11 @@ const (
 
 // String returns the srvr.observer.fault.kind value.
 func (k faultKind) String() string {
-	return [numFaultKinds]string{faultBeginPanic: "begin_panic", faultEndPanic: "end_panic", faultTraceSourcePanic: "trace_source_panic"}[k]
+	return [numFaultKinds]string{
+		faultBeginPanic:       "begin_panic",
+		faultEndPanic:         "end_panic",
+		faultTraceSourcePanic: "trace_source_panic",
+	}[k]
 }
 
 // observerFault writes srvr.observer.fault for o the first time it

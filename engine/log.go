@@ -71,7 +71,7 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 			return nil, err
 		}
 
-		return &logHandler{base: ls.Handler, maxBytes: ls.maxAttrBytes()}, nil
+		return &logHandler{base: ls.Handler, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
 	}
 
 	// Every invalid field is reported, Level first.
@@ -83,7 +83,8 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 	} else if ls.Level != "" {
 		var l slog.Level
 		if err := l.UnmarshalText([]byte(ls.Level)); err != nil {
-			errs = append(errs, NewConfigError("Level", strconv.Quote(ls.Level), "is not a log/slog level such as debug, info, warn, error or info-4"))
+			errs = append(errs, NewConfigError("Level", strconv.Quote(ls.Level),
+				"is not a log/slog level such as debug, info, warn, error or info-4"))
 		}
 
 		leveler = l
@@ -112,7 +113,7 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 		return nil, errors.Join(errs...)
 	}
 
-	return &logHandler{base: base, maxBytes: ls.maxAttrBytes()}, nil
+	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
 }
 
 // checkOwnHandler rejects settings that belong to a consumer's handler.
@@ -168,6 +169,28 @@ type logHandler struct {
 	maxBytes int
 	// truncated is set when a recorded With attribute was cut.
 	truncated bool
+	// cache holds the last target built for this handler's steps, so the
+	// records of one request logger reuse it. Copies made by with and
+	// bind get a cache of their own.
+	cache *targetCache
+}
+
+// targetCache is a logHandler's last target and the top attributes it
+// was built with; it is replaced whole, so concurrent records never see a
+// target paired with another key.
+type targetCache struct{ last atomic.Pointer[cachedTarget] }
+
+// targetKey is the top attributes a target is built with: the trace, when
+// traced, and the truncation flag.
+type targetKey struct {
+	traceID, spanID string
+	traced, cut     bool
+}
+
+// cachedTarget is a target and the key it was built for.
+type cachedTarget struct {
+	key     targetKey
+	handler slog.Handler
 }
 
 // step is one recorded WithAttrs (attrs) or WithGroup (group) call.
@@ -214,16 +237,26 @@ func (h *logHandler) WithGroup(name string) slog.Handler {
 }
 
 func (h *logHandler) with(st step) *logHandler {
-	c := *h
+	c := h.clone()
 	c.steps = append(slices.Clip(h.steps), st)
 
-	return &c
+	return c
 }
 
 // bind returns h bound to tr, for a request logger.
 func (h *logHandler) bind(tr *Trace) *logHandler {
-	c := *h
+	c := h.clone()
 	c.trace = tr
+
+	return c
+}
+
+// clone returns a copy of h with a target cache of its own: the cache key
+// holds only the top attributes, so a copy whose steps or trace differ
+// must never share its parent's cache.
+func (h *logHandler) clone() *logHandler {
+	c := *h
+	c.cache = &targetCache{}
 
 	return &c
 }
@@ -248,18 +281,41 @@ func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
 	t := truncator{maxBytes: h.maxBytes}
 	r = t.record(r, own)
 
-	var top []slog.Attr
-	if tr, ok := h.traceOf(ctx); ok {
-		top = append(top, slog.String(keyTraceID, tr.TraceID), slog.String(keySpanID, tr.SpanID))
+	tr, traced := h.traceOf(ctx)
+	key := targetKey{traced: traced, cut: t.cut || h.truncated}
+	if traced {
+		key.traceID, key.spanID = tr.TraceID, tr.SpanID
 	}
 
-	if t.cut || h.truncated {
+	if err := h.cachedTarget(key).Handle(ctx, r); err != nil {
+		logWriteErrors.Add(1)
+	}
+}
+
+// cachedTarget returns the target for key's top attributes, reusing the
+// last one built when key matches it.
+func (h *logHandler) cachedTarget(key targetKey) slog.Handler {
+	if h.cache != nil {
+		if c := h.cache.last.Load(); c != nil && c.key == key {
+			return c.handler
+		}
+	}
+
+	var top []slog.Attr
+	if key.traced {
+		top = append(top, slog.String(keyTraceID, key.traceID), slog.String(keySpanID, key.spanID))
+	}
+
+	if key.cut {
 		top = append(top, slog.Bool(keyAttrTruncated, true))
 	}
 
-	if err := h.target(top).Handle(ctx, r); err != nil {
-		logWriteErrors.Add(1)
+	target := h.target(top)
+	if h.cache != nil {
+		h.cache.last.Store(&cachedTarget{key: key, handler: target})
 	}
+
+	return target
 }
 
 // target returns the base handler with the top-level attributes and the

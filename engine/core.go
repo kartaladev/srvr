@@ -82,7 +82,10 @@ func (c *Core) Problems() *prblm.Handler { return c.problems }
 // server must be built from: the consumer's, then srvr's trace_id enricher
 // and its OnError hook, last so that they win.
 func (c *Core) ProblemOptions() []prblm.Option {
-	return slices.Concat(c.settings.ProblemOptions, []prblm.Option{prblm.WithEnrichers(traceIDEnricher), prblm.OnError(c.onError)})
+	return slices.Concat(
+		c.settings.ProblemOptions,
+		[]prblm.Option{prblm.WithEnrichers(traceIDEnricher), prblm.OnError(c.onError)},
+	)
 }
 
 // EngineOptions returns, in order, the values of the engine-specific

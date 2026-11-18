@@ -118,7 +118,8 @@ func (s *Setup) build(ctx context.Context, res *resource.Resource) error {
 
 		mopts = append(mopts, sdkmetric.WithReader(exporter))
 		// Overlapping scrapes each run a full collection: cap them.
-		s.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{MaxRequestsInFlight: 4, Timeout: 20 * time.Second})
+		s.metricsHandler = promhttp.HandlerFor(registry,
+			promhttp.HandlerOpts{MaxRequestsInFlight: 4, Timeout: 20 * time.Second})
 	}
 
 	otlp := s.cfg.OTLP

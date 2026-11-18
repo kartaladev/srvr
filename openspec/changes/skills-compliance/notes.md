@@ -10,7 +10,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Audit 2026-11-18: findings and where they are fixed
-- **Status:** open: being fixed by the tasks listed per finding; locations confirmed with gopls in consolidation 1.3 (see the outcome entry above). The seven audit areas and their tasks: (1) errors and safety: 2.4, 2.5-2.7, 3.1, 3.3, 4.2, 4.4; (2) concurrency and context: 2.3, 3.2, 3.4, 4.5, 4.6; (3) style, naming and docs: 5.1-5.5, 6.1-6.5, 9.1; (4) design, types, modernize and data structures: 5.3, 9.2, 9.3; (5) testing, lint and benchmarks: 7.1, 7.2, 8.1-8.5; (6) security, observability and performance: 2.1, 2.2, 2.5-2.7, 4.3, 4.7, 9.4; (7) dependencies, layout and CI: 4.1, 7.3-7.5
+- **Status:** closed: every finding fixed by the tasks listed per area (task 9.5 review, 2026-11-18). Each item listed as unverified was reproduced by its RED test before the fix: faulty route-check errors (3.1, a hang and two escaping panics), Shutdown during start (3.2), Goexit (3.3), the anonymous serve goroutine (3.4), the zero observer (4.3, one end_panic fault per engine), OTLP headers (4.5, reproduced through the trace exporter only: the metric exporter copies the map), the metrics listener at the deadline (4.6, a connection goroutine left). Two defects beyond the audit were found and fixed in slice 3 (see that entry).
 - **Target:** skills-compliance
 - **Context:** seven read-only audits against `samber/cc-skills-golang` on `b0302aa` (errors and safety; concurrency and context; style, naming and docs; design, types, modernize and data structures; testing, lint and benchmarks; security, observability and performance; dependencies, layout and CI). Every module passed `go vet`, `golangci-lint`, `go test -race` and `-shuffle=on`; gosec reported 0 issues. Not every audit navigated with gopls (errors/safety and concurrency used reads and grep, style used `go doc` and go/ast); consolidation 1.3 re-locates each finding with gopls.
 - **Evidence (failing probes, run in the session scratchpad, not kept):**
@@ -63,11 +63,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** in task 8.2, start the deadline only after the request is in flight (or select on `started` together with the request's result and a bound), so a lost race fails fast with a message.
 
 ### Slice 2 /simplify: efficiency items deferred to the benchmarks
-- **Status:** open
-- **Target:** skills-compliance (tasks 8.4 and 9.4)
+- **Status:** open (task 9.4 applied only the target cache; these stay deferred, owner decision 2026-11-18: timings too noisy to judge)
+- **Target:** unassigned
 - **Context:** the slice 2 efficiency review (read-only, no measurement) found two costs on the logging hot path: with a limit set, any `slog.Any` value forces a record rebuild (`mayNeedRewrite`), and `capAny` formats every such value with `fmt` to measure it, after which the base handler formats a value that fits a second time. Suggested cheaper forms: skip formatting for small fixed-size kinds (`time.Time`, `netip.Addr`, scalars), or format into a counting writer that stops after `maxBytes+1`. A third item, a keyword pre-scan before `secretPair` in `RedactSecrets`, only touches failed requests; the cheap `?`/`&` pre-check for `queryValue` was applied. Design D2 already accepts the formatting cost pending a benchmark.
 - **Evidence:** unverified: code reading; `BenchmarkLogHandler` (task 8.4, with and without `slog.Any`) decides.
-- **Suggested action:** in task 9.4, apply a cheaper form only when the benchmark shows a gain of 10% or more, as for the other measured items.
+- **Suggested action:** measure on a quiet machine with `benchstat`: (1) skipping `fmt` formatting for small fixed-size `slog.Any` kinds or a counting writer in `capAny`; (2) a keyword pre-scan before `secretPair` in `RedactSecrets`, which the baseline puts at about 8 ms for a 32 KiB panic stack; apply each at a 10% or larger gain.
 
 ### Slice 3: defects found beyond the audit and fixed in place
 - **Status:** closed: fixed by skills-compliance (tasks 3.1 and 3.4)
@@ -91,7 +91,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** when 7.3 and 7.4 land, change the gate to `make vet lint test tidy-check vulncheck` from the root and describe the CI `release` job's `replace` check.
 
 ### Benchmark baseline before the measured changes
-- **Status:** open
+- **Status:** closed: used as the task 9.4 baseline (see "Task 9.4: measured performance changes")
 - **Target:** skills-compliance (task 9.4)
 - **Context:** task 8.4 baseline on an Apple M4 Pro (darwin/arm64, 14 cores), Go 1.27.4, one run each (`-count=1`), so treat differences under ~5% as noise; task 9.4 compares with `benchstat` over repeated runs. Logging goes to `io.Discard` through srvr's JSON handler in every benchmark. `BenchmarkLogHandler` builds the handler with `newLogHandler` (default 1024-byte cap) and logs with a request context; its steps are group-free `With` calls and its `slog.Any` value is a two-key `http.Header`. The pipeline benchmarks run the full per-engine pipeline (`httptest` for net/http and gin, fibersrvr's `Server.Test` over `app.Test` for fiber, whose in-memory connection is part of every measurement).
 
@@ -122,3 +122,32 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   Observations, unverified until 9.4 measures a change: each `With` step costs about 3 allocations per record (the steps are replayed in `logHandler.target`); a `slog.Any` attribute adds about 13 allocations and 1.1-2 µs; `RedactSecrets` takes about 8 ms on a 32 KiB stack (about 4 MB/s); net/http's unmatched path costs about 20 more allocations than gin's (the `fallbackRecorder` second ServeMux dispatch in `answerUnmatched`).
 - **Evidence:** `GOWORK=off go test -run x -bench . -benchmem ./engine` and `GOWORK=off go test -run x -bench . -benchmem .` (root module), `GOWORK=off go test -run x -bench . -benchmem ./...` in `ginsrvr` and in `fibersrvr`. Files: `engine/log_bench_test.go`, `server_bench_test.go`, `ginsrvr/server_bench_test.go`, `fibersrvr/server_bench_test.go`.
 - **Suggested action:** baseline for task 9.4's measured changes (`logHandler.target` caching for group-free handlers, single ServeMux routing in `answerUnmatched`, fiber `accessInfo` copies): rerun with `-count=10` before and after each change and compare with `benchstat`.
+
+### Task 9.4: measured performance changes
+- **Status:** open (two items deferred by owner decision, 2026-11-18: timings on the development machine were too noisy to judge)
+- **Target:** unassigned (the applied target cache is done in skills-compliance)
+- **Context:** the rule is "apply only when a benchmark shows a gain of 10% or more in ns/op or allocations".
+  - *Applied:* `logHandler` target cache. A handler keeps the last target it built (base handler with the trace attributes and every `With` step) keyed by trace id, span id and the truncated flag, and reuses it while the key matches; `with` and `bind` give each copy its own cache. `BenchmarkLogHandler`, `benchstat` over `-count=6`: allocs/op 7 -> 1 (0 steps), 10 -> 1 (1 step), 16 -> 1 (3 steps), 20 -> 14, 23 -> 14, 29 -> 14 (with `slog.Any`), geomean -76%; B/op geomean -82% (400 -> 64 B with 0 steps). ns/op varied +-137% to +-305% between runs on the loaded machine, so time is not claimed. After the slice-9 /simplify pass (the key is a comparable `targetKey` passed by value; a `cachedTarget` is allocated only on a miss), the hit path drops one more allocation: 0 allocs/op with 0, 1 or 3 steps and 13 with `slog.Any` (`go test -run '^$' -bench BenchmarkLogHandler -benchmem ./engine`). Guarded by `TestLogHandler_TargetCache` (in-place trace replacement, truncation toggling, concurrent traces under `-race`).
+  - *Deferred, not measured:* single ServeMux routing in `answerUnmatched` (`server.go`), and fiber `accessInfo` copies after the suppression check. Note for the first: calling the handler `mux.Handler(r)` returns instead of `mux.ServeHTTP` would skip ServeMux setting `r.Pattern` and the path values (`r.PathValue`), so a single pass needs another design, for example letting `withRoute` mark the request matched and intercepting only the fallback's response.
+- **Evidence:** `go test -run '^$' -bench BenchmarkLogHandler -benchmem -count=6 ./engine` before and after; `go run golang.org/x/perf/cmd/benchstat@latest old.txt new.txt`.
+- **Suggested action:** measure the two deferred items on a quiet machine (or CI benchmark runner) with `benchstat`, and apply each only at a 10% or larger gain.
+
+### Task 9.1: struct tag line over 120 columns
+- **Status:** closed: accepted exception
+- **Target:** skills-compliance (task 9.1)
+- **Context:** after wrapping, the only non-test line over 120 columns is `engine/config.go` field `ShutdownHookTimeout` (122 columns). It is a field name plus one struct tag; a struct tag is a single string literal that `reflect.StructTag` parses with space separators only, so it cannot be broken across lines, and the field name and the `json`/`yaml`/`env` keys are public configuration API (AGENTS.md rule 7), so shortening them would be a breaking change for a style rule.
+- **Evidence:** `for f in $(git ls-files '*.go' | grep -v _test); do awk -v f=$f 'length > 120 {print f": "FNR}' $f; done` prints only `engine/config.go: 61`.
+- **Suggested action:** none; the line-length check treats struct-tag lines as exempt.
+
+### Target cache: patterns where it cannot hit (from /simplify on slice 9)
+- **Status:** open (unconfirmed: allocation cost not yet measured)
+- **Target:** unassigned (with the deferred task 9.4 measurements)
+- **Context:** `BenchmarkLogHandler` measures one handler logging many records with one trace, where the cache hits. Two common patterns may never hit: (a) `engine.LoggerFromContext(ctx).Info(...)` called once per line, because `LoggerFromContext` calls `bind` on every call (`engine/log.go` `LoggerFromContext`) and each bound copy starts with an empty cache, so each record pays a `targetCache` and a `cachedTarget` allocation on top of the old cost; (b) unbound handlers (the root logger, `slog.Default()` under `SetDefault`, srvr's access and event records) take the trace from the context, so concurrent requests with different trace ids replace each other's single-entry cache, adding a miss allocation and an atomic store to a shared cache line. (The hit path itself no longer allocates: `cachedTarget` takes its key by value and allocates only on a miss.)
+- **Evidence:** code reading only (simplify review of slice 9); rule 2 applies: write benchmarks for (a) and (b) and compare allocs/op with and without the cache before calling either a regression.
+- **Suggested action:** add `BenchmarkLogHandler` rows for (a) and (b); if either regresses, cache only on handlers with a bound trace or `With` steps, or keep the request logger (or its cache) on `RequestState` so loggers of one request share it.
+
+### fibersrvr `Server.fields` test injection point (from /simplify on slice 9)
+- **Status:** closed: kept deliberately
+- **Target:** skills-compliance (task 9.3)
+- **Context:** the altitude review suggested dropping `Server.fields` (used only by `TestConfigure_FieldCheckFails` to add a renamed field) and calling `checkFields(fiberFields())` directly in `configure`. Task 9.3 introduced the field on purpose to replace the mutable package variable with an injection point, so `configure`'s failure path is tested end to end through `Start`; `TestInternalFieldCheck` alone covers `checkFields` but not its wiring into `configure`.
+- **Suggested action:** none.

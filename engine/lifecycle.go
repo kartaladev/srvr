@@ -625,7 +625,10 @@ func (c *Core) logEvent(ctx context.Context, level slog.Level, event string, att
 // calls it once per warning, at construction for engine settings or at
 // Start for route-dependent ones; a warning never fails either.
 func (c *Core) Warn(ctx context.Context, code WarningCode, message string) {
-	c.logEvent(ctx, slog.LevelWarn, eventConfigWarning, slog.String(keyWarningCode, string(code)), slog.String(keyWarningMessage, message))
+	c.logEvent(ctx, slog.LevelWarn, eventConfigWarning,
+		slog.String(keyWarningCode, string(code)),
+		slog.String(keyWarningMessage, message),
+	)
 }
 
 // newOwnRecord starts one of srvr's own records: no source (PC 0) and the
@@ -772,7 +775,7 @@ func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 // runHook runs fn with runGuarded; a hook that outlives ctx fails as
 // abandoned.
 func runHook(ctx context.Context, fn func(context.Context) error) error {
-	err, abandoned := runGuarded(ctx, fn)
+	abandoned, err := runGuarded(ctx, fn)
 	if abandoned {
 		// For BeforeDrain hooks ctx.Err() comes from the consumer's Shutdown
 		// context.
@@ -796,7 +799,7 @@ const goexitValue = "runtime.Goexit"
 // true then, unless fn finished as ctx ended, which still counts. fn
 // ending its goroutine with runtime.Goexit is reported like a panic, so
 // no caller waits for a result that would never come.
-func runGuarded(ctx context.Context, fn func(context.Context) error) (err error, abandoned bool) { //nolint:revive // the error is fn's result, not a failure of runGuarded.
+func runGuarded(ctx context.Context, fn func(context.Context) error) (abandoned bool, err error) {
 	result := make(chan error, 1)
 
 	go func() {
@@ -815,13 +818,13 @@ func runGuarded(ctx context.Context, fn func(context.Context) error) (err error,
 
 	select {
 	case err := <-result:
-		return err, false
+		return false, err
 	case <-ctx.Done():
 		select {
 		case err := <-result:
-			return err, false
+			return false, err
 		default:
-			return nil, true
+			return true, nil
 		}
 	}
 }

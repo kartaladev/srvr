@@ -3,11 +3,13 @@ package fibersrvr
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"net/http"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +34,9 @@ type Server struct {
 	lc     *engine.Lifecycle[srvr.RouteConfigurer[fiber.Router]]
 	app    *fiber.App
 	owners routeOwners
+	// fields are the fiber internals configure checks: fiberFields(),
+	// replaced only by tests that inject a renamed field.
+	fields []fiberField
 	// locations maps each route handler (by function pointer) to its code
 	// location, resolved once by the configure phase.
 	locations map[uintptr]engine.Location
@@ -63,8 +68,10 @@ func New(opts ...srvr.Option) (*Server, error) {
 		return nil, err
 	}
 
-	s := &Server{core: core, lc: engine.NewLifecycle[srvr.RouteConfigurer[fiber.Router]](core)}
-	s.base, s.cancelBase = context.WithCancel(context.Background()) //nolint:gosec // cancelled by the runner's Drain, or never needed when the server never serves.
+	s := &Server{core: core, lc: engine.NewLifecycle[srvr.RouteConfigurer[fiber.Router]](core), fields: fiberFields()}
+	// cancelBase is called by the runner's Drain, or never needed when the
+	// server never serves.
+	s.base, s.cancelBase = context.WithCancel(context.Background()) //nolint:gosec // see the comment above.
 	s.problems = fiberprblm.ErrorHandler(core.ProblemOptions()...)
 
 	cfg, err := s.fiberConfig(hooks)
@@ -74,7 +81,9 @@ func New(opts ...srvr.Option) (*Server, error) {
 
 	if set := core.MaxHeaderBytesSet(); set > maxReadBufferSize {
 		core.Warn(context.Background(), engine.WarnFiberHeaderLimitCapped, fmt.Sprintf(
-			"MaxHeaderBytes %d is above the %d bytes fiber can buffer per connection; requests with larger headers get 431", set, maxReadBufferSize))
+			"MaxHeaderBytes %d is above the %d bytes fiber can buffer per connection; "+
+				"requests with larger headers get 431",
+			set, maxReadBufferSize))
 	}
 
 	s.app = fiber.New(cfg)
@@ -146,7 +155,8 @@ func applyHook(cfg *fiber.Config, h any) (err error) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = engine.NewConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(), "hook panicked: "+engine.ValueText(v))
+			err = engine.NewConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(),
+				"hook panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -201,7 +211,7 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx)
 // route listing. The duplicate check is srvr's own route check and runs
 // before the consumer's.
 func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Routes, error) {
-	if err := checkFields(fiberFields); err != nil {
+	if err := checkFields(s.fields); err != nil {
 		return nil, err
 	}
 
@@ -227,8 +237,10 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 		return nil, err
 	}
 
-	s.locations = make(map[uintptr]engine.Location)
-	for _, r := range s.app.GetRoutes(true) {
+	registered := s.app.GetRoutes(true)
+
+	s.locations = make(map[uintptr]engine.Location, len(registered))
+	for _, r := range registered {
 		if n := len(r.Handlers); n > 0 {
 			h := r.Handlers[n-1]
 			s.locations[handlerKey(h)] = engine.FuncLocation(h)
@@ -320,7 +332,7 @@ func readInternals(read func() error) (err error) {
 
 // checkFields returns an error wrapping srvr.ErrRouteConfig, naming the
 // field and the fiber version, for the first of fields that fiber does not
-// declare with the expected type. configure runs it over fiberFields once
+// declare with the expected type. configure runs it over the server's fields once
 // per Start, mounted sub-app or not, so a fiber version that changed them
 // fails Start instead of listing fewer or wrong routes.
 func checkFields(fields []fiberField) error {
@@ -350,9 +362,13 @@ var (
 	routeGroup    = fiberField{reflect.TypeFor[fiber.Route](), "group", reflect.TypeFor[*fiber.Group]()}
 	groupApp      = fiberField{reflect.TypeFor[fiber.Group](), "app", reflect.TypeFor[*fiber.App]()}
 	appStack      = fiberField{reflect.TypeFor[fiber.App](), "stack", reflect.TypeFor[[][]*fiber.Route]()}
-
-	fiberFields = []fiberField{routeUse, routeMount, routeAutoHead, routeGroup, groupApp, appStack}
 )
+
+// fiberFields returns a fresh list of every unexported fiber field srvr
+// reads, so no caller can change the list another one checks.
+func fiberFields() []fiberField {
+	return []fiberField{routeUse, routeMount, routeAutoHead, routeGroup, groupApp, appStack}
+}
 
 // check returns an error wrapping srvr.ErrRouteConfig when f's owner type
 // has no field f.name of type f.want.
@@ -399,7 +415,8 @@ func (f fiberField) unreadable(problem string) error {
 // internalsError returns an error wrapping srvr.ErrRouteConfig for fiber
 // internals srvr cannot read, naming the fiber version.
 func internalsError(format string, args ...any) error {
-	return engine.RouteErrorf("fiber %s: cannot read fiber's internals for the route listing: %s", fiberVersion(), fmt.Sprintf(format, args...))
+	return engine.RouteErrorf("fiber %s: cannot read fiber's internals for the route listing: %s",
+		fiberVersion(), fmt.Sprintf(format, args...))
 }
 
 // subApp returns the *fiber.App behind group, a *fiber.Group value, or
@@ -454,25 +471,13 @@ func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath 
 
 			switch {
 			case declared(r):
-				o.routes = append(o.routes, engine.Route{Method: r.FieldByName("Method").String(), Pattern: groupPath(prefix, r.FieldByName("Path").String()), Configurer: configurer})
+				o.routes = append(o.routes, engine.Route{
+					Method:     r.FieldByName("Method").String(),
+					Pattern:    groupPath(prefix, r.FieldByName("Path").String()),
+					Configurer: configurer,
+				})
 			case routeMount.set(r):
-				g, err := routeGroup.read(r)
-				if err != nil {
-					return err
-				}
-
-				if g.IsNil() || walked[g.Pointer()] {
-					continue
-				}
-
-				walked[g.Pointer()] = true
-
-				sub, err := groupApp.read(g.Elem())
-				if err != nil {
-					return err
-				}
-
-				if err := o.walk(sub, groupPath(prefix, r.FieldByName("Path").String()), configurer, onPath); err != nil {
+				if err := o.walkMount(r, prefix, configurer, walked, onPath); err != nil {
 					return err
 				}
 			}
@@ -480,6 +485,29 @@ func (o *routeOwners) walk(app reflect.Value, prefix, configurer string, onPath 
 	}
 
 	return nil
+}
+
+// walkMount follows the mount route r, a fiber.Route value, into the
+// mounted app its group holds, once per group: walked records the groups
+// of the current app already followed, onPath the apps being walked.
+func (o *routeOwners) walkMount(r reflect.Value, prefix, configurer string, walked, onPath map[uintptr]bool) error {
+	g, err := routeGroup.read(r)
+	if err != nil {
+		return err
+	}
+
+	if g.IsNil() || walked[g.Pointer()] {
+		return nil
+	}
+
+	walked[g.Pointer()] = true
+
+	sub, err := groupApp.read(g.Elem())
+	if err != nil {
+		return err
+	}
+
+	return o.walk(sub, groupPath(prefix, r.FieldByName("Path").String()), configurer, onPath)
 }
 
 // fiberModule is the module path of the fiber version srvr reads.
@@ -561,7 +589,7 @@ func (f fiberField) set(v reflect.Value) bool {
 // route whose method and path, compared as fiber with cfg matches them
 // (see matchKey), repeat an earlier one.
 func (o *routeOwners) duplicate(cfg *fiber.Config) error {
-	first := map[string]engine.Route{}
+	first := make(map[string]engine.Route, len(o.routes))
 
 	for _, r := range o.routes {
 		key := r.Method + " " + matchKey(r.Pattern, cfg)
@@ -717,7 +745,8 @@ func (s *Server) accessInfo(c fiber.Ctx, d time.Duration) engine.AccessInfo {
 func (s *Server) requestInfo(c fiber.Ctx) engine.RequestInfo {
 	// c.Method is a stable string in fiber v3, never a pooled buffer;
 	// NewRequestInfo copies the path when it keeps it.
-	return s.core.NewRequestInfo(c.Method(), strings.Clone(c.Scheme()), string(c.Request().Host()), c.Path(), fiberHeader{&c.Request().Header})
+	return s.core.NewRequestInfo(c.Method(), strings.Clone(c.Scheme()), string(c.Request().Host()), c.Path(),
+		fiberHeader{&c.Request().Header})
 }
 
 // fiberHeader reads fasthttp request headers for observers, during Begin
@@ -814,10 +843,7 @@ func (t *tracker) Accept() (net.Conn, error) {
 // closeAll closes every connection still open.
 func (t *tracker) closeAll() {
 	t.mu.Lock()
-	conns := make([]net.Conn, 0, len(t.open))
-	for c := range t.open {
-		conns = append(conns, c)
-	}
+	conns := slices.Collect(maps.Keys(t.open))
 	t.mu.Unlock()
 
 	for _, c := range conns {

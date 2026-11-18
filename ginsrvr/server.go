@@ -54,7 +54,10 @@ func New(opts ...srvr.Option) (*Server, error) {
 	}
 
 	if gin.IsDebugging() {
-		core.Warn(context.Background(), engine.WarnGinDebugMode, "gin runs in debug mode and prints [GIN-debug] lines to standard output; set GIN_MODE=release or call gin.SetMode(gin.ReleaseMode) (srvr does not change gin's process-wide mode)")
+		core.Warn(context.Background(), engine.WarnGinDebugMode,
+			"gin runs in debug mode and prints [GIN-debug] lines to standard output; "+
+				"set GIN_MODE=release or call gin.SetMode(gin.ReleaseMode) "+
+				"(srvr does not change gin's process-wide mode)")
 	}
 
 	core.SetDefaultLogger()
@@ -124,7 +127,8 @@ func applyHook(e *gin.Engine, h any) (err error) {
 	hook(e)
 
 	if len(e.Handlers) != handlers || len(e.Routes()) != routes {
-		return engine.NewConfigError("WithGinEngine", name, "hook added middleware or routes, which would run outside srvr's pipeline; use Register")
+		return engine.NewConfigError("WithGinEngine", name,
+			"hook added middleware or routes, which would run outside srvr's pipeline; use Register")
 	}
 
 	return nil
@@ -219,7 +223,9 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // registers conflicting routes (gin panics) or registers a route with a
 // nil handler fails Start with an error wrapping srvr.ErrRouteConfig.
 func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) (engine.Runner, engine.Routes, error) {
+	return s.lc.Start(ctx, func(
+		configurers []srvr.RouteConfigurer[*gin.RouterGroup],
+	) (engine.Runner, engine.Routes, error) {
 		routes, err := s.configure(configurers)
 		if err != nil {
 			return nil, nil, err
@@ -254,25 +260,28 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup])
 		before = after
 	}
 
-	s.locations = make(map[uintptr]engine.Location)
+	s.locations = make(map[uintptr]engine.Location, len(before))
 	for _, r := range before {
 		s.locations[handlerKey(r.HandlerFunc)] = engine.FuncLocation(r.HandlerFunc)
 	}
 
-	return engine.CollapseMethods(routes, anyMethods), nil
+	return engine.CollapseMethods(routes, anyMethods()), nil
 }
 
-// anyMethods is the method set of gin's RouterGroup.Any.
-var anyMethods = []string{
-	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodHead,
-	http.MethodOptions, http.MethodDelete, http.MethodConnect, http.MethodTrace,
+// anyMethods returns the method set of gin's RouterGroup.Any, fresh on
+// every call so no caller can change another one's set.
+func anyMethods() []string {
+	return []string{
+		http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodHead,
+		http.MethodOptions, http.MethodDelete, http.MethodConnect, http.MethodTrace,
+	}
 }
 
 // added returns the routes in after that are not in before, attributed to
 // owner. gin lists routes by method tree, so they are matched by method
 // and path, not by position.
 func added(before, after gin.RoutesInfo, owner string) engine.Routes {
-	seen := map[string]bool{}
+	seen := make(map[string]bool, len(before))
 	for _, r := range before {
 		seen[r.Method+" "+r.Path] = true
 	}
