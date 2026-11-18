@@ -277,7 +277,7 @@ After the configure phase and before binding, every engine SHALL build `engine.R
 | `fiber` | ignores its context and blocks forever, with a `Start` context whose deadline is `50ms` | `Start` returns an error matching `context.DeadlineExceeded` at the deadline; the check's goroutine is abandoned |
 
 ### Requirement: Mounted fiber sub-app routes are listed
-The fiber engine SHALL list the routes of a sub-app mounted with `Use(prefix, subApp)`, at any depth, with their full mounted path, attributed to the configurer that mounted the sub-app, excluding the sub-app's middleware and implicit routes. When a sub-app is mounted and the fiber internals srvr reads to list it are not as expected, `Start` SHALL fail with `srvr.ErrRouteConfig` rather than list fewer routes or panic.
+The fiber engine SHALL list the routes of a sub-app mounted with `Use(prefix, subApp)`, at any depth, with their full mounted path, attributed to the configurer that mounted the sub-app, excluding the sub-app's middleware and implicit routes.
 
 #### Scenario: Sub-app route listing
 - **Given** a fiber server with configurer `*main.UserRoutes` that `<mounts>`
@@ -294,15 +294,22 @@ The fiber engine SHALL list the routes of a sub-app mounted with `Use(prefix, su
 | sub-app `sub` with `Get("/users")`, mounted with `router.Use("/", sub)` | `{GET /users *main.UserRoutes}` |
 | sub-app `sub` with `Get("/users")`, mounted with `router.Group("/v1").Use("/api", sub)` | `{GET /v1/api/users *main.UserRoutes}` |
 
+### Requirement: Unreadable fiber internals fail Start
+When the unexported fiber fields srvr reads for the route listing and the duplicate check (the route flags `use`, `mount` and `autoHead`, and the sub-app fields `Route.group`, `Group.app` and `App.stack`) are missing or of another type, every fiber `Start` SHALL fail with `srvr.ErrRouteConfig` naming the field and the fiber version, whether or not a sub-app is mounted, rather than list fewer or wrong routes or panic.
+
 #### Scenario: Fiber mount internals unreadable
-- **Given** a fiber server whose configurer mounts sub-app `sub` with `Get("/users")` with `router.Use("/api", sub)`
+- **Given** a fiber server whose configurer `<routes>`
 - **And** the fiber version in use `<change>`
 - **When** the server starts
 - **Then** `Start` `<result>`
 
 ##### Examples:
-| change | result |
-|--------|--------|
-| renames one of the unexported fields srvr reads for sub-apps (`Route.group`, `Group.app`, `App.stack`) | returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version (`unknown` when the build information has none), and `Ready()` is never closed |
-| changes the type of one of those fields (for example `App.stack` to `[]*fiber.Route`) | returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version, does not panic, and `Ready()` is never closed |
-| renames or retypes one of those fields, and no configurer mounts a sub-app | becomes ready; the fields are not read |
+| routes | change | result |
+|--------|--------|--------|
+| mounts sub-app `sub` with `Get("/users")` with `router.Use("/api", sub)` | renames one of the unexported fields srvr reads for sub-apps (`Route.group`, `Group.app`, `App.stack`) | returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version (`unknown` when the build information has none), and `Ready()` is never closed |
+| mounts sub-app `sub` with `Get("/users")` with `router.Use("/api", sub)` | changes the type of one of those fields (for example `App.stack` to `[]*fiber.Route`) | returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version, does not panic, and `Ready()` is never closed |
+| registers `Get("/users")` and mounts no sub-app | renames or retypes one of the sub-app fields | returns an error wrapping `srvr.ErrRouteConfig` naming the field and the fiber version: the fields are checked on every `Start` |
+| registers `Get("/users")` and mounts no sub-app | renames `Route.use` | returns an error wrapping `srvr.ErrRouteConfig` naming `fiber.Route.use` and the fiber version, and `Ready()` is never closed |
+| registers `Get("/users")` and mounts no sub-app | renames `Route.mount` | returns an error wrapping `srvr.ErrRouteConfig` naming `fiber.Route.mount` and the fiber version |
+| registers `Get("/users")` and mounts no sub-app | renames `Route.autoHead` | returns an error wrapping `srvr.ErrRouteConfig` naming `fiber.Route.autoHead` and the fiber version |
+| registers `Get("/users")` and mounts no sub-app | changes the type of `Route.use`, `Route.mount` or `Route.autoHead` from `bool` (for example to `int`) | returns an error wrapping `srvr.ErrRouteConfig` naming the field, its type and the fiber version |
