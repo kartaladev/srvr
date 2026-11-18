@@ -2,23 +2,30 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Consolidation outcome (task group 1, 2026-11-18)
+- **Status:** closed: recorded
+- **Target:** triage-debug-buffer
+- **Context:** 1.1: `git fetch`; `main` equals `origin/main` at `5d3b678`. Archived since this change was planned: `core-server` (2026-11-17), `gin-and-fiber-engines`, `otel-observability`, `goroutine-leak-checks` (2026-11-18). `scrty-integration` is still active and unmerged; this change is applied before it by owner choice and does not depend on it. 1.2: every open entry addressed to this change or `unassigned` in the archived changes' and `scrty-integration`'s `notes.md` was read. Adopted: the two goroutine-leak-checks carry-overs (named serve goroutine, build-tag guard) as new task group 7. Deferred unchanged, none being about request logging: all other open `unassigned` entries of `core-server`, `gin-and-fiber-engines`, `otel-observability` and `scrty-integration`. In this file, "Summary attributes belong in triage-error-records" is closed (kept here) and "Correlation keys may nest under WithGroup" is closed as verified. 1.3: checked with gopls against `5d3b678`: the wrapper is one handler, `engine.logHandler`, doing correlation, truncation (`truncator`, reusable by the buffer in the same package) and the guard, with `LogWriteErrors()`; `trace_id` stays top-level by step replay; `Core.writeAccess` is the single outcome point for net/http, gin (`LogAccess`) and fiber (`WriteAccess`), including the `http.ErrAbortHandler` path; `OnError` only records (`recordFailure`); fiber uses `SetContext`, not locals; `srvr.log.schema` is `1`; the golden test is `TestLogSchemaGolden` (`logconfig_test.go`); `triage-error-records` and `structured-logging` are main specs. Refreshed: proposal Impact (merged names), design Context, D2 (the buffer is a `RequestState` field; the marker is a top-level attribute added on replay through the entry's `logHandler`, replacing the separate marked chain; truncation at append reuses `truncator`; own records are never buffered; fiber call-time context), D3 (`writeAccess`, `failure.problem.Status`, aborted counts as panicked, seal before the access record, discard when the access record's level is disabled), D5, D6; spec: the flush requirement and a Suppressed access record row for a disabled access-record level; tasks 2.3, 4.3, 5.1 and new group 7. `openspec validate triage-debug-buffer --strict` passes.
+- **Evidence:** `git log --oneline origin/main..main` is empty; `openspec list --json`; gopls document symbols and references on `engine/log.go`, `engine/access.go`, `engine/trace.go`, `fibersrvr/server.go`.
+- **Suggested action:** none.
+
 
 ### Carried over from goroutine-leak-checks: srvr's serve goroutine is an anonymous closure
-- **Status:** open
+- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.1)
 - **Target:** triage-debug-buffer (owner decision, 2026-11-18)
 - **Context:** the "never `Shutdown`" leak rows of every engine identify srvr's serve goroutine by its frame `engine.(*Lifecycle[...]).serve.func1` (`go func() { r.served <- runner.Serve(ln) }()` in `engine/lifecycle.go`). The rows match the prefix `engine.(*Lifecycle[...]).serve`, so moving the goroutine into another function would break them with no behaviour change. Full entry: `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md`. Since commit 0470d34 the lifecycle goroutine tests live in each module's `leak_test.go`.
 - **Evidence:** `TestLifecycle_Goroutines/one_route,_Start_and_never_Shutdown` reports `github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serve.func1`.
 - **Suggested action:** add a small slice: give the serve goroutine a named unexported method (for example `(*Lifecycle[C]).serveOn`) and match that name in the leak rows of every engine. Internal only: no public API or behaviour change.
 
 ### Carried over from goroutine-leak-checks: the every-package guard accepts a TestMain behind a build tag
-- **Status:** open
+- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.2)
 - **Target:** triage-debug-buffer (owner decision, 2026-11-18)
 - **Context:** the guard `TestEveryTestPackageChecksLeaks` (`checkLeakCheck`, now in `internal/paritytest/leak_test.go` since commit 0470d34) parses every `_test.go` file regardless of build constraints, so a package whose only goleak `TestMain` sits behind `//go:build integration` is accepted although a plain `go test` runs without the leak check. No package does this today. Full entry: `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md`.
 - **Evidence:** a temporary test, `TestGuardRejectsTestMainBehindBuildTag`, failed with "checkLeakCheck accepted a package whose only TestMain is behind //go:build integration" (not kept).
 - **Suggested action:** add a small slice: evaluate each file's `//go:build` line with `go/build/constraint` against the default build context and ignore excluded files when looking for `TestMain`; restore the reproducing test as the RED step. Test-only change.
 
 ### Summary attributes belong in triage-error-records
-- **Status:** open
+- **Status:** closed: kept in this change's capability (consolidation 2026-11-18). `triage-error-records` is a main spec now, but its requirements describe the error of an `http.request.failed` record; the `srvr.debug_buffer.*` keys describe the buffer, exist only when buffering is enabled, and also appear on an `http.request.completed` record for a directly written `5xx`. A MODIFIED delta would restate a requirement none of whose rows changes.
 - **Target:** triage-debug-buffer
 - **Context:** srvr.debug_buffer.* and srvr.buffered were ADDED in this change's own capability because triage-error-records was not archived at planning time.
 - **Evidence:** unverified: planning-time inconsistency found when the five changes were drafted in parallel
@@ -39,7 +46,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none beyond the applied fixes; keep the probes' cases as RED tests in tasks 2.3, 5.1 and 3.1.
 
 ### Correlation keys may nest under WithGroup in core-server
-- **Status:** adopted by core-server (D1; proven by probe xgroup)
+- **Status:** closed: verified in consolidation 2026-11-18 - `engine.logHandler.target` (`engine/log.go`) adds `trace_id`/`span_id` with `WithAttrs` on the base handler before replaying the recorded steps; main spec structured-logging "Correlation keys stay top-level under groups" pins it
 - **Target:** core-server
 - **Context:** core-server D7 adds `trace_id`/`span_id` in the correlation handler. If that is done with `Record.AddAttrs` inside `Handle`, a `WithGroup("db")` logger renders `db.trace_id` (same mechanism as probe P1), breaking structured-logging "every record carries `trace_id`" and this change's Derived loggers rows.
 - **Evidence:** unverified: core-server code is not written yet; mechanism proven by probe P1 above.
