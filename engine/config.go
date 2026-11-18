@@ -19,27 +19,45 @@ import (
 // negative value disables the limit. Consumers use it as srvr.Config and
 // pass it with srvr.WithConfig.
 type Config struct {
-	// Addr is the TCP address to listen on. Default ":8080".
+	// Addr is the TCP address to listen on. Default ":8080", the common
+	// container port, on every interface so the pod or host can route to
+	// it.
 	Addr string `json:"addr" yaml:"addr" env:"ADDR"`
-	// ReadHeaderTimeout bounds reading the request headers. Default 10s.
+	// ReadHeaderTimeout bounds reading the request headers. Default 10s:
+	// long enough for slow clients, short enough that a slowloris client
+	// cannot hold connections open.
 	ReadHeaderTimeout time.Duration `json:"read_header_timeout" yaml:"read_header_timeout" env:"READ_HEADER_TIMEOUT"`
-	// ReadTimeout bounds reading the whole request. Default 60s.
+	// ReadTimeout bounds reading the whole request. Default 60s, enough to
+	// upload the default 4 MiB body over a slow link while bounding stalled
+	// uploads.
 	ReadTimeout time.Duration `json:"read_timeout" yaml:"read_timeout" env:"READ_TIMEOUT"`
-	// WriteTimeout bounds writing the response. Default 60s.
+	// WriteTimeout bounds writing the response. Default 60s, so a client
+	// that stops reading cannot hold a handler forever, while ordinary
+	// responses and modest downloads finish.
 	WriteTimeout time.Duration `json:"write_timeout" yaml:"write_timeout" env:"WRITE_TIMEOUT"`
 	// IdleTimeout bounds how long a keep-alive connection waits for the next
-	// request. Default 120s.
+	// request. Default 120s, above the 60s idle timeout of common load
+	// balancers, so they close idle connections first and never send a
+	// request on one the server is closing.
 	IdleTimeout time.Duration `json:"idle_timeout" yaml:"idle_timeout" env:"IDLE_TIMEOUT"`
-	// MaxHeaderBytes limits the size of the request headers. Default 1 MiB.
-	// It cannot be disabled.
+	// MaxHeaderBytes limits the size of the request headers. Default 1 MiB,
+	// net/http's own default, which fits large cookies and tokens. It cannot
+	// be disabled: unbounded headers would let one request exhaust memory.
 	MaxHeaderBytes int `json:"max_header_bytes" yaml:"max_header_bytes" env:"MAX_HEADER_BYTES"`
-	// MaxRequestBodyBytes limits the size of request bodies. Default 4 MiB.
+	// MaxRequestBodyBytes limits the size of request bodies. Default 4 MiB:
+	// ample for JSON APIs, small enough that a flood of large bodies cannot
+	// exhaust memory. Raise it for uploads; negative disables it, which
+	// loosens a safety default.
 	MaxRequestBodyBytes int64 `json:"max_request_body_bytes" yaml:"max_request_body_bytes" env:"MAX_REQUEST_BODY_BYTES"`
 	// ShutdownTimeout bounds draining in-flight requests when Start's
-	// context ends. Default 15s. It cannot be disabled.
+	// context ends. Default 15s, inside Kubernetes' 30s termination grace
+	// period with room for the shutdown hooks. It cannot be disabled, so a
+	// stuck request never blocks a stop forever.
 	ShutdownTimeout time.Duration `json:"shutdown_timeout" yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT"`
-	// ShutdownHookTimeout bounds the AfterDrain shutdown hooks. Default 5s;
-	// negative leaves them unbounded.
+	// ShutdownHookTimeout bounds the AfterDrain shutdown hooks. Default 5s,
+	// enough to flush telemetry or close a pool, and with ShutdownTimeout
+	// still inside a 30s grace period; negative leaves them unbounded, which
+	// loosens a safety default.
 	ShutdownHookTimeout time.Duration `json:"shutdown_hook_timeout" yaml:"shutdown_hook_timeout" env:"SHUTDOWN_HOOK_TIMEOUT"`
 }
 
@@ -51,22 +69,35 @@ type Config struct {
 type Settings struct {
 	Config
 
+	// Listener is the consumer's listener (WithListener), used instead of
+	// binding Addr.
 	Listener net.Listener
-	Hooks    []Hook
-	Trace    TraceConfig
-	Log      LogSettings
-	Access   AccessLogConfig
-	Service  ServiceConfig
+	// Hooks are the shutdown hooks in registration order.
+	Hooks []Hook
+	// Trace is the trace context configuration.
+	Trace TraceConfig
+	// Log is the logging configuration.
+	Log LogSettings
+	// Access is the access log configuration; SkipPaths is the server's
+	// own copy.
+	Access AccessLogConfig
+	// Service names the service in lifecycle and failed records.
+	Service ServiceConfig
 	// Redactor is applied to error text; RedactSecrets unless an option
 	// set another.
 	Redactor func(string) string
 	// ReadBuild reads the binary's build information: debug.ReadBuildInfo,
 	// replaced in tests.
-	ReadBuild      func() (*debug.BuildInfo, bool)
+	ReadBuild func() (*debug.BuildInfo, bool)
+	// ProblemOptions are the consumer's prblm options, applied to every
+	// engine's problem renderer before srvr's own.
 	ProblemOptions []prblm.Option
-	ErrorHook      ErrorHook
-	RouteChecks    []RouteCheck
-	Observers      []Observer
+	// ErrorHook is the consumer's hook for answered errors (WithErrorHook).
+	ErrorHook ErrorHook
+	// RouteChecks run in order after the configure phase.
+	RouteChecks []RouteCheck
+	// Observers are the request observers in registration order.
+	Observers []Observer
 	// Errs collects mistakes options detect while they are applied.
 	Errs []error
 
@@ -240,7 +271,8 @@ func validateObservers(s *Settings) error {
 	return errors.Join(errs...)
 }
 
-// Defaults, each a deliberate choice; see Config for the reasons.
+// Defaults, each a deliberate choice; the godoc of the matching Config
+// field states the full reason.
 const (
 	// defaultAddr is the conventional container port.
 	defaultAddr = ":8080"

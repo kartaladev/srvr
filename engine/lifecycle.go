@@ -739,8 +739,10 @@ const defaultShutdownHookTimeout = 5 * time.Second
 // Hook is a registered shutdown hook: srvr.WithShutdownHook appends one
 // to [Settings].
 type Hook struct {
+	// Phase is when the hook runs: before or after the drain.
 	Phase ShutdownPhase
-	Fn    func(context.Context) error
+	// Fn is the consumer's hook.
+	Fn func(context.Context) error
 }
 
 // runHooks runs the hooks of phase in order, each within ctx, and returns

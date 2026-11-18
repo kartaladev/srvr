@@ -82,3 +82,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** found by the slice 5 /simplify altitude review. (1) `LogConfig.Level` and `Format` are validated in `newLogHandler`, after `newSettings` has already returned the other fields' errors, so `LogConfig{Level: "loud"}` with `WithMaxHeaderBytes(-1)` reports only `MaxHeaderBytes`; moving both checks into `Settings.validate` would name every invalid field in one joined error. (2) `otelsrvr` and `otelsetup` return `fmt.Errorf("%w: ...", ErrConfig)` with their own sentinels, not a `*ConfigError`-like type, so `errors.As` cannot read their field. (3) `Core.MaxHeaderBytesSet` reads like a bool; design D5 chose the name.
 - **Evidence:** unverified: code reading (`engine/log.go` `newLogHandler`, `engine/config.go` `newSettings`); no spec row covers a log field together with another invalid field.
 - **Suggested action:** a later change decides whether to validate log fields in `Settings.validate` and whether the otel modules get a typed error.
+
+### RELEASING.md gates name per-module commands until slice 7
+- **Status:** open
+- **Target:** skills-compliance (tasks 7.3 and 7.4)
+- **Context:** slice 6's `RELEASING.md` lists the per-module `GOWORK=off` commands as the release gate, because the root Makefile targets (`tidy-check`, `vulncheck`) and the CI `release` job do not exist yet. Found by the slice 6 /simplify review.
+- **Evidence:** unverified: documentation state.
+- **Suggested action:** when 7.3 and 7.4 land, change the gate to `make vet lint test tidy-check vulncheck` from the root and describe the CI `release` job's `replace` check.

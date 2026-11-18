@@ -104,12 +104,12 @@
 
 ## 6. Slice: documentation
 
-- [ ] 6.1 Godoc reasons for every default (AGENTS.md rule 7): `Config` fields, `LogConfig.Level` and `MaxAttrBytes`, the matching options and `WithShutdownHookTimeout`; per-name docs for the sentinels, `ProtocolHTTPProtobuf`/`ProtocolGRPC`, `Route`, `AccessInfo`, `Settings`, `LogSettings` and `Hook` fields; rewrite `GuardChain`'s doc around its purpose; fix the "see Config for the reasons" constant comment; verify `go doc -all` on each package shows a reason next to every stated default
-- [ ] 6.2 `LICENSE` (MIT, copyright the kartaladev authors) in the root, `ginsrvr`, `fibersrvr`, `otelsrvr` and `otelsetup`; verify each released module directory has the file and `go list -m -json` builds
-- [ ] 6.3 Root `README.md` (install, minimal example, engine matrix, module list, links to `LOGGING.md`, `CHANGELOG.md`, `RELEASING.md`) and a short `README.md` for `ginsrvr`, `fibersrvr` and `otelsrvr`; verify every code block in them compiles by mirroring it in an `Example` test
-- [ ] 6.4 `RELEASING.md`: tag order (core first, then require its version and drop each module's `replace`), the release guard, and the govulncheck gate; `CHANGELOG.md` in Keep a Changelog format with an "Unreleased" section; verify both files exist and `CHANGELOG.md` lists every entry of slices 2-5
-- [ ] 6.5 `LOGGING.md`: the user agent is logged by default and why, and the recommendation to set `IgnoreIncoming` on internet-facing servers; Examples handle errors instead of discarding them (`otelsrvr`, `otelsetup` examples); verify `go test -run Example` passes in `otelsrvr` and `otelsetup`
-- [ ] 6.6 Verify the slice, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run /simplify on the slice and commit `docs: give every default its reason and add README, LICENSE, CHANGELOG and RELEASING`
+- [x] 6.1 Godoc reasons for every default (AGENTS.md rule 7): `Config` fields, `LogConfig.Level` and `MaxAttrBytes`, the matching options and `WithShutdownHookTimeout`; per-name docs for the sentinels, `ProtocolHTTPProtobuf`/`ProtocolGRPC`, `Route`, `AccessInfo`, `Settings`, `LogSettings` and `Hook` fields; rewrite `GuardChain`'s doc around its purpose; fix the "see Config for the reasons" constant comment; verify `go doc -all` on each package shows a reason next to every stated default
+- [x] 6.2 `LICENSE` (MIT, copyright the kartaladev authors) in the root, `ginsrvr`, `fibersrvr`, `otelsrvr` and `otelsetup`; verify each released module directory has the file and `go list -m -json` builds
+- [x] 6.3 Root `README.md` (install, minimal example, engine matrix, module list, links to `LOGGING.md`, `CHANGELOG.md`, `RELEASING.md`) and a short `README.md` for `ginsrvr`, `fibersrvr` and `otelsrvr`; verify every code block in them compiles by mirroring it in an `Example` test
+- [x] 6.4 `RELEASING.md`: tag order (core first, then require its version and drop each module's `replace`), the release guard, and the govulncheck gate; `CHANGELOG.md` in Keep a Changelog format with an "Unreleased" section; verify both files exist and `CHANGELOG.md` lists every entry of slices 2-5
+- [x] 6.5 `LOGGING.md`: the user agent is logged by default and why, and the recommendation to set `IgnoreIncoming` on internet-facing servers; Examples handle errors instead of discarding them (`otelsrvr`, `otelsetup` examples); verify `go test -run Example` passes in `otelsrvr` and `otelsetup`
+- [x] 6.6 Verify the slice, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run /simplify on the slice and commit `docs: give every default its reason and add README, LICENSE, CHANGELOG and RELEASING`
 
 ## 7. Slice: tooling and CI
 

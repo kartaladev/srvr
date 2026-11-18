@@ -25,7 +25,7 @@ func WithAddr(addr string) Option {
 }
 
 // WithMaxHeaderBytes limits the size of the request headers (default
-// 1 MiB). n must be positive: unlike a zero Config field, an explicit zero
+// 1 MiB; see [Config] for the reason). n must be positive: unlike a zero Config field, an explicit zero
 // is a mistake.
 func WithMaxHeaderBytes(n int) Option {
 	return func(s *engine.Settings) {
@@ -95,39 +95,45 @@ func WithRouteCheck(check RouteCheck) Option {
 	}
 }
 
-// WithReadHeaderTimeout bounds reading request headers (default 10s); a
-// negative d disables it.
+// WithReadHeaderTimeout bounds reading request headers (default 10s; see
+// [Config] for the reason); a negative d disables it, which loosens a
+// safety default.
 func WithReadHeaderTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.ReadHeaderTimeout = d }
 }
 
-// WithReadTimeout bounds reading a whole request (default 60s); a negative
-// d disables it, for example for streaming uploads.
+// WithReadTimeout bounds reading a whole request (default 60s; see [Config]
+// for the reason); a negative d disables it, for example for streaming
+// uploads, which loosens a safety default.
 func WithReadTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.ReadTimeout = d }
 }
 
-// WithWriteTimeout bounds writing a response (default 60s); a negative d
-// disables it, for example for streaming responses.
+// WithWriteTimeout bounds writing a response (default 60s; see [Config] for
+// the reason); a negative d disables it, for example for streaming
+// responses, which loosens a safety default.
 func WithWriteTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.WriteTimeout = d }
 }
 
 // WithIdleTimeout bounds how long a keep-alive connection waits for its
-// next request (default 120s); a negative d disables it.
+// next request (default 120s; see [Config] for the reason); a negative d
+// disables it, which loosens a safety default.
 func WithIdleTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.IdleTimeout = d }
 }
 
-// WithMaxRequestBodyBytes limits request bodies (default 4 MiB); a handler
-// reading past it gets an error rendered as a 413 problem. A negative n
-// disables the limit, which loosens a safety default.
+// WithMaxRequestBodyBytes limits request bodies (default 4 MiB; see
+// [Config] for the reason); a handler reading past it gets an error
+// rendered as a 413 problem. A negative n disables the limit, which
+// loosens a safety default.
 func WithMaxRequestBodyBytes(n int64) Option {
 	return func(s *engine.Settings) { s.MaxRequestBodyBytes = n }
 }
 
 // WithShutdownTimeout bounds draining in-flight requests when Start's
-// context ends (default 15s). It must not be negative.
+// context ends (default 15s; see [Config] for the reason). It must not be
+// negative.
 func WithShutdownTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.ShutdownTimeout = d }
 }
@@ -177,7 +183,8 @@ func WithShutdownHook(phase ShutdownPhase, fn func(ctx context.Context) error) O
 }
 
 // WithShutdownHookTimeout sets the budget of the AfterDrain hooks (default
-// 5s); a negative d leaves them unbounded.
+// 5s; see [Config] for the reason); a negative d leaves them unbounded,
+// which loosens a safety default.
 func WithShutdownHookTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.ShutdownHookTimeout = d }
 }
@@ -240,7 +247,8 @@ func WithLogConfig(c LogConfig) Option {
 	}
 }
 
-// WithLogLevel sets the minimum log level (default INFO).
+// WithLogLevel sets the minimum log level (default INFO; see
+// [LogConfig] for the reason).
 func WithLogLevel(l slog.Level) Option {
 	return func(s *engine.Settings) {
 		s.Log.Level = l.String()
@@ -273,9 +281,10 @@ func WithLogAddSource() Option {
 	return func(s *engine.Settings) { s.Log.AddSource = true }
 }
 
-// WithLogMaxAttrBytes caps string attributes at n bytes (default 1024); a
-// negative n disables the cap, which loosens a safety default. Error values
-// still reach the handler as their guarded text, a plain string.
+// WithLogMaxAttrBytes caps string attributes and other slog.Any values at
+// n bytes (default 1024; see [LogConfig] for the reason); a negative n
+// disables the cap, which loosens a safety default. Error values still
+// reach the handler as their guarded text, a plain string.
 func WithLogMaxAttrBytes(n int) Option {
 	return func(s *engine.Settings) { s.Log.MaxAttrBytes = n }
 }
