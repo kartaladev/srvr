@@ -10,7 +10,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### srvr's serve goroutine is an anonymous closure
-- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.1)
+- **Status:** closed: fixed by skills-compliance (task 3.4, `(*Lifecycle[C]).serveOn`)
 - **Target:** triage-debug-buffer
 - **Context:** the "never `Shutdown`" lifecycle rows identify srvr's serve goroutine by its frame `engine.(*Lifecycle[...]).serve.func1` (`engine/lifecycle.go:312`, `go func() { r.served <- runner.Serve(ln) }()`). The tests match the stable prefix `engine.(*Lifecycle[...]).serve`, but a refactor that moves the goroutine into another function would still break them without any behaviour change. Raised by the /simplify altitude review of group 2; a production change is out of scope for this test-only change.
 - **Evidence:** `TestLifecycle_Goroutines/one_route,_Start_and_never_Shutdown` (`lifecycle_goroutines_test.go`) reports `github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serve.func1`.

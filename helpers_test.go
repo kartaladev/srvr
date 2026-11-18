@@ -271,11 +271,18 @@ const waitLimit = 10 * time.Second
 func receive[T any](t *testing.T, ch <-chan T, msg string) T {
 	t.Helper()
 
+	return receiveWithin(t, ch, waitLimit, msg)
+}
+
+// receiveWithin returns the next value from ch, failing with msg after d.
+func receiveWithin[T any](t *testing.T, ch <-chan T, d time.Duration, msg string) T {
+	t.Helper()
+
 	select {
 	case v := <-ch:
 		return v
-	case <-time.After(waitLimit):
-		t.Fatalf("after %s: %s", waitLimit, msg)
+	case <-time.After(d):
+		t.Fatalf("after %s: %s", d, msg)
 
 		var zero T
 

@@ -76,6 +76,9 @@ type Lifecycle[C any] struct {
 	mu   sync.Mutex
 	st   state
 	addr string
+	// interrupt cancels, with cause ErrServerClosed, the context the
+	// starting steps (route checks, binding) receive; set while starting.
+	interrupt context.CancelCauseFunc
 	// run is the serving part of a running server, nil before.
 	run *run
 	// stopped is closed when the server reaches stateClosed. hookErr and
@@ -135,7 +138,12 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 		return ConfigError("Start context", "<nil>", "is nil")
 	}
 
-	if err := l.begin(); err != nil {
+	// stepCtx is what the starting steps receive: Shutdown cancels it.
+	// Waiting on a step that ignores it still ends only with ctx.
+	stepCtx, interrupt := context.WithCancelCause(ctx)
+	defer interrupt(nil)
+
+	if err := l.begin(interrupt); err != nil {
 		return err
 	}
 
@@ -144,16 +152,19 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 	}
 
 	runner, routes, err := prepare(l.configurers)
-	if err != nil {
-		return l.fail(ctx, err)
+	if err == nil {
+		err = l.core.checkRoutes(ctx, stepCtx, routes) // runs no check once interrupted
 	}
 
-	if err := l.core.CheckRoutes(ctx, routes); err != nil {
-		return l.fail(ctx, err)
+	var ln net.Listener
+	if err == nil && !interrupted(stepCtx) { // nothing is bound once interrupted
+		ln, err = l.listen(stepCtx)
 	}
 
-	ln, err := l.listen(ctx)
-	if err != nil {
+	switch {
+	case interrupted(stepCtx):
+		return l.closeInterrupted(ctx, ln)
+	case err != nil:
 		return l.fail(ctx, err)
 	}
 
@@ -164,8 +175,8 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 
 	r := l.serve(ctx, ln, addr, runner)
 	if r == nil {
-		// Shutdown was called while the server was starting.
-		return l.hookErr
+		// Shutdown was called after the last interruption check.
+		return l.closeInterrupted(ctx, ln)
 	}
 
 	var served error
@@ -173,8 +184,8 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 	select {
 	case <-ctx.Done():
 	case <-r.stopping:
-	case served = <-r.served:
-		if served = r.servedErr(served); served != nil {
+	case <-r.done:
+		if served = r.servedErr(r.err); served != nil {
 			// Serving failed on its own; the server still stops in order.
 			l.logFailed(ctx, served)
 		}
@@ -189,8 +200,8 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 	return errors.Join(served, l.hookErr)
 }
 
-// begin moves a new server to starting.
-func (l *Lifecycle[C]) begin() error {
+// begin moves a new server to starting, keeping interrupt for Shutdown.
+func (l *Lifecycle[C]) begin(interrupt context.CancelCauseFunc) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -199,8 +210,30 @@ func (l *Lifecycle[C]) begin() error {
 	}
 
 	l.st = stateStarting
+	l.interrupt = interrupt
 
 	return nil
+}
+
+// interrupted reports whether Shutdown interrupted the starting steps that
+// receive stepCtx.
+func interrupted(stepCtx context.Context) bool {
+	return errors.Is(context.Cause(stepCtx), ErrServerClosed)
+}
+
+// closeInterrupted closes a server whose start Shutdown interrupted:
+// nothing was served, so only the AfterDrain hooks run, and Start returns
+// ErrServerClosed with their failures. A listener Start already bound (ln;
+// nil when none) is closed; a WithListener listener is closed either way.
+// It is not a failure, so no server.failed record is written.
+func (l *Lifecycle[C]) closeInterrupted(ctx context.Context, ln net.Listener) error {
+	if ln == nil {
+		ln = l.core.settings.Listener
+	}
+
+	l.closeUnserved(ctx, ln)
+
+	return errors.Join(ErrServerClosed, l.hookErr)
 }
 
 // fail ends a Start that failed before serving: nothing was served, so
@@ -271,8 +304,10 @@ func listenerAddr(ln net.Listener) (addr string, err error) {
 type run struct {
 	runner Runner
 	ln     net.Listener
-	// served receives the result of Runner.Serve.
-	served chan error
+	// err is the result of Runner.Serve; read it only after done closed.
+	err error
+	// done is closed when serveOn has returned.
+	done chan struct{}
 	// stopping is closed when the stop sequence begins.
 	stopping chan struct{}
 }
@@ -289,25 +324,21 @@ func (r *run) servedErr(err error) error {
 }
 
 // serve moves the server to running and serves on ln, whose address is
-// addr. It returns nil, after closing ln and the server, when Shutdown was
-// called while starting. It calls no consumer code under l.mu.
+// addr. It returns nil, leaving ln and the server to Start, when Shutdown
+// was called while starting. It calls no consumer code under l.mu.
 func (l *Lifecycle[C]) serve(ctx context.Context, ln net.Listener, addr string, runner Runner) *run {
-	ln = &guardedListener{Listener: ln}
-
 	l.mu.Lock()
 
 	if l.st == stateStopping {
-		// Shutdown was called while the server was starting.
 		l.mu.Unlock()
-		l.closeUnserved(ctx, ln)
 
 		return nil
 	}
 
 	r := &run{
 		runner:   runner,
-		ln:       ln,
-		served:   make(chan error, 1),
+		ln:       &guardedListener{Listener: ln},
+		done:     make(chan struct{}),
 		stopping: make(chan struct{}),
 	}
 	l.run = r
@@ -315,12 +346,38 @@ func (l *Lifecycle[C]) serve(ctx context.Context, ln net.Listener, addr string, 
 	l.addr = addr
 	l.mu.Unlock()
 
+	go l.serveOn(r)
+
 	l.core.logEvent(ctx, slog.LevelInfo, eventStarted, slog.String(keyServerAddress, addr))
 	close(l.ready)
 
-	go func() { r.served <- runner.Serve(ln) }()
-
 	return r
+}
+
+// serveOn serves r on its listener until the runner's Serve returns,
+// keeping its result in r.err and then closing r.done. It is a named
+// method so a goroutine leak report names it.
+func (l *Lifecycle[C]) serveOn(r *run) {
+	defer close(r.done)
+
+	r.err = r.runner.Serve(r.ln)
+}
+
+// serveWait bounds how long the stop sequence waits for serveOn to return
+// after the listener was closed: a consumer listener whose Close does not
+// unblock Accept would otherwise hang the stop.
+const serveWait = time.Second
+
+// joinServe waits until r's serveOn returned, for at most serveWait, after
+// which it is abandoned.
+func joinServe(r *run) {
+	t := time.NewTimer(serveWait)
+	defer t.Stop()
+
+	select {
+	case <-r.done:
+	case <-t.C:
+	}
 }
 
 // stop runs the stop sequence of a running server, unless it has already
@@ -352,6 +409,7 @@ func (l *Lifecycle[C]) stopRun(drainCtx context.Context, r *run) {
 	drainErr := r.runner.Drain(drainCtx)
 	l.core.logStopped(drainCtx, time.Since(begin), drainErr)
 	afterErr := l.core.runAfterDrain(drainCtx)
+	joinServe(r)
 
 	l.finish(errors.Join(beforeErr, afterErr), drainErr)
 }
@@ -376,10 +434,13 @@ func (l *Lifecycle[C]) Shutdown(ctx context.Context) error {
 
 		return l.hookErr
 	case stateStarting:
-		// Start sees the stopping state before it serves and closes the
-		// server; this call reports the result.
+		// Start's starting steps are interrupted, or Start sees the stopping
+		// state before it serves; either way Start closes the server, and
+		// this call reports the result.
 		l.st = stateStopping
+		interrupt := l.interrupt
 		l.mu.Unlock()
+		interrupt(ErrServerClosed)
 
 		return l.wait(ctx, true)
 	case stateRunning:
@@ -490,18 +551,54 @@ func (c *Core) runAfterDrain(parent context.Context) error {
 // HTTPRunner returns the Runner of an engine served by net/http: an
 // http.Server for h with the limits of c, which [Core.Config] has
 // completed.
-func HTTPRunner(c Config, h http.Handler) Runner { return &httpRunner{hs: c.httpServer(h)} }
+func HTTPRunner(c Config, h http.Handler) Runner {
+	return &httpRunner{hs: c.httpServer(h), served: make(chan struct{})}
+}
 
-type httpRunner struct{ hs *http.Server }
+type httpRunner struct {
+	hs *http.Server
+	// served is closed when Serve has returned.
+	served chan struct{}
+}
 
-func (r *httpRunner) Serve(ln net.Listener) error { return r.hs.Serve(ln) }
+func (r *httpRunner) Serve(ln net.Listener) error {
+	defer close(r.served)
+
+	return r.hs.Serve(ln)
+}
 
 // Drain stops accepting connections and waits for in-flight requests until
 // ctx is done, then closes the remaining connections. Any Shutdown error
 // counts as a forced drain: the listener's Close never returns one
 // (guardedListener), so only ctx's error is left.
+//
+// http.Server.Shutdown and Close first wait, without regard to ctx, for
+// Serve to return; a consumer listener whose Close does not unblock Accept
+// would hold them forever. So when ctx ends while Serve is still running,
+// Drain returns at once and the close finishes in the background once
+// Accept returns.
 func (r *httpRunner) Drain(ctx context.Context) error {
-	err := r.hs.Shutdown(ctx)
+	shut := make(chan error, 1)
+	go func() { shut <- r.hs.Shutdown(ctx) }()
+
+	var err error
+	select {
+	case err = <-shut:
+	case <-ctx.Done():
+		select {
+		case <-r.served:
+			// Shutdown no longer waits for Serve: it sees ctx at once.
+			err = <-shut
+		default:
+			go func() {
+				<-shut //nolint:errcheck // ctx's error, already returned below
+				_ = r.hs.Close()
+			}()
+
+			return ctx.Err()
+		}
+	}
+
 	if err != nil {
 		_ = r.hs.Close()
 	}
@@ -663,7 +760,7 @@ func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 				slog.String(keyFunction, FuncLocation(h.Fn).Function()),
 				c.exceptionMessage(errorText(err)),
 			)
-			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, &guardedError{err}))
+			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, guard(err)))
 		}
 	}
 
@@ -677,7 +774,7 @@ func runHook(ctx context.Context, fn func(context.Context) error) error {
 	if abandoned {
 		// For BeforeDrain hooks ctx.Err() comes from the consumer's Shutdown
 		// context.
-		return fmt.Errorf("abandoned: %w", &guardedError{ctx.Err()})
+		return fmt.Errorf("abandoned: %w", guard(ctx.Err()))
 	}
 
 	return err
@@ -688,20 +785,30 @@ type panicError struct{ value string }
 
 func (e *panicError) Error() string { return "panic: " + e.value }
 
+// goexitValue is the panic value reported for consumer code that ended its
+// goroutine with runtime.Goexit (t.FailNow in a test, for example).
+const goexitValue = "runtime.Goexit"
+
 // runGuarded runs consumer code fn in its own goroutine, turning a panic
 // into a *panicError, and stops waiting when ctx is done: abandoned is
-// true then, unless fn finished as ctx ended, which still counts.
+// true then, unless fn finished as ctx ended, which still counts. fn
+// ending its goroutine with runtime.Goexit is reported like a panic, so
+// no caller waits for a result that would never come.
 func runGuarded(ctx context.Context, fn func(context.Context) error) (err error, abandoned bool) { //nolint:revive // the error is fn's result, not a failure of runGuarded.
 	result := make(chan error, 1)
 
 	go func() {
+		// Left as is only when fn ends the goroutine with runtime.Goexit.
+		var err error = &panicError{value: goexitValue}
+
 		defer func() {
 			if v := recover(); v != nil {
-				result <- &panicError{value: ValueText(v)}
+				err = &panicError{value: ValueText(v)}
 			}
+			result <- err
 		}()
 
-		result <- fn(ctx)
+		err = fn(ctx)
 	}()
 
 	select {

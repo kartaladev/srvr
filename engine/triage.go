@@ -130,12 +130,27 @@ func errorText(e error) (text string) {
 
 // guardedError wraps a consumer error so that fmt, which guards a
 // panicking Error method only one level deep, reads its text through
-// errorText; Unwrap keeps errors.Is and errors.As working.
-type guardedError struct{ err error }
+// errorText. Unwrap keeps errors.Is and errors.As working on a chain that
+// can be walked, and hides one that cycles or whose Unwrap panics, on
+// which they would loop forever or crash in the caller of Start or
+// Shutdown.
+type guardedError struct {
+	err      error
+	walkable bool
+}
+
+// guard returns err wrapped in a guardedError, its chain checked once.
+func guard(err error) *guardedError { return &guardedError{err: err, walkable: !hasCycle(err)} }
 
 func (e *guardedError) Error() string { return errorText(e.err) }
 
-func (e *guardedError) Unwrap() error { return e.err }
+func (e *guardedError) Unwrap() error {
+	if !e.walkable {
+		return nil
+	}
+
+	return e.err
+}
 
 // ValueText formats a panic value, guarded against a panicking String or
 // Error method (fmt would print its own %!v(PANIC=...) text instead).

@@ -1,10 +1,14 @@
 package srvr_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -22,6 +26,9 @@ var leakOptions []goleak.Option
 // TestMain fails the test binary when a goroutine is still running after
 // its tests passed.
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m, leakOptions...) }
+
+// serveGoroutine is the function of srvr's goroutine serving a listener.
+const serveGoroutine = "github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serveOn"
 
 // findLeaks runs goleak.Find with leakOptions plus extra, without
 // appending to the shared leakOptions slice.
@@ -276,7 +283,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 				mustNil(t, shutdownBounded(t, srv))
 				mustNil(t, receive(t, done, "Start did not return"))
 			})
-		}, "engine.(*Lifecycle[...]).serve"},
+		}, serveGoroutine},
 	}
 
 	for _, tt := range tests {
@@ -316,4 +323,104 @@ func startGetShutdown(t *testing.T, srv *srvr.Server, want int) {
 
 	mustNil(t, shutdownBounded(t, srv))
 	mustNil(t, receive(t, done, "Start did not return"))
+}
+
+// stackBuf holds every goroutine's stack for serveOnRunning; only the
+// non-parallel TestServeGoroutine uses it.
+var stackBuf = make([]byte, 1<<20)
+
+// serveOnRunning reports whether a goroutine is running srvr's serveOn now,
+// read once from the stacks of every goroutine.
+func serveOnRunning() bool {
+	return bytes.Contains(stackBuf[:runtime.Stack(stackBuf, true)], []byte(serveGoroutine))
+}
+
+// stuckListener is a listener whose Close does not unblock Accept: Accept
+// signals accepting once, then blocks until release is closed.
+type stuckListener struct {
+	net.Listener
+	once      sync.Once
+	accepting chan struct{}
+	release   chan struct{}
+}
+
+func (l *stuckListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.accepting) })
+	<-l.release
+
+	return nil, net.ErrClosed
+}
+
+func (l *stuckListener) Close() error { return nil }
+
+// TestServeGoroutine covers server-lifecycle / Scenario: Serve goroutine
+// after stop. Not parallel: it reads every goroutine's stack.
+func TestServeGoroutine(t *testing.T) {
+	tests := []struct {
+		name     string
+		listener func(t *testing.T) (net.Listener, func())
+		returned bool // the serve goroutine has returned when Shutdown returns
+		// drain is the ShutdownTimeout; a stuck listener makes the drain
+		// run to it and Shutdown report the forced drain.
+		drain time.Duration
+	}{
+		{"its own :0 listener", func(*testing.T) (net.Listener, func()) { return nil, func() {} }, true, 0},
+		{"a WithListener listener", func(t *testing.T) (net.Listener, func()) {
+			t.Helper()
+			return listen(t), func() {}
+		}, true, 0},
+		{"a WithListener listener whose Close does not unblock Accept", func(t *testing.T) (net.Listener, func()) {
+			t.Helper()
+			stuck := &stuckListener{Listener: listen(t), accepting: make(chan struct{}), release: make(chan struct{})}
+
+			return stuck, func() { close(stuck.release) }
+		}, false, 200 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checkGoroutines(t)
+
+			ln, release := tt.listener(t)
+			srv := newServer(t)
+			if ln != nil {
+				var err error
+				opts := []srvr.Option{srvr.WithListener(ln), srvr.WithLogOutput(io.Discard)}
+				if tt.drain > 0 {
+					opts = append(opts, srvr.WithShutdownTimeout(tt.drain))
+				}
+				srv, err = srvr.New(opts...)
+				mustNil(t, err)
+			}
+			mustNil(t, srv.Register(okRoute("/ok")))
+			done := startWith(context.Background(), t, srv)
+
+			if !serveOnRunning() {
+				t.Fatal("no serveOn goroutine while serving")
+			}
+			if stuck, ok := ln.(*stuckListener); ok {
+				receive(t, stuck.accepting, "Serve never called Accept")
+			}
+
+			begin := time.Now()
+			if err := srv.Shutdown(context.Background()); (tt.drain == 0 && err != nil) || (tt.drain > 0 && !errors.Is(err, context.DeadlineExceeded)) {
+				t.Fatalf("Shutdown = %v", err)
+			}
+			if d, limit := time.Since(begin), time.Second+tt.drain+300*time.Millisecond; d > limit {
+				t.Fatalf("Shutdown took %s, want at most %s (1s plus the drain)", d, limit)
+			}
+			// serveOn closes its done channel just before it returns, so its
+			// frame may show for an instant after Shutdown: allow 50ms.
+			running := true
+			for deadline := time.Now().Add(50 * time.Millisecond); running && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+				running = serveOnRunning()
+			}
+			release()
+
+			mustNil(t, receive(t, done, "Start did not return"))
+			if running == tt.returned {
+				t.Fatalf("serveOn running after Shutdown = %v, want %v", running, !tt.returned)
+			}
+		})
+	}
 }

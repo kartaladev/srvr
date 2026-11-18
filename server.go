@@ -83,7 +83,11 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // returns [ErrServerStarted], or [ErrServerClosed] once the server stopped,
 // without affecting it. When serving fails on its own, for example because
 // a [WithListener] listener's Accept fails, Start stops the server in order
-// and returns that error.
+// and returns that error. When [Server.Shutdown] is called while Start is
+// still starting (configuring routes, running route checks or binding), the
+// context route checks receive is cancelled and Start returns an error
+// wrapping [ErrServerClosed] without binding; a check that ignores its
+// context keeps Start waiting until it returns or ctx is done.
 func (s *Server) Start(ctx context.Context) error {
 	return s.lc.Start(ctx, func(configurers []RouteConfigurer[*Group]) (engine.Runner, engine.Routes, error) {
 		mux, routes, err := s.router(configurers)
@@ -100,7 +104,9 @@ func (s *Server) Start(ctx context.Context) error {
 // connections and returns the context error.
 //
 // Shutdown is idempotent: on a server that was never started it closes the
-// server, so a later Start returns [ErrServerClosed]; while another call is
+// server, so a later Start returns [ErrServerClosed]; on a server still
+// starting it interrupts Start (see [Server.Start]) and waits for it to
+// close the server; while another call is
 // stopping the server it waits for that stop and returns nil; once stopped
 // it returns nil. A nil ctx returns an error wrapping [ErrConfig] and
 // leaves the server running.

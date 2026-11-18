@@ -43,23 +43,23 @@
 
 ## 3. Slice: lifecycle robustness
 
-- [ ] 3.1 Route-check errors read without an unguarded walk (engine-support / Scenario: Route check outcomes, new rows: self-cyclic, panicking `Unwrap`, panicking `As`, typed nil); verify `go test -race -run TestRouteCheck_FaultyErrors` passes in core, `ginsrvr` and `fibersrvr`
+- [x] 3.1 Route-check errors read without an unguarded walk (engine-support / Scenario: Route check outcomes, new rows: self-cyclic, panicking `Unwrap`, panicking `As`, typed nil); verify `go test -race -run TestRouteCheck_FaultyErrors` passes in core, `ginsrvr` and `fibersrvr`
   - RED: the four rows across their engines with a 1s bound; fails by hanging past the bound (self-cyclic) or by a panic escaping `Start`
   - GREEN: `runCheck` uses a direct type assertion on `*panicError`
   - REFACTOR: /simplify
-- [ ] 3.2 `Shutdown` interrupts a starting `Start` (server-lifecycle / Scenario: Shutdown during the configure phase, both tables); verify `go test -race -count=10 -run TestShutdown_WhileStarting` passes in core, `ginsrvr` and `fibersrvr`
+- [x] 3.2 `Shutdown` interrupts a starting `Start` (server-lifecycle / Scenario: Shutdown during the configure phase, both tables); verify `go test -race -count=10 -run TestShutdown_WhileStarting` passes in core, `ginsrvr` and `fibersrvr`
   - RED: rows per engine with a check waiting on its context, the check ignoring its context for `2s`, `Shutdown` before `Start` and two concurrent `Shutdown`s; fails because `Start` blocks until its own context ends
   - GREEN: `context.WithCancelCause` kept under the lifecycle mutex; `Shutdown` in `stateStarting` cancels with `ErrServerClosed`; `Start` maps the cause
   - REFACTOR: Extract Function for the cause mapping; /simplify
-- [ ] 3.3 `runtime.Goexit` in a check or hook is contained (server-lifecycle / Scenario: Goexit in consumer code, all rows); verify `go test -race -run TestGoexit` passes
+- [x] 3.3 `runtime.Goexit` in a check or hook is contained (server-lifecycle / Scenario: Goexit in consumer code, all rows); verify `go test -race -run TestGoexit` passes
   - RED: the four rows with a 1s bound; fails by hanging for the unbounded `AfterDrain` row and the check row
   - GREEN: `runGuarded` sends a `goexitError` when `fn` neither returned nor panicked
   - REFACTOR: /simplify
-- [ ] 3.4 Serve goroutine named and joined (server-lifecycle / Scenario: Serve goroutine after stop, all rows; adopts `triage-debug-buffer` task 7.1); verify `go test -race -run 'TestServeGoroutine|Goroutines|Leak'` passes in core, `ginsrvr`, `fibersrvr` and `internal/paritytest`
+- [x] 3.4 Serve goroutine named and joined (server-lifecycle / Scenario: Serve goroutine after stop, all rows; adopts `triage-debug-buffer` task 7.1); verify `go test -race -run 'TestServeGoroutine|Goroutines|Leak'` passes in core, `ginsrvr`, `fibersrvr` and `internal/paritytest`
   - RED: change the "never `Shutdown`" leak rows of every engine to match `engine.(*Lifecycle[...]).serveOn` and add the three serve rows, including a listener whose `Close` does not unblock `Accept`; fails against the anonymous `serve.func1` and the missing join
   - GREEN: `go l.serveOn(r, ln)`; the stop owner waits on `r.served` for at most 1s
   - REFACTOR: /simplify; tick `triage-debug-buffer` task 7.1 and close its two notes entries (this change's and the archived goroutine-leak-checks entry) as `closed: fixed by skills-compliance`
-- [ ] 3.5 Verify the slice end to end, confirm the starting-cancel, Goexit and serve-wait branches in `go tool cover -func`, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core, `ginsrvr`, `fibersrvr` and `internal/paritytest`, run /simplify on the slice and commit `fix(engine): let Shutdown stop a starting server and contain faulty route checks`
+- [x] 3.5 Verify the slice end to end, confirm the starting-cancel, Goexit and serve-wait branches in `go tool cover -func`, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in core, `ginsrvr`, `fibersrvr` and `internal/paritytest`, run /simplify on the slice and commit `fix(engine): let Shutdown stop a starting server and contain faulty route checks`
 
 ## 4. Slice: OpenTelemetry modules and dependencies
 
