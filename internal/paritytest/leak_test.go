@@ -75,6 +75,7 @@ func TestLeakCheck(t *testing.T) {
 	}{
 		{"blocked on a channel that is never closed", func(*testing.T) func() { return startBlocked() }, "blockUntil"},
 		{"blocked on a channel the test closes at cleanup", func(t *testing.T) func() {
+			t.Helper()
 			t.Cleanup(startBlocked())
 			return nil
 		}, ""},
@@ -173,6 +174,8 @@ func TestLeakIgnores(t *testing.T) {
 
 // runFiber serves GET /ok on a fiber server, which t's cleanup stops.
 func runFiber(t *testing.T) func() {
+	t.Helper()
+
 	base, _ := fiberServer(t, okFiber)
 	getOK(t, base)
 
@@ -201,6 +204,8 @@ func getOK(t *testing.T, base string) {
 // waits until the cleaner's next wake-up has ended it, so the test
 // binary's own check does not report it.
 func runFiberDefaultIdle(t *testing.T) func() {
+	t.Helper()
+
 	base, _ := fiberServerIdle(t, 0, okFiber)
 	getOK(t, base)
 
@@ -225,11 +230,13 @@ const (
 // the returned function is called; the request gives up once the handler
 // is entered and t's cleanup stops the server after a 100ms drain.
 func runBlockedGin(t *testing.T) func() {
+	t.Helper()
+
 	entered, release := make(chan struct{}), make(chan struct{})
 	base, _ := ginServer(t, func(g *gin.RouterGroup) { g.GET("/block", blockedHandler(entered, release)) },
 		srvr.WithShutdownTimeout(100*time.Millisecond))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		select {
 		case <-entered:
@@ -257,7 +264,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 		// shut it down.
 		run func(t *testing.T)
 	}{
-		{"a fiber server of the harness, Start, GET /ok, Shutdown", func(t *testing.T) { runFiber(t) }},
+		{"a fiber server of the harness, Start, GET /ok, Shutdown", func(t *testing.T) { t.Helper(); runFiber(t) }},
 	}
 
 	for _, tt := range tests {

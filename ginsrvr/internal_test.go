@@ -103,26 +103,36 @@ func TestGinEngineHook(t *testing.T) {
 		check func(t *testing.T, srv *Server)
 	}{
 		{"ContextWithFallback off", func(e *gin.Engine) { e.ContextWithFallback = false }, func(t *testing.T, srv *Server) {
+			t.Helper()
+
 			if !srv.engine.ContextWithFallback {
 				t.Fatal("ContextWithFallback is false")
 			}
 		}},
 		{"HandleMethodNotAllowed off", func(e *gin.Engine) { e.HandleMethodNotAllowed = false }, func(t *testing.T, srv *Server) {
+			t.Helper()
+
 			if o := serve(t, srv, http.MethodDelete, "/users", nil); o.code != http.StatusMethodNotAllowed {
 				t.Fatalf("DELETE /users = %d", o.code)
 			}
 		}},
 		{"RedirectTrailingSlash on", func(e *gin.Engine) { e.RedirectTrailingSlash = true }, func(t *testing.T, srv *Server) {
+			t.Helper()
+
 			if o := serve(t, srv, http.MethodGet, "/users/", nil); o.code != http.StatusNotFound || !o.problem {
 				t.Fatalf("GET /users/ = %+v, want a 404 problem", o)
 			}
 		}},
 		{"trusted proxies loosened", func(e *gin.Engine) { _ = e.SetTrustedProxies([]string{"10.0.0.0/8"}) }, func(t *testing.T, srv *Server) {
+			t.Helper()
+
 			if o := serve(t, srv, http.MethodGet, "/ip", xff); o.body != "203.0.113.9" {
 				t.Fatalf("ClientIP = %q, want the forwarded address", o.body)
 			}
 		}},
 		{"no hook", nil, func(t *testing.T, srv *Server) {
+			t.Helper()
+
 			if o := serve(t, srv, http.MethodGet, "/ip", xff); o.body != "10.0.0.1" {
 				t.Fatalf("ClientIP = %q, want the peer address", o.body)
 			}

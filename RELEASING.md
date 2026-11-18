@@ -30,14 +30,12 @@ ignores `replace` in a dependency, so consumers would build against whatever cor
 
 ## Gates
 
-A tag is released only when, in the directory of every module, these report nothing:
+A tag is released only when
 
 ```sh
-GOWORK=off go vet ./...
-GOWORK=off golangci-lint run ./...
-GOWORK=off go test -race ./...
-GOWORK=off go mod tidy -diff
-GOWORK=off govulncheck ./...
+make check
 ```
 
-and the tagged module's `go.mod` has no `replace` directive left.
+passes from the root (the Makefile lists the checks it runs in every module with `GOWORK=off`).
+The CI `release` job runs on every tag and fails when the tagged module's `go.mod` still has a
+`replace` directive.

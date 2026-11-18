@@ -81,7 +81,7 @@ func TestGinTraceAccess(t *testing.T) {
 			return tr.TraceID, ok
 		}, false},
 		{"LoggerFromContext(c)", func(c *gin.Context) (string, bool) {
-			srvr.LoggerFromContext(c).InfoContext(context.Background(), "handler.note")
+			srvr.LoggerFromContext(c).InfoContext(context.Background(), "handler.note") //nolint:usetesting // a context without the request's values proves trace_id comes from the logger itself.
 
 			return "", true
 		}, true},

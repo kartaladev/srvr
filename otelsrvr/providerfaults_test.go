@@ -104,7 +104,7 @@ func TestProviderFaults(t *testing.T) {
 	}
 
 	shutDown := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))
-	if err := shutDown.Shutdown(context.Background()); err != nil {
+	if err := shutDown.Shutdown(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 

@@ -2,7 +2,6 @@ package otelsrvr_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -140,7 +139,7 @@ func TestSpanCorrelationUnsampled(t *testing.T) {
 				})
 			}), []srvr.Option{srvr.WithLogOutput(logs)}, otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(tp))
 
-			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/ping", http.NoBody)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/ping", http.NoBody)
 			if tt.traceparent != "" {
 				req.Header.Set("traceparent", tt.traceparent)
 			}

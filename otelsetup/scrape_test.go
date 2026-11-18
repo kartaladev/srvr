@@ -38,7 +38,7 @@ func app(t *testing.T, s *otelsetup.Setup, conf configFunc) string {
 		}
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must serve until its cleanup cancels it; t.Context() is cancelled before cleanups run
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
@@ -119,6 +119,8 @@ func TestScrape(t *testing.T) {
 
 // TestScrapeDefaultAddr covers the default-address Scraping row: it binds
 // 127.0.0.1:9464, so it is not parallel.
+//
+//nolint:paralleltest // binds the fixed port 127.0.0.1:9464 and runs a per-test goleak check
 func TestScrapeDefaultAddr(t *testing.T) {
 	checkGoroutines(t)
 
@@ -175,13 +177,13 @@ func TestRegistryIsolation(t *testing.T) {
 	t.Run("address in use", func(t *testing.T) {
 		t.Parallel()
 
-		taken, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		taken, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer taken.Close()
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: taken.Addr().String()}))
+		s, err := otelsetup.New(t.Context(), otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: taken.Addr().String()}))
 
 		var opErr *net.OpError
 		if !errors.As(err, &opErr) || s != nil {

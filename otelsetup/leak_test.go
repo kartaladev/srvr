@@ -69,6 +69,7 @@ func TestLeakCheck(t *testing.T) {
 	}{
 		{"blocked on a channel that is never closed", func(*testing.T) func() { return startBlocked() }, "blockUntil"},
 		{"blocked on a channel the test closes at cleanup", func(t *testing.T) func() {
+			t.Helper()
 			t.Cleanup(startBlocked())
 			return nil
 		}, ""},
@@ -111,6 +112,8 @@ func TestLifecycle_Goroutines(t *testing.T) {
 		leak string // the function a "yes" row's report names; "" for "no"
 	}{
 		{"Prometheus on 127.0.0.1:0, New, GET /metrics, Shutdown", func(t *testing.T) {
+			t.Helper()
+
 			s := newSetup(t, otelsetup.WithPrometheusConfig(local))
 			registerClient(t, s.MetricsAddr())
 
@@ -121,6 +124,8 @@ func TestLifecycle_Goroutines(t *testing.T) {
 			shutdown(t, s)
 		}, ""},
 		{"OTLP metrics and traces over HTTP to a test collector, New, one export, Shutdown", func(t *testing.T) {
+			t.Helper()
+
 			c := newHTTPCollector(t, false)
 			s := newSetup(t, otelsetup.WithOTLP(otelsetup.OTLPConfig{
 				Endpoint: c.url, Protocol: "http/protobuf", Metrics: true, Traces: true,
@@ -134,12 +139,14 @@ func TestLifecycle_Goroutines(t *testing.T) {
 			}
 		}, ""},
 		{"OTLP metrics and traces over gRPC to an unreachable endpoint, New, Shutdown", func(t *testing.T) {
+			t.Helper()
+
 			s := newSetup(t, otelsetup.WithOTLP(otelsetup.OTLPConfig{
 				Endpoint: unreachable(t), Protocol: "grpc", Metrics: true, Traces: true,
 			}))
 
 			// The final export cannot succeed; a short deadline ends it.
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 			defer cancel()
 
 			_ = s.Shutdown(ctx) // the failed final export is not under test
@@ -148,13 +155,15 @@ func TestLifecycle_Goroutines(t *testing.T) {
 		// when binding the listener, New's last step, fails: New must
 		// stop them.
 		{"Prometheus on an address already in use, New fails", func(t *testing.T) {
-			ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+			t.Helper()
+
+			ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = ln.Close() })
 
-			if _, err := otelsetup.New(context.Background(),
+			if _, err := otelsetup.New(t.Context(),
 				otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: ln.Addr().String()}),
 				otelsetup.WithOTLP(otelsetup.OTLPConfig{
 					Endpoint: newHTTPCollector(t, false).url, Protocol: "http/protobuf", Metrics: true, Traces: true,
@@ -164,6 +173,8 @@ func TestLifecycle_Goroutines(t *testing.T) {
 			}
 		}, ""},
 		{"Prometheus on 127.0.0.1:0, New and never Shutdown", func(t *testing.T) {
+			t.Helper()
+
 			s := newSetup(t, otelsetup.WithPrometheusConfig(local))
 			t.Cleanup(func() { shutdown(t, s) }) // after the check, so the binary stays green
 		}, metricsServeGoroutine},

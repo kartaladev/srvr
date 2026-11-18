@@ -284,6 +284,8 @@ func TestDuration(t *testing.T) {
 // TestDurationProvider covers otel-metrics "Provider selection", all rows.
 // The global-provider rows replace the global MeterProvider, so the test
 // is not parallel and restores it.
+//
+//nolint:paralleltest // sets the global MeterProvider and runs a per-test goleak check
 func TestDurationProvider(t *testing.T) {
 	checkGoroutines(t)
 

@@ -220,7 +220,7 @@ func (l *faultyListener) Addr() net.Addr {
 func loopback(t *testing.T) net.Listener {
 	t.Helper()
 
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 		if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), "<panic in Error(): fibersrvr_test.selfPanicError>") {
 			t.Fatalf("Start = %v", err)
 		}
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("Shutdown = %v", err)
 		}
 	})
@@ -333,7 +333,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 		}
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 
 		select {
 		case err := <-done:
@@ -355,16 +355,16 @@ func TestFiberConsumerFaults(t *testing.T) {
 		}
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 		<-srv.Ready()
 
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("Shutdown = %v", err)
 		}
 		if err := <-done; err != nil {
 			t.Fatalf("Start = %v", err)
 		}
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("second Shutdown = %v", err)
 		}
 
@@ -383,7 +383,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "Listener") {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "Listener") {
 			t.Fatalf("Start = %v", err)
 		}
 
@@ -432,13 +432,13 @@ func TestFiberShutdownHooks_Reentrant(t *testing.T) {
 	srv, _ = newServer(t,
 		srvr.WithShutdownHookTimeout(200*time.Millisecond),
 		srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error {
-			go func() { hookErr <- srv.Shutdown(context.Background()) }() //nolint:contextcheck // the row calls Shutdown with context.Background().
+			go func() { hookErr <- srv.Shutdown(context.Background()) }() //nolint:contextcheck,usetesting // the row calls Shutdown with context.Background(), from a hook goroutine that may outlive the test body.
 
 			return nil
 		}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- srv.Start(ctx) }()
 	<-srv.Ready()

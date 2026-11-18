@@ -359,6 +359,8 @@ func TestGroupMethods(t *testing.T) {
 
 	for _, m := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
 		t.Run(m, func(t *testing.T) {
+			t.Parallel()
+
 			if got := do(t, m, base+"/"+strings.ToLower(m), nil, nil).status; got != http.StatusNoContent {
 				t.Fatalf("%s = %d, want 204", m, got)
 			}
@@ -388,7 +390,7 @@ func TestRegister_Rejected(t *testing.T) {
 		{"running", func(t *testing.T, srv *srvr.Server) { t.Helper(); startServer(t, srv) }, okRoute("/late"), srvr.ErrServerStarted},
 		{"stopped", func(t *testing.T, srv *srvr.Server) {
 			t.Helper()
-			mustNil(t, srv.Shutdown(context.Background()))
+			mustNil(t, srv.Shutdown(t.Context()))
 		}, okRoute("/late"), srvr.ErrServerClosed},
 	}
 
@@ -721,7 +723,7 @@ func TestRouteCheck(t *testing.T) {
 		srv := newServer(t, srvr.WithRouteCheck(func(context.Context, engine.Routes) error { return errors.New("collides") }))
 		mustNil(t, srv.Register(declare))
 
-		err := srv.Start(context.Background())
+		err := srv.Start(t.Context())
 		if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), "collides") {
 			t.Fatalf("Start = %v", err)
 		}
@@ -778,7 +780,7 @@ func TestRouteCheck_FaultyErrors(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/x")))
 
 			done := make(chan error, 1)
-			go func() { done <- recoverPanic(func() error { return srv.Start(context.Background()) }) }()
+			go func() { done <- recoverPanic(func() error { return srv.Start(t.Context()) }) }()
 
 			if err := receiveWithin(t, done, time.Second, "Start did not return"); !errors.Is(err, srvr.ErrRouteConfig) || errors.Is(err, errPanicked) {
 				t.Fatalf("Start = %s, want an error wrapping ErrRouteConfig without a panic", safeText(err))

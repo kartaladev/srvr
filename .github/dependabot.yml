@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories:
+      - "/"
+      - "/ginsrvr"
+      - "/fibersrvr"
+      - "/otelsrvr"
+      - "/otelsetup"
+      - "/internal/paritytest"
+    schedule:
+      interval: weekly
+    groups:
+      opentelemetry:
+        patterns: ["go.opentelemetry.io/*"]
+      golang-x:
+        patterns: ["golang.org/x/*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

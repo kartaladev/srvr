@@ -218,7 +218,7 @@ func startFiber(t *testing.T, o outcome, opts ...srvr.Option) (string, *logBuffe
 func run(t *testing.T, srv server) string {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must serve until its cleanup cancels it; t.Context() is cancelled before cleanups run
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
@@ -258,7 +258,7 @@ func must(t *testing.T, err error) {
 func dial(t *testing.T, base string) net.Conn {
 	t.Helper()
 
-	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", strings.TrimPrefix(base, "http://"))
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(base, "http://"))
 	must(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 
@@ -270,7 +270,7 @@ func dial(t *testing.T, base string) net.Conn {
 func send(t *testing.T, method, url string, header map[string]string) (*http.Response, []byte, error) {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), method, url, nil)
+	req, err := http.NewRequestWithContext(t.Context(), method, url, nil)
 	must(t, err)
 
 	for k, v := range header {
@@ -351,7 +351,12 @@ var clients sync.Map // string -> *http.Client
 func registerClient(t *testing.T, addr string) {
 	t.Helper()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	tr := dt.Clone()
 	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
 	c := &http.Client{Transport: tr}
 	clients.Store(addr, c)
@@ -367,7 +372,9 @@ func registerClient(t *testing.T, addr string) {
 func clientFor(rawURL string) *http.Client {
 	if u, err := url.Parse(rawURL); err == nil {
 		if c, ok := clients.Load(u.Host); ok {
-			return c.(*http.Client)
+			if hc, ok := c.(*http.Client); ok {
+				return hc
+			}
 		}
 	}
 

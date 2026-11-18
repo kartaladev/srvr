@@ -62,7 +62,7 @@ func newLifecycle(t *testing.T) *engine.Lifecycle[int] {
 func startLifecycle(t *testing.T, l *engine.Lifecycle[int], runner engine.Runner) (context.CancelFunc, func() error) {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // Start must run until the cleanup cancels it and waits for its result
 	done := make(chan error, 1)
 
 	go func() {
@@ -103,22 +103,22 @@ func TestEngineLifecycle(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		state string // "running", "never started" or "stopped"
-		call  func(*engine.Lifecycle[int]) error
-		want  error // nil: the call returns nil
-		isCfg bool  // the call returns an error wrapping ErrConfig
+		state string                                              // "running", "never started" or "stopped"
+		call  func(context.Context, *engine.Lifecycle[int]) error // the context is the test's
+		want  error                                               // nil: the call returns nil
+		isCfg bool                                                // the call returns an error wrapping ErrConfig
 	}{
-		{name: "Start while running", state: "running", call: func(l *engine.Lifecycle[int]) error {
-			return l.Start(context.Background(), func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
+		{name: "Start while running", state: "running", call: func(ctx context.Context, l *engine.Lifecycle[int]) error {
+			return l.Start(ctx, func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
 		}, want: srvr.ErrServerStarted},
-		{name: "Shutdown never started", state: "never started", call: func(l *engine.Lifecycle[int]) error { return l.Shutdown(context.Background()) }},
-		{name: "Start after stop", state: "stopped", call: func(l *engine.Lifecycle[int]) error {
-			return l.Start(context.Background(), func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
+		{name: "Shutdown never started", state: "never started", call: func(ctx context.Context, l *engine.Lifecycle[int]) error { return l.Shutdown(ctx) }},
+		{name: "Start after stop", state: "stopped", call: func(ctx context.Context, l *engine.Lifecycle[int]) error {
+			return l.Start(ctx, func([]int) (engine.Runner, engine.Routes, error) { return &fakeRunner{}, nil, nil })
 		}, want: srvr.ErrServerClosed},
-		{name: "Register while running", state: "running", call: func(l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerStarted},
-		{name: "Register after stop", state: "stopped", call: func(l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerClosed},
-		{name: "Shutdown(nil) while running", state: "running", call: func(l *engine.Lifecycle[int]) error {
-			return l.Shutdown(nil) //nolint:staticcheck // a nil context is the row under test.
+		{name: "Register while running", state: "running", call: func(_ context.Context, l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerStarted},
+		{name: "Register after stop", state: "stopped", call: func(_ context.Context, l *engine.Lifecycle[int]) error { return l.Register(1) }, want: srvr.ErrServerClosed},
+		{name: "Shutdown(nil) while running", state: "running", call: func(_ context.Context, l *engine.Lifecycle[int]) error {
+			return l.Shutdown(nil) //nolint:staticcheck,contextcheck // a nil context is the row under test.
 		}, isCfg: true},
 	}
 
@@ -134,7 +134,7 @@ func TestEngineLifecycle(t *testing.T) {
 				startLifecycle(t, l, runner)
 			case "stopped":
 				_, wait := startLifecycle(t, l, runner)
-				if err := l.Shutdown(context.Background()); err != nil {
+				if err := l.Shutdown(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				if err := wait(); err != nil {
@@ -142,7 +142,7 @@ func TestEngineLifecycle(t *testing.T) {
 				}
 			}
 
-			err := tt.call(l)
+			err := tt.call(t.Context(), l)
 
 			switch {
 			case tt.isCfg:
@@ -246,7 +246,7 @@ func TestConfigWarning(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		core.Warn(context.Background(), engine.WarnGinDebugMode, "gin runs in debug mode; set GIN_MODE=release")
+		core.Warn(t.Context(), engine.WarnGinDebugMode, "gin runs in debug mode; set GIN_MODE=release")
 
 		var rec map[string]any
 		if err := json.Unmarshal(out.Bytes(), &rec); err != nil {
@@ -274,7 +274,7 @@ func TestConfigWarning(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() { done <- srv.Start(ctx) }()
 		<-srv.Ready()

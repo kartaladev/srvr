@@ -21,16 +21,22 @@ func TestParity_RouteListing(t *testing.T) {
 
 	starts := map[string]func(*testing.T, srvr.Option){
 		"net/http": func(t *testing.T, o srvr.Option) {
+			t.Helper()
+
 			ok := func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(http.StatusOK); return nil }
 			netServer(t, func(g *srvr.Group) { g.GET("/users/{id}", ok); g.POST("/users", ok) }, o)
 		},
 		"gin": func(t *testing.T, o srvr.Option) {
+			t.Helper()
+
 			ginServer(t, func(g *gin.RouterGroup) {
 				g.GET("/users/:id", func(*gin.Context) {})
 				g.POST("/users", func(*gin.Context) {})
 			}, o)
 		},
 		"fiber": func(t *testing.T, o srvr.Option) {
+			t.Helper()
+
 			fiberServer(t, func(r fiber.Router) {
 				r.Get("/users/:id", func(fiber.Ctx) error { return nil })
 				r.Post("/users", func(fiber.Ctx) error { return nil })

@@ -266,7 +266,7 @@ func TestObserver_Abort(t *testing.T) {
 
 	obs, base := observed(t, on("", "/users/{id}", func(http.ResponseWriter, *http.Request) error { panic(http.ErrAbortHandler) }))
 
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/users/42", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/users/42", nil)
 	if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 		_ = res.Body.Close()
 		t.Fatalf("status %d, want an aborted connection", res.StatusCode)
@@ -360,7 +360,7 @@ func getTLS(t *testing.T, conf configFunc, path string, header map[string]string
 	startServer(t, srv)
 	t.Cleanup(client.CloseIdleConnections) // before the server stops
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "https://"+srv.Addr()+path, http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://"+srv.Addr()+path, http.NoBody)
 	mustNil(t, err)
 
 	for k, v := range header {
@@ -519,7 +519,7 @@ func TestObserver_Faults(t *testing.T) {
 		{"panics in Begin", func(context.Context) (context.Context, func(srvr.ResultInfo)) { panic("boom") }, 1, 0, "begin_panic"},
 		{"nil context", func(context.Context) (context.Context, func(srvr.ResultInfo)) { return nil, func(srvr.ResultInfo) {} }, 1, 0, ""},
 		{"foreign context", func(context.Context) (context.Context, func(srvr.ResultInfo)) {
-			return context.WithValue(context.Background(), ctxKey{}, 1), nil
+			return context.WithValue(context.Background(), ctxKey{}, 1), nil //nolint:usetesting // a context unrelated to the request is the row under test
 		}, 1, 0, ""},
 		{"nil end", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) { return ctx, nil }, 1, 0, ""},
 		{"panics in end", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {

@@ -40,7 +40,7 @@ type Server struct {
 	problems fiber.ErrorHandler
 	// base is the context every request context derives from; a forced
 	// drain cancels it, because fiber.Ctx itself never cancels.
-	base       context.Context //nolint:containedctx // the server-wide parent of request contexts.
+	base       context.Context // the server-wide parent of request contexts
 	cancelBase context.CancelFunc
 	// serving is the runner of a started server, nil before.
 	serving atomic.Pointer[runner]

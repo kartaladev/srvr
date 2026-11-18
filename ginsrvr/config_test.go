@@ -38,7 +38,7 @@ func TestGinConfig(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
+			t.Run(tt.name, func(t *testing.T) { //nolint:paralleltest // the rows share hookRan, checked after the loop; parallel rows would run after that check.
 				srv, logs := newServer(t, tt.opts...)
 				if err := srv.Register(routes(func(g *gin.RouterGroup) {
 					g.GET("/d", func(c *gin.Context) {

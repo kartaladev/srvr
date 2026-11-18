@@ -90,12 +90,12 @@ func TestNew(t *testing.T) {
 					}
 				}()
 
-				s, err = otelsetup.New(context.Background(), otelsetup.WithConfig(tt.cfg))
+				s, err = otelsetup.New(t.Context(), otelsetup.WithConfig(tt.cfg))
 			}()
 
 			// A failed New leaves no port bound.
 			if addr := tt.cfg.Prometheus.Addr; strings.HasPrefix(addr, "127.0.0.1:") {
-				ln, lerr := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
+				ln, lerr := (&net.ListenConfig{}).Listen(t.Context(), "tcp", addr)
 				if lerr != nil {
 					t.Errorf("%s is still bound after New failed: %v", addr, lerr)
 				} else {
@@ -217,7 +217,7 @@ func (g grpcTraces) Export(_ context.Context, req *colltrace.ExportTraceServiceR
 func newGRPCCollector(t *testing.T) *fakeCollector {
 	t.Helper()
 
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func newGRPCCollector(t *testing.T) *fakeCollector {
 func unreachable(t *testing.T) string {
 	t.Helper()
 
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestShutdownOrdering(t *testing.T) {
 
 			collector := newHTTPCollector(t, false)
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{Endpoint: collector.url, Metrics: true}))
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{Endpoint: collector.url, Metrics: true}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,7 +293,7 @@ func TestShutdownOrdering(t *testing.T) {
 				})
 			}))
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
 			done := make(chan error, 1)
@@ -306,7 +306,7 @@ func TestShutdownOrdering(t *testing.T) {
 			go func() {
 				defer close(answered)
 
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/slow", http.NoBody)
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+srv.Addr()+"/slow", http.NoBody)
 				if res, err := (&http.Client{Transport: &http.Transport{}}).Do(req); err == nil {
 					_ = res.Body.Close()
 				}
@@ -318,7 +318,7 @@ func TestShutdownOrdering(t *testing.T) {
 			if tt.viaCtx {
 				cancel()
 			} else {
-				go func() { stopped <- srv.Shutdown(context.Background()) }()
+				go func() { stopped <- srv.Shutdown(t.Context()) }()
 			}
 
 			time.Sleep(20 * time.Millisecond) // the stop is under way, the request still in flight
@@ -341,7 +341,7 @@ func TestShutdownOrdering(t *testing.T) {
 			}
 
 			if tt.consumer {
-				if err := s.Shutdown(context.Background()); err != nil {
+				if err := s.Shutdown(t.Context()); err != nil {
 					t.Errorf("the consumer's Shutdown = %v, want nil", err)
 				}
 			}
@@ -352,6 +352,8 @@ func TestShutdownOrdering(t *testing.T) {
 // TestConfigPrecedence covers telemetry-setup "Configuration precedence",
 // the service.name and flush-timeout rows. The environment rows use
 // t.Setenv, so the test is not parallel.
+//
+//nolint:paralleltest // uses t.Setenv and runs a per-test goleak check
 func TestConfigPrecedence(t *testing.T) {
 	checkGoroutines(t)
 
@@ -411,14 +413,14 @@ func TestConfigPrecedence_OTLP(t *testing.T) {
 				otlp.Endpoint, want, other = fromConfig.url, fromConfig, fromEnv
 			}
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithConfig(otelsetup.Config{OTLP: otlp}))
+			s, err := otelsetup.New(t.Context(), otelsetup.WithConfig(otelsetup.Config{OTLP: otlp}))
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			emit(t, s)
 
-			if err := s.Shutdown(context.Background()); err != nil {
+			if err := s.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 
@@ -432,6 +434,8 @@ func TestConfigPrecedence_OTLP(t *testing.T) {
 // TestSetGlobal covers telemetry-setup "Globals", all rows, plus a failed
 // New that leaves the globals unchanged. It replaces the globals, so it is
 // not parallel and resets them.
+//
+//nolint:paralleltest // sets the OpenTelemetry globals and runs a per-test goleak check
 func TestSetGlobal(t *testing.T) {
 	checkGoroutines(t)
 
@@ -442,7 +446,7 @@ func TestSetGlobal(t *testing.T) {
 			TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: trace.FlagsSampled,
 		})
 		carrier := propagation.MapCarrier{}
-		otel.GetTextMapPropagator().Inject(trace.ContextWithSpanContext(context.Background(), sc), carrier)
+		otel.GetTextMapPropagator().Inject(trace.ContextWithSpanContext(t.Context(), sc), carrier)
 
 		return carrier.Get("traceparent") != ""
 	}
@@ -459,7 +463,7 @@ func TestSetGlobal(t *testing.T) {
 	t.Run("failed New", func(t *testing.T) {
 		before := otel.GetMeterProvider()
 
-		_, err := otelsetup.New(context.Background(), otelsetup.WithSetGlobal(), otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: "127.0.0.1:1"}))
+		_, err := otelsetup.New(t.Context(), otelsetup.WithSetGlobal(), otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: "127.0.0.1:1"}))
 		if err == nil {
 			t.Skip("port 1 was bindable")
 		}
@@ -504,7 +508,7 @@ func TestNew_NilOption(t *testing.T) {
 			t.Parallel()
 
 			addr := freeAddr(t)
-			s, err := otelsetup.New(context.Background(), tt.opts(addr)...)
+			s, err := otelsetup.New(context.Background(), tt.opts(addr)...) //nolint:usetesting // the setup is shut down in a cleanup, which runs after t.Context() is cancelled
 			if s != nil {
 				t.Cleanup(func() { shutdown(t, s) })
 			}

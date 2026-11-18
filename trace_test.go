@@ -89,7 +89,7 @@ func TestTraceFromContext(t *testing.T) {
 		}
 	})
 
-	for name, ctx := range map[string]context.Context{"background": context.Background(), "nil": nil} {
+	for name, ctx := range map[string]context.Context{"background": context.Background(), "nil": nil} { //nolint:usetesting // context.Background() is the row under test
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
@@ -126,7 +126,7 @@ func TestTrace_Unique(t *testing.T) {
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/trace", nil)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/trace", nil)
 			res, err := client.Do(req)
 			if err != nil {
 				t.Error(err)

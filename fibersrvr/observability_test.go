@@ -187,7 +187,7 @@ func TestFiberTraceAccess(t *testing.T) {
 			return tr.TraceID, ok
 		}, false},
 		{"LoggerFromContext(c.Context())", func(c fiber.Ctx) (string, bool) {
-			srvr.LoggerFromContext(c.Context()).InfoContext(context.Background(), "handler.note")
+			srvr.LoggerFromContext(c.Context()).InfoContext(context.Background(), "handler.note") //nolint:usetesting // a context without the request's values proves trace_id comes from the logger itself.
 
 			return "", true
 		}, true},
@@ -248,18 +248,18 @@ func TestFiberForcedCancel(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(t.Context()) }()
 	<-srv.Ready()
 
 	go func() {
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/block", nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/block", nil) //nolint:usetesting // the request goroutine may outlive the test body.
 		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			_ = res.Body.Close()
 		}
 	}()
 	<-started
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	begin := time.Now()

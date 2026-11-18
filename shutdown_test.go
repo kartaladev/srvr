@@ -53,7 +53,7 @@ func TestShutdown_Drain(t *testing.T) {
 				receive(t, started, "the in-flight request did not reach its handler")
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 			defer cancel()
 
 			shutdown := make(chan error, 1)
@@ -84,8 +84,10 @@ func TestShutdown_Misuse(t *testing.T) {
 	}{
 		{
 			state: "was never started",
-			shutdown: func(_ *testing.T, srv *srvr.Server) error {
-				return srv.Shutdown(context.Background())
+			shutdown: func(t *testing.T, srv *srvr.Server) error {
+				t.Helper()
+
+				return srv.Shutdown(t.Context())
 			},
 		},
 		{
@@ -93,12 +95,12 @@ func TestShutdown_Misuse(t *testing.T) {
 			shutdown: func(t *testing.T, srv *srvr.Server) error {
 				t.Helper()
 				done := startBackground(t, srv)
-				if err := srv.Shutdown(context.Background()); err != nil {
+				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 				mustNil(t, <-done)
 
-				return srv.Shutdown(context.Background())
+				return srv.Shutdown(t.Context())
 			},
 		},
 		{
@@ -115,13 +117,13 @@ func TestShutdown_Misuse(t *testing.T) {
 
 				var wg sync.WaitGroup
 				first := make(chan error, 1)
-				wg.Go(func() { first <- srv.Shutdown(context.Background()) })
+				wg.Go(func() { first <- srv.Shutdown(t.Context()) })
 
 				// Wait until the first Shutdown is draining: new connections are refused.
 				waitRefused(t, srv.Addr())
 
 				second := make(chan error, 1)
-				wg.Go(func() { second <- srv.Shutdown(context.Background()) })
+				wg.Go(func() { second <- srv.Shutdown(t.Context()) })
 
 				select {
 				case err := <-second:
@@ -150,7 +152,7 @@ func TestShutdown_Misuse(t *testing.T) {
 			if err := tt.shutdown(t, srv); err != nil {
 				t.Fatalf("Shutdown = %v, want nil", err)
 			}
-			if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("later Start = %v, want ErrServerClosed", err)
 			}
 		})
@@ -190,14 +192,14 @@ func TestShutdown_DuringContextStop(t *testing.T) {
 
 		return nil
 	}))
-	ctx, stop := context.WithCancel(context.Background())
+	ctx, stop := context.WithCancel(t.Context())
 	done := startWith(ctx, t, srv)
 
 	stop()
 	receive(t, inHook, "the BeforeDrain hook did not run")
 
 	shutdown := make(chan error, 1)
-	go func() { shutdown <- srv.Shutdown(context.Background()) }()
+	go func() { shutdown <- srv.Shutdown(t.Context()) }()
 
 	select {
 	case err := <-shutdown:
@@ -244,7 +246,11 @@ func TestShutdownHooks_Order(t *testing.T) {
 	hook := func(name string) func(context.Context) error {
 		return func(ctx context.Context) error {
 			if name == "A" {
-				conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", addr.Load().(string))
+				a, ok := addr.Load().(string)
+				if !ok {
+					rec.add("no address stored")
+				}
+				conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", a)
 				if err == nil {
 					_ = conn.Close()
 					rec.add("new connections accepted")
@@ -282,7 +288,7 @@ func TestShutdownHooks_Order(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := startWith(ctx, t, srv)
 	addr.Store(srv.Addr())
 
@@ -329,7 +335,7 @@ func TestShutdownHooks(t *testing.T) {
 			name: "running, Start context cancelled",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				done := startWith(ctx, t, srv)
 				cancel()
 				mustNil(t, <-done)
@@ -340,7 +346,7 @@ func TestShutdownHooks(t *testing.T) {
 			name: "running, Start context deadline passes",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 				defer cancel()
 				done := startWith(ctx, t, srv)
 				mustNil(t, <-done)
@@ -352,7 +358,7 @@ func TestShutdownHooks(t *testing.T) {
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				done := startBackground(t, srv)
-				mustNil(t, srv.Shutdown(context.Background()))
+				mustNil(t, srv.Shutdown(t.Context()))
 				mustNil(t, <-done)
 			},
 			before: 1, after: 1,
@@ -361,10 +367,10 @@ func TestShutdownHooks(t *testing.T) {
 			name: "running, Shutdown twice then Start context cancelled",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				done := startWith(ctx, t, srv)
-				mustNil(t, srv.Shutdown(context.Background()))
-				mustNil(t, srv.Shutdown(context.Background()))
+				mustNil(t, srv.Shutdown(t.Context()))
+				mustNil(t, srv.Shutdown(t.Context()))
 				cancel()
 				mustNil(t, <-done)
 			},
@@ -374,10 +380,10 @@ func TestShutdownHooks(t *testing.T) {
 			name: "running, Shutdown and cancellation concurrently",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				done := startWith(ctx, t, srv)
 				var wg sync.WaitGroup
-				wg.Go(func() { _ = srv.Shutdown(context.Background()) })
+				wg.Go(func() { _ = srv.Shutdown(t.Context()) })
 				wg.Go(cancel)
 				wg.Wait()
 				mustNil(t, <-done)
@@ -388,7 +394,7 @@ func TestShutdownHooks(t *testing.T) {
 			name: "never started, Shutdown",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				mustNil(t, srv.Shutdown(context.Background()))
+				mustNil(t, srv.Shutdown(t.Context()))
 			},
 			before: 0, after: 1,
 		},
@@ -401,7 +407,7 @@ func TestShutdownHooks(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := srv.Start(context.Background()); err == nil {
+				if err := srv.Start(t.Context()); err == nil {
 					t.Fatal("Start = nil, want a bind error")
 				}
 			},
@@ -412,7 +418,7 @@ func TestShutdownHooks(t *testing.T) {
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				mustNil(t, srv.Register(&PanicAPI{}))
-				if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrRouteConfig) {
+				if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrRouteConfig) {
 					t.Fatalf("Start = %v, want ErrRouteConfig", err)
 				}
 			},
@@ -424,7 +430,7 @@ func TestShutdownHooks(t *testing.T) {
 				t.Helper()
 				mustNil(t, srv.Register(okRoute("/dup")))
 				mustNil(t, srv.Register(okRoute("/dup")))
-				if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrRouteConfig) {
+				if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrRouteConfig) {
 					t.Fatalf("Start = %v, want ErrRouteConfig", err)
 				}
 			},
@@ -434,7 +440,7 @@ func TestShutdownHooks(t *testing.T) {
 			name: "new, Start with an already cancelled context",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				if err := srv.Start(ctx); err == nil {
 					t.Fatal("Start = nil")
@@ -458,7 +464,7 @@ func TestShutdownHooks(t *testing.T) {
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				startServer(t, srv)
-				if err := srv.Start(context.Background()); err == nil {
+				if err := srv.Start(t.Context()); err == nil {
 					t.Fatal("second Start = nil")
 				}
 			},
@@ -468,11 +474,11 @@ func TestShutdownHooks(t *testing.T) {
 			name: "stopped by its Start context, Start again returns ErrServerClosed",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				done := startWith(ctx, t, srv)
 				cancel()
 				mustNil(t, <-done)
-				if err := srv.Start(context.Background()); err == nil {
+				if err := srv.Start(t.Context()); err == nil {
 					t.Fatal("Start after stop = nil")
 				}
 			},
@@ -483,7 +489,7 @@ func TestShutdownHooks(t *testing.T) {
 			noHooks: true,
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				mustNil(t, srv.Shutdown(context.Background()))
+				mustNil(t, srv.Shutdown(t.Context()))
 			},
 			before: 0, after: 0,
 		},
@@ -552,7 +558,7 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 			}, tt.opts...)
 			srv := newServer(t, opts...)
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			done := startWith(ctx, t, srv)
 
 			begin := time.Now()
@@ -593,9 +599,9 @@ func TestHostileHookErrors(t *testing.T) {
 
 			srv := newServer(t, srvr.WithShutdownHook(srvr.AfterDrain, tt.hook))
 
-			assertErr(t, recoverPanic(func() error { return srv.Shutdown(context.Background()) }), []error{srvr.ErrShutdownHook}, "")
+			assertErr(t, recoverPanic(func() error { return srv.Shutdown(t.Context()) }), []error{srvr.ErrShutdownHook}, "")
 			assertErr(t, shutdownBounded(t, srv), nil, "")
-			assertErr(t, srv.Start(context.Background()), []error{srvr.ErrServerClosed}, "")
+			assertErr(t, srv.Start(t.Context()), []error{srvr.ErrServerClosed}, "")
 		})
 	}
 }
@@ -630,7 +636,7 @@ func TestShutdownHooks_FaultyDuringShutdown(t *testing.T) {
 			status := inFlight("http://" + srv.Addr() + "/work")
 			<-started
 
-			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 			defer cancel()
 
 			assertErr(t, srv.Shutdown(ctx), tt.wantIs, "close failed")
@@ -662,7 +668,7 @@ func TestShutdownHooks_Blocking(t *testing.T) {
 			srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { afterRuns.Add(1); return nil }),
 		)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := startWith(ctx, t, srv)
 
 		begin := time.Now()
@@ -687,13 +693,13 @@ func TestShutdownHooks_Blocking(t *testing.T) {
 			srvr.WithShutdownTimeout(15*time.Second),
 			srvr.WithShutdownHookTimeout(100*time.Millisecond),
 			srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error {
-				inner <- srv.Shutdown(context.Background()) //nolint:contextcheck // the row calls Shutdown with a background context.
+				inner <- srv.Shutdown(context.Background()) //nolint:contextcheck,usetesting // the row calls Shutdown with a background context.
 
 				return nil
 			}),
 		)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := startWith(ctx, t, srv)
 
 		begin := time.Now()
@@ -761,7 +767,7 @@ func TestShutdown_HostileContext(t *testing.T) {
 			t.Cleanup(func() { close(block) })
 
 			srv := newServer(t, srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error { <-block; return nil }))
-			startWith(context.Background(), t, srv)
+			startWith(context.Background(), t, srv) //nolint:usetesting // Start is never awaited: it may run past the test body until the cleanup releases the hook
 
 			ctx := newHostileContext(t, 50*time.Millisecond, tt.err)
 			err := bounded(t, "Shutdown did not return", func() error { return recoverPanic(func() error { return srv.Shutdown(ctx) }) })
@@ -791,7 +797,7 @@ func TestGoexit(t *testing.T) {
 		{
 			name: "route check",
 			opts: []srvr.Option{srvr.WithRouteCheck(func(ctx context.Context, _ engine.Routes) error { return goexit(ctx) })},
-			run:  func(srv *srvr.Server) error { return srv.Start(context.Background()) },
+			run:  func(srv *srvr.Server) error { return srv.Start(context.Background()) }, //nolint:usetesting // run never touches a *testing.T: it runs on a goroutine of its own
 			want: srvr.ErrRouteConfig,
 		},
 		{

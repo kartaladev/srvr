@@ -68,7 +68,12 @@ func Example() {
 	}
 
 	m := rm.ScopeMetrics[0].Metrics[0]
-	point := m.Data.(metricdata.Histogram[float64]).DataPoints[0]
+	hist, ok := m.Data.(metricdata.Histogram[float64])
+	if !ok {
+		panic(fmt.Sprintf("%s data is %T", m.Name, m.Data))
+	}
+
+	point := hist.DataPoints[0]
 	route, _ := point.Attributes.Value("http.route")
 
 	fmt.Println(m.Name, m.Unit, point.Count, route.AsString())

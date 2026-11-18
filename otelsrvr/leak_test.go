@@ -1,7 +1,6 @@
 package otelsrvr_test
 
 import (
-	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -69,6 +68,7 @@ func TestLeakCheck(t *testing.T) {
 	}{
 		{"blocked on a channel that is never closed", func(*testing.T) func() { return startBlocked() }, "blockUntil"},
 		{"blocked on a channel the test closes at cleanup", func(t *testing.T) func() {
+			t.Helper()
 			t.Cleanup(startBlocked())
 			return nil
 		}, ""},
@@ -127,14 +127,14 @@ func TestLifecycle_Goroutines(t *testing.T) {
 					return nil
 				})
 			})
-			srv, done := startServing(context.Background(), t, okRoute, srvr.WithObserver(obs))
+			srv, done := startServing(t.Context(), t, okRoute, srvr.WithObserver(obs))
 			registerClient(t, srv.Addr())
 
 			if got := send(t, http.MethodGet, "http://"+srv.Addr()+"/ok", ""); got != http.StatusOK {
 				t.Fatalf("GET /ok = %d", got)
 			}
 
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatalf("Shutdown = %v", err)
 			}
 
@@ -143,7 +143,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 			}
 
 			// The exporter forgets its spans when the provider shuts it down.
-			if err := tp.ForceFlush(context.Background()); err != nil {
+			if err := tp.ForceFlush(t.Context()); err != nil {
 				t.Fatalf("ForceFlush = %v", err)
 			}
 
@@ -151,7 +151,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 				t.Fatalf("%d spans exported, want 1", n)
 			}
 
-			if err := tp.Shutdown(context.Background()); err != nil {
+			if err := tp.Shutdown(t.Context()); err != nil {
 				t.Fatalf("provider Shutdown = %v", err)
 			}
 		})

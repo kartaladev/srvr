@@ -63,12 +63,12 @@ func requestCyclic(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(context.Background()) }() //nolint:usetesting // Start's result is read in the cleanup; t.Context() would stop the server before the cleanup's Shutdown runs
 
 	t.Cleanup(func() {
 		// The drain deadline passes, because the handler never returns, so
 		// both report it.
-		_ = srv.Shutdown(context.Background())
+		_ = srv.Shutdown(context.Background()) //nolint:usetesting // runs in a cleanup, after t.Context() is cancelled
 		if err := <-done; err != nil {
 			t.Logf("Start = %v", err)
 		}
@@ -82,10 +82,15 @@ func requestCyclic(t *testing.T) {
 		t.Fatal("not ready")
 	}
 
-	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	client := &http.Client{Transport: dt.Clone()}
 	t.Cleanup(client.CloseIdleConnections)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/x", nil)
@@ -98,6 +103,8 @@ func requestCyclic(t *testing.T) {
 // TestParity_GinCyclicError covers the engine-parity / Scenario: Documented
 // differences row "gin never completes c.Error with a cyclic chain".
 func TestParity_GinCyclicError(t *testing.T) {
+	t.Parallel()
+
 	sendCyclic(t)
 }
 
@@ -105,6 +112,8 @@ func TestParity_GinCyclicError(t *testing.T) {
 // narrow (gincycle row): once the cyclic request was sent, the check without
 // leakOptions reports cyclicHandler and the check with them reports
 // nothing. Not parallel: goleak.Find sees every goroutine of the process.
+//
+//nolint:paralleltest // goleak.Find sees every goroutine of the process
 func TestLeakIgnores(t *testing.T) {
 	t.Run("cyclic request", sendCyclic) // its cleanups stop the server
 

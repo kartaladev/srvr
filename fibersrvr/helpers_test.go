@@ -115,7 +115,10 @@ func newServer(t *testing.T, opts ...srvr.Option) (*fibersrvr.Server, *logBuffer
 func start(t *testing.T, srv *fibersrvr.Server) string {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Not t.Context(): that is cancelled before the cleanups run, which
+	// would stop srv before registerClient's cleanup closes idle connections
+	// and before the cleanup below checks Start's result.
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // Start's context must outlive the test body until its cleanup.
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
@@ -157,13 +160,13 @@ func startErr(t *testing.T, srv *fibersrvr.Server) error {
 
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(t.Context()) }()
 
 	select {
 	case err := <-done:
 		return err
 	case <-srv.Ready():
-		_ = srv.Shutdown(context.Background())
+		_ = srv.Shutdown(t.Context())
 		t.Fatalf("Start became ready, want a failure; it returned %v", <-done)
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return")
@@ -184,7 +187,7 @@ type response struct {
 func do(t *testing.T, method, url string, body io.Reader, header map[string]string) response {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
+	req, err := http.NewRequestWithContext(t.Context(), method, url, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +224,7 @@ func ok(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }
 func serve(t *testing.T, srv *fibersrvr.Server, conf srvr.RouteConfigurer[fiber.Router], method, path string, body io.Reader, header map[string]string) response {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), method, path, body)
+	req, err := http.NewRequestWithContext(t.Context(), method, path, body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +261,7 @@ func serve(t *testing.T, srv *fibersrvr.Server, conf srvr.RouteConfigurer[fiber.
 func rawRequest(t *testing.T, addr, method, path, header string, body []byte) response {
 	t.Helper()
 
-	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", addr)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +312,12 @@ var clients sync.Map // string -> *http.Client
 func registerClient(t *testing.T, addr string) {
 	t.Helper()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	tr := dt.Clone()
 	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
 	c := &http.Client{Transport: tr}
 	clients.Store(addr, c)
@@ -325,7 +333,9 @@ func registerClient(t *testing.T, addr string) {
 func clientFor(rawURL string) *http.Client {
 	if u, err := url.Parse(rawURL); err == nil {
 		if c, ok := clients.Load(u.Host); ok {
-			return c.(*http.Client)
+			if hc, ok := c.(*http.Client); ok {
+				return hc
+			}
 		}
 	}
 

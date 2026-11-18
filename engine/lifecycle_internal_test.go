@@ -50,7 +50,7 @@ func (l connListener) Accept() (net.Conn, error) { return l.conn, nil }
 
 // TestGuardedListener_AcceptAllocs: the guard adds no allocation per
 // accepted connection; it is only a deferred recover.
-func TestGuardedListener_AcceptAllocs(t *testing.T) {
+func TestGuardedListener_AcceptAllocs(t *testing.T) { //nolint:paralleltest // testing.AllocsPerRun counts allocations process-wide and panics in a parallel test
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { _, _ = c1.Close(), c2.Close() })
 

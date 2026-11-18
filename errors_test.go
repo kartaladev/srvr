@@ -264,7 +264,7 @@ func TestPanicRecovery(t *testing.T) {
 			base := startServer(t, srv)
 
 			if tt.aborted {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/panic", nil)
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/panic", nil)
 				if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 					res.Body.Close()
 					t.Fatalf("got a response %d, want an aborted connection", res.StatusCode)
@@ -314,7 +314,7 @@ func TestLateError(t *testing.T) {
 				g.GET("/late", late(tt.written, tt.fail))
 			})
 
-			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, base+"/late", nil)
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/late", nil)
 			res, err := clientFor(req.URL.String()).Do(req)
 			if err != nil {
 				t.Fatal(err)
@@ -405,6 +405,8 @@ func TestUnmatched_Redirect(t *testing.T) {
 // composable OnError ...") and runs only with SRVR_UPSTREAM_TESTS=1, since
 // it fails against prblm v0.1.0 by design.
 func TestUpstream_PrblmOnErrorComposes(t *testing.T) {
+	t.Parallel()
+
 	if os.Getenv("SRVR_UPSTREAM_TESTS") != "1" {
 		t.Skip("upstream reproduction; set SRVR_UPSTREAM_TESTS=1 to run")
 	}

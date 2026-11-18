@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 
 	"github.com/kartaladev/prblm"
@@ -220,9 +221,7 @@ func (f *fallbackRecorder) Write(b []byte) (int, error) {
 
 // replay writes the recorded response to w.
 func (f *fallbackRecorder) replay(w http.ResponseWriter) {
-	for k, v := range f.header {
-		w.Header()[k] = v
-	}
+	maps.Copy(w.Header(), f.header)
 
 	w.WriteHeader(cmp.Or(f.status, http.StatusOK))
 	_, _ = w.Write(f.body.Bytes())

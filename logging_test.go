@@ -291,7 +291,7 @@ func TestCorrelation_DefaultLogger(t *testing.T) {
 		g.GET("/log", func(_ http.ResponseWriter, r *http.Request) error {
 			slog.Default().InfoContext(r.Context(), "default")
 			slog.Default().WithGroup("db").InfoContext(r.Context(), "grouped", "k", "v")
-			srvr.LoggerFromContext(context.Background()).Info("background") //nolint:contextcheck // the row logs without a request context.
+			srvr.LoggerFromContext(context.Background()).Info("background") //nolint:contextcheck,usetesting // the row logs without a request context.
 
 			return nil
 		})
@@ -334,7 +334,11 @@ func TestAccessRecord_Streaming(t *testing.T) {
 			return http.NewResponseController(w).Flush()
 		})
 		g.GET("/flusher", func(w http.ResponseWriter, _ *http.Request) error {
-			w.(http.Flusher).Flush()
+			f, ok := w.(http.Flusher)
+			if !ok {
+				return errors.New("the ResponseWriter is not an http.Flusher")
+			}
+			f.Flush()
 
 			return nil
 		})
@@ -384,7 +388,7 @@ func TestLifecycleRecords(t *testing.T) {
 			taken := listen(t)
 			srv, err := srvr.New(append(opts, srvr.WithAddr(taken.Addr().String()))...)
 			mustNil(t, err)
-			if err := srv.Start(context.Background()); err == nil {
+			if err := srv.Start(t.Context()); err == nil {
 				t.Fatal("Start = nil")
 			}
 		}},
@@ -392,7 +396,7 @@ func TestLifecycleRecords(t *testing.T) {
 			t.Helper()
 			srv, err := srvr.New(append(opts, srvr.WithListener(&panicListener{Listener: listen(t), acceptPanic: "accept"}))...)
 			mustNil(t, err)
-			if err := startBounded(context.Background(), t, srv); err == nil {
+			if err := startBounded(t.Context(), t, srv); err == nil {
 				t.Fatal("Start = nil")
 			}
 		}},
@@ -405,7 +409,7 @@ func TestLifecycleRecords(t *testing.T) {
 			done := startBackground(t, srv)
 			status := inFlight("http://" + srv.Addr() + "/work")
 			<-started
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()
 			_ = srv.Shutdown(ctx)
 			<-status
@@ -451,7 +455,7 @@ func stopByContext(t *testing.T, opts []srvr.Option) {
 
 	srv, err := srvr.New(append(opts, srvr.WithAddr("127.0.0.1:0"))...)
 	mustNil(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := startWith(ctx, t, srv)
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, srvr.ErrShutdownHook) {

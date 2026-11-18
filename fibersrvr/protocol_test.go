@@ -30,9 +30,13 @@ func TestFiberProtocolRejection(t *testing.T) {
 		title  string
 	}{
 		{"oversized body", nil, func(t *testing.T, addr string) response {
+			t.Helper()
+
 			return rawRequest(t, addr, http.MethodPost, "/upload", "", make([]byte, 4194305))
 		}, 413, "Request Entity Too Large"},
 		{"oversized headers", nil, func(t *testing.T, addr string) response {
+			t.Helper()
+
 			return rawRequest(t, addr, http.MethodPost, "/upload", "X-Pad: "+strings.Repeat("a", 70000)+"\r\n", nil)
 		}, 431, "Request Header Fields Too Large"},
 		{"stalled headers", []srvr.Option{srvr.WithReadTimeout(100 * time.Millisecond)}, stalledHeaders, 408, "Request Timeout"},
@@ -79,7 +83,7 @@ func TestFiberProtocolRejection(t *testing.T) {
 func stalledHeaders(t *testing.T, addr string) response {
 	t.Helper()
 
-	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", addr)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +200,7 @@ func TestFiberStreamNotBuffered(t *testing.T) {
 
 	base := start(t, srv)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/events", nil)

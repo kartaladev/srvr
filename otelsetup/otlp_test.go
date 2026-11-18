@@ -24,10 +24,10 @@ func emit(t *testing.T, s *otelsetup.Setup) {
 		t.Fatal(err)
 	}
 
-	counter.Add(context.Background(), 1)
+	counter.Add(t.Context(), 1)
 
 	if tp := s.TracerProvider(); tp != nil {
-		_, span := tp.Tracer("test").Start(context.Background(), "otelsetup.test.span")
+		_, span := tp.Tracer("test").Start(t.Context(), "otelsetup.test.span")
 		span.End()
 	}
 }
@@ -46,7 +46,7 @@ func TestNew_OTLP(t *testing.T) {
 				c = newGRPCCollector(t)
 			}
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
 				Endpoint: c.url, Protocol: protocol, Metrics: true, Traces: true,
 			}))
 			if err != nil {
@@ -59,7 +59,7 @@ func TestNew_OTLP(t *testing.T) {
 
 			emit(t, s)
 
-			if err := s.Shutdown(context.Background()); err != nil {
+			if err := s.Shutdown(t.Context()); err != nil {
 				t.Fatalf("Shutdown: %v", err)
 			}
 
@@ -78,7 +78,7 @@ func TestNew_OTLP(t *testing.T) {
 
 		c := newHTTPCollector(t, false)
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
+		s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
 			Endpoint: c.url, Metrics: true, Traces: true, Headers: map[string]string{"X-Api-Key": "k1"},
 		}))
 		if err != nil {
@@ -87,7 +87,7 @@ func TestNew_OTLP(t *testing.T) {
 
 		emit(t, s)
 
-		if err := s.Shutdown(context.Background()); err != nil {
+		if err := s.Shutdown(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
@@ -104,7 +104,7 @@ func TestNew_OTLP(t *testing.T) {
 
 		c := newGRPCCollector(t)
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
+		s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
 			Endpoint: c.url, Protocol: "grpc", Metrics: true, Traces: true, Headers: map[string]string{"x-api-key": "k1"},
 		}))
 		if err != nil {
@@ -113,7 +113,7 @@ func TestNew_OTLP(t *testing.T) {
 
 		emit(t, s)
 
-		if err := s.Shutdown(context.Background()); err != nil {
+		if err := s.Shutdown(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -131,12 +131,12 @@ func TestNew_OTLP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(tt.otlp))
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(tt.otlp))
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 			defer cancel()
 			defer func() { _ = s.Shutdown(ctx) }()
 
@@ -166,9 +166,9 @@ func TestNew_OTLP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(tt.otlp))
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(tt.otlp))
 			if s != nil {
-				t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+				t.Cleanup(func() { _ = s.Shutdown(context.Background()) }) //nolint:usetesting // runs in a cleanup, after t.Context() is cancelled
 			}
 
 			if !errors.Is(err, otelsetup.ErrConfig) || !strings.Contains(err.Error(), tt.want) {
@@ -189,13 +189,21 @@ func TestShutdown_OTLP(t *testing.T) {
 		check    func(err error) bool
 		bound    time.Duration
 	}{
-		{"accepts", func(t *testing.T) string { return newHTTPCollector(t, false).url }, 10 * time.Second, func(err error) bool { return err == nil }, time.Second},
+		{"accepts", func(t *testing.T) string {
+			t.Helper()
+
+			return newHTTPCollector(t, false).url
+		}, 10 * time.Second, func(err error) bool { return err == nil }, time.Second},
 		{"unreachable", unreachable, 10 * time.Second, func(err error) bool {
 			var opErr *net.OpError
 
 			return errors.As(err, &opErr)
 		}, 5*time.Second + 500*time.Millisecond},
-		{"hangs", func(t *testing.T) string { return newHTTPCollector(t, true).url }, 200 * time.Millisecond, func(err error) bool {
+		{"hangs", func(t *testing.T) string {
+			t.Helper()
+
+			return newHTTPCollector(t, true).url
+		}, 200 * time.Millisecond, func(err error) bool {
 			return errors.Is(err, context.DeadlineExceeded)
 		}, 300 * time.Millisecond},
 	}
@@ -204,7 +212,7 @@ func TestShutdown_OTLP(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{
 				Endpoint: tt.endpoint(t), Protocol: "http/protobuf", Metrics: true, Traces: true,
 			}))
 			if err != nil {
@@ -213,7 +221,7 @@ func TestShutdown_OTLP(t *testing.T) {
 
 			emit(t, s)
 
-			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 			defer cancel()
 
 			start := time.Now()
@@ -266,6 +274,8 @@ func (b *logBuffer) records(t *testing.T, msg string) []map[string]any {
 // TestExportFailure covers telemetry-setup "Collector down during
 // traffic", all rows. It sets the environment and the globals, so it is
 // not parallel and resets them.
+//
+//nolint:paralleltest // uses t.Setenv, sets the OpenTelemetry globals and runs a per-test goleak check
 func TestExportFailure(t *testing.T) {
 	checkGoroutines(t)
 
@@ -292,7 +302,7 @@ func TestExportFailure(t *testing.T) {
 				opts = append(opts, otelsetup.WithSetGlobal())
 			}
 
-			s, err := otelsetup.New(context.Background(), opts...)
+			s, err := otelsetup.New(t.Context(), opts...)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -313,7 +323,7 @@ func TestExportFailure(t *testing.T) {
 
 			time.Sleep(100 * time.Millisecond) // five more export intervals
 
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			_ = s.Shutdown(ctx)
 
@@ -349,7 +359,7 @@ func TestOTLPHeadersCopied(t *testing.T) {
 
 			c := newHTTPCollector(t, false)
 			m := map[string]string{"X-Api-Key": "one"}
-			s, err := otelsetup.New(context.Background(), otelsetup.WithOTLP(otelsetup.OTLPConfig{Endpoint: c.url, Metrics: true, Traces: true, Headers: m}))
+			s, err := otelsetup.New(t.Context(), otelsetup.WithOTLP(otelsetup.OTLPConfig{Endpoint: c.url, Metrics: true, Traces: true, Headers: m}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -369,10 +379,10 @@ func TestOTLPHeadersCopied(t *testing.T) {
 
 			for range 5 {
 				emit(t, s)
-				if err := s.MeterProvider().ForceFlush(context.Background()); err != nil {
+				if err := s.MeterProvider().ForceFlush(t.Context()); err != nil {
 					t.Fatalf("meter ForceFlush: %v", err)
 				}
-				if err := s.TracerProvider().ForceFlush(context.Background()); err != nil {
+				if err := s.TracerProvider().ForceFlush(t.Context()); err != nil {
 					t.Fatalf("tracer ForceFlush: %v", err)
 				}
 			}

@@ -3,131 +3,82 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*", "*/v*"]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  core:
+  # One job per module and Go version, each with GOWORK=off as consumers
+  # build the released modules. vet and test run on both versions; lint,
+  # tidy and verify once on the minimum version, govulncheck once on the
+  # latest standard library.
+  module:
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", ginsrvr, fibersrvr, otelsrvr, otelsetup, internal/paritytest]
+        go: ["1.27", stable]
+    name: ${{ matrix.module }} (go ${{ matrix.go }})
     env:
       GOWORK: "off"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: vet
+        run: make vet MODULES=${{ matrix.module }}
+      - name: lint
+        if: matrix.go == '1.27'
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+          working-directory: ${{ matrix.module }}
+      - name: test
+        run: make test MODULES=${{ matrix.module }}
+      - name: go mod tidy -diff
+        if: matrix.go == '1.27'
+        run: make tidy-check MODULES=${{ matrix.module }}
+      - name: go mod verify
+        if: matrix.go == '1.27'
+        run: make verify MODULES=${{ matrix.module }}
+      - name: govulncheck
+        if: matrix.go == 'stable'
+        run: make vulncheck MODULES=${{ matrix.module }}
+
+  # Coverage of every package, the engine package included, from the tests
+  # of every module: workspace mode, so -coverpkg spans the modules.
+  coverage:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-      - name: test
-        run: go test -race ./...
+          cache-dependency-path: "**/go.sum"
+      - name: cover
+        run: make cover
 
-  ginsrvr:
+  # A released module must not keep a replace directive: go ignores replace
+  # in a dependency, so consumers would build against another core.
+  release:
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
-    env:
-      GOWORK: "off"
-    defaults:
-      run:
-        working-directory: ginsrvr
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: ginsrvr/go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-          working-directory: ginsrvr
-      - name: test
-        run: go test -race ./...
-
-  fibersrvr:
-    runs-on: ubuntu-latest
-    env:
-      GOWORK: "off"
-    defaults:
-      run:
-        working-directory: fibersrvr
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: fibersrvr/go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-          working-directory: fibersrvr
-      - name: test
-        run: go test -race ./...
-
-  otelsrvr:
-    runs-on: ubuntu-latest
-    env:
-      GOWORK: "off"
-    defaults:
-      run:
-        working-directory: otelsrvr
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: otelsrvr/go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-          working-directory: otelsrvr
-      - name: test
-        run: go test -race ./...
-
-  otelsetup:
-    runs-on: ubuntu-latest
-    env:
-      GOWORK: "off"
-    defaults:
-      run:
-        working-directory: otelsetup
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: otelsetup/go.mod
-      - name: vet
-        run: go vet ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.15.0
-          working-directory: otelsetup
-      - name: test
-        run: go test -race ./...
-
-  paritytest:
-    runs-on: ubuntu-latest
-    env:
-      GOWORK: "off"
-    defaults:
-      run:
-        working-directory: internal/paritytest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: internal/paritytest/go.mod
-      - name: vet
-        run: go vet ./...
-      - name: test
-        run: go test -race ./...
+      - uses: actions/checkout@v6
+      - name: no replace in the tagged module
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          dir=.
+          case "$TAG" in */v*) dir="${TAG%/v*}" ;; esac
+          if grep -nE '^[[:space:]]*replace\b|=>' "$dir/go.mod"; then
+            echo "::error file=$dir/go.mod::$TAG: go.mod still has a replace directive"
+            exit 1
+          fi
