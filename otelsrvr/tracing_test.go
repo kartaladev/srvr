@@ -30,14 +30,19 @@ func recorder() (*sdktrace.TracerProvider, *tracetest.SpanRecorder) {
 }
 
 // signalRecorder is a span recorder that also signals each ended span on
-// ended, dropping the signal when one is already pending.
+// ended, dropping the signal when one is already pending. A positive delay
+// holds each span before recording it, as a slow span processor on a
+// loaded machine does.
 type signalRecorder struct {
 	*tracetest.SpanRecorder
 
 	ended chan struct{}
+	delay time.Duration
 }
 
 func (r signalRecorder) OnEnd(s sdktrace.ReadOnlySpan) {
+	time.Sleep(r.delay) // simulates a slow processor, not synchronisation
+
 	r.SpanRecorder.OnEnd(s)
 
 	select {
@@ -48,7 +53,26 @@ func (r signalRecorder) OnEnd(s sdktrace.ReadOnlySpan) {
 
 // signalling returns a tracer provider recording into a signalRecorder.
 func signalling() (*sdktrace.TracerProvider, signalRecorder) {
-	rec := signalRecorder{SpanRecorder: tracetest.NewSpanRecorder(), ended: make(chan struct{}, 1)}
+	return slowSignalling(0)
+}
+
+// waitEnded waits until rec records an ended span: the server may end the
+// request's span after the client has the response, once the response
+// overflows net/http's write buffer.
+func waitEnded(t *testing.T, rec signalRecorder) {
+	t.Helper()
+
+	select {
+	case <-rec.ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no span ended within 5s")
+	}
+}
+
+// slowSignalling returns a tracer provider recording into a signalRecorder
+// that holds each span for delay before recording it.
+func slowSignalling(delay time.Duration) (*sdktrace.TracerProvider, signalRecorder) {
+	rec := signalRecorder{SpanRecorder: tracetest.NewSpanRecorder(), ended: make(chan struct{}, 1), delay: delay}
 
 	return sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)), rec
 }
@@ -258,11 +282,15 @@ func TestSpanPathAttributes(t *testing.T) {
 				srvOpts = append(srvOpts, srvr.WithAccessLogIncludePath())
 			}
 
-			tp, rec := recorder()
+			// A slow span processor: the oversized row's response
+			// overflows net/http's buffer and reaches the client before
+			// the span ends, as it did on a loaded CI runner.
+			tp, rec := slowSignalling(50 * time.Millisecond)
 			base := traced(t, usersRoute, srvOpts, otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(tp))
 			sendRaw(t, tt.method, base+tt.path)
+			waitEnded(t, rec)
 
-			span := onlySpan(t, rec)
+			span := onlySpan(t, rec.SpanRecorder)
 
 			if got, ok := spanAttr(span, "url.path"); got != tt.wantPath || ok != (tt.wantPath != "") {
 				t.Errorf("url.path = %q (present %v), want %q", got, ok, tt.wantPath)
