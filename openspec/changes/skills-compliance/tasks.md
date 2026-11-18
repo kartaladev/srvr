@@ -63,32 +63,32 @@
 
 ## 4. Slice: OpenTelemetry modules and dependencies
 
-- [ ] 4.1 Bump `golang.org/x/net` to v0.62.0+ in `otelsetup` and `ginsrvr` and `golang.org/x/crypto` past GO-2026-5932 in `ginsrvr`, `fibersrvr` and `internal/paritytest`; verify `GOWORK=off govulncheck ./...` reports no vulnerability in each module and `go mod tidy -diff` is empty
-- [ ] 4.2 Nil `otelsrvr` option fails `New` (otel-metrics / Scenario: Nil option, all rows); verify `go test -race -run TestNew_NilOption` passes in `otelsrvr`
+- [x] 4.1 Bump `golang.org/x/net` to v0.62.0+ in `otelsetup` and `ginsrvr` and `golang.org/x/crypto` past GO-2026-5932 in `ginsrvr`, `fibersrvr` and `internal/paritytest`; verify `GOWORK=off govulncheck ./...` reports no vulnerability in each module and `go mod tidy -diff` is empty
+- [x] 4.2 Nil `otelsrvr` option fails `New` (otel-metrics / Scenario: Nil option, all rows); verify `go test -race -run TestNew_NilOption` passes in `otelsrvr`
   - RED: the four rows; fails with a nil-function panic
   - GREEN: collect a `ConfigError` naming `Option` and its index, as the core does
   - REFACTOR: /simplify
-- [ ] 4.3 Zero `otelsrvr.Observer` is a no-op (otel-metrics / Scenario: Zero observer, all rows); verify `go test -race -run TestZeroObserver` passes in `otelsrvr`
+- [x] 4.3 Zero `otelsrvr.Observer` is a no-op (otel-metrics / Scenario: Zero observer, all rows); verify `go test -race -run TestZeroObserver` passes in `otelsrvr`
   - RED: rows on net/http, gin and fiber asserting the status and zero `srvr.observer.fault` records; fails with one `end_panic` fault
   - GREEN: `Begin` returns `ctx` and a nil end function when the observer has no instruments; godoc says to use `New`
   - REFACTOR: /simplify
-- [ ] 4.4 Nil `otelsetup` option fails `New` (telemetry-setup / Scenario: Nil option, all rows); verify `go test -race -run TestNew_NilOption` passes in `otelsetup`
+- [x] 4.4 Nil `otelsetup` option fails `New` (telemetry-setup / Scenario: Nil option, all rows); verify `go test -race -run TestNew_NilOption` passes in `otelsetup`
   - RED: the three rows including that no listener is bound; fails because the nil option is skipped
   - GREEN: reject it with `ErrConfig` naming `Option` and its index
   - REFACTOR: /simplify
-- [ ] 4.5 OTLP headers copied (telemetry-setup / Scenario: Caller mutates headers after New, both rows); verify `go test -race -run TestOTLPHeadersCopied` passes in `otelsetup`
+- [x] 4.5 OTLP headers copied (telemetry-setup / Scenario: Caller mutates headers after New, both rows); verify `go test -race -run TestOTLPHeadersCopied` passes in `otelsetup`
   - RED: both mutation rows against the fake collector under `-race`; fails with a race or with the mutated header
   - GREEN: `maps.Clone` of the headers when the configuration is resolved
   - REFACTOR: /simplify
-- [ ] 4.6 Metrics listener closed and joined at the deadline (telemetry-setup / Scenario: In-flight scrape at the deadline, all rows); verify `go test -race -run TestShutdown_InFlightScrape` passes in `otelsetup` under goleak
+- [x] 4.6 Metrics listener closed and joined at the deadline (telemetry-setup / Scenario: In-flight scrape at the deadline, all rows); verify `go test -race -run TestShutdown_InFlightScrape` passes in `otelsetup` under goleak
   - RED: a scrape whose client stalls reading, with a `100ms` deadline, plus the finished and no-scrape rows; fails because the connection goroutine outlives `Shutdown`
   - GREEN: `Close()` after a failed `Shutdown`, and wait for the `Serve` goroutine's done channel
   - REFACTOR: /simplify
-- [ ] 4.7 `otel.export.failed` text redacted (telemetry-setup / Scenario: Export error with a secret, all rows); verify `go test -race -run TestExportError_Redacted` passes in `otelsetup`
+- [x] 4.7 `otel.export.failed` text redacted (telemetry-setup / Scenario: Export error with a secret, all rows); verify `go test -race -run TestExportError_Redacted` passes in `otelsetup`
   - RED: the three rows; fails because the token is written
   - GREEN: `engine.RedactSecrets(engine.ValueText(err))`
   - REFACTOR: /simplify
-- [ ] 4.8 Verify the slice end to end, confirm the nil-option, zero-observer, header-copy and close-on-deadline branches in `go tool cover -func`, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and `govulncheck ./...` with `GOWORK=off` in `otelsrvr`, `otelsetup`, `ginsrvr`, `fibersrvr` and `internal/paritytest`, run /simplify on the slice and commit `fix(otel): reject nil options, copy headers, close metrics listener and patch x/net`
+- [x] 4.8 Verify the slice end to end, confirm the nil-option, zero-observer, header-copy and close-on-deadline branches in `go tool cover -func`, run gopls diagnostics, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and `govulncheck ./...` with `GOWORK=off` in `otelsrvr`, `otelsetup`, `ginsrvr`, `fibersrvr` and `internal/paritytest`, run /simplify on the slice and commit `fix(otel): reject nil options, copy headers, close metrics listener and patch x/net`
 
 ## 5. Slice: engine-support and engine API
 

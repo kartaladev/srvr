@@ -477,3 +477,49 @@ func TestSetGlobal(t *testing.T) {
 		}
 	})
 }
+
+// TestNew_NilOption covers telemetry-setup / Scenario: Nil option. The
+// Prometheus rows use a free loopback address instead of WithPrometheus's
+// fixed default port, so tests never bind a fixed port.
+func TestNew_NilOption(t *testing.T) {
+	t.Parallel()
+
+	prometheus := func(addr string) otelsetup.Option {
+		return otelsetup.WithPrometheusConfig(otelsetup.PrometheusConfig{Enabled: true, Addr: addr})
+	}
+
+	tests := []struct {
+		name  string
+		opts  func(addr string) []otelsetup.Option
+		want  string // text the error names; "": no error
+		bound bool
+	}{
+		{"Prometheus, nil", func(addr string) []otelsetup.Option { return []otelsetup.Option{prometheus(addr), nil} }, "Option 1", false},
+		{"nil", func(string) []otelsetup.Option { return []otelsetup.Option{nil} }, "Option 0", false},
+		{"Prometheus", func(addr string) []otelsetup.Option { return []otelsetup.Option{prometheus(addr)} }, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			addr := freeAddr(t)
+			s, err := otelsetup.New(context.Background(), tt.opts(addr)...)
+			if s != nil {
+				t.Cleanup(func() { shutdown(t, s) })
+			}
+
+			if tt.want == "" {
+				if err != nil || s == nil {
+					t.Fatalf("New = %v, %v; want a setup and nil", s, err)
+				}
+			} else if !errors.Is(err, otelsetup.ErrConfig) || !strings.Contains(err.Error(), tt.want) || s != nil {
+				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig naming %q", s, err, tt.want)
+			}
+
+			if bound := listening(addr); bound != tt.bound {
+				t.Fatalf("metrics address bound = %v, want %v", bound, tt.bound)
+			}
+		})
+	}
+}

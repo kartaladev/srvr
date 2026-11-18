@@ -37,6 +37,21 @@ once tagged.
 - The serve goroutine is named `serveOn` and joined after the stop, for at most 1s.
 - A `WithListener` listener whose `Close` does not unblock `Accept` no longer hangs `Shutdown` on
   net/http and gin: the drain ends at its deadline.
+- `otelsrvr.New(nil)` and `otelsetup.New(ctx, nil)` fail with their module's `ErrConfig` naming the
+  option's position, instead of panicking (`otelsrvr`) or skipping it silently (`otelsetup`).
+- A zero `otelsrvr.Observer` (not built by `New`) records nothing and writes no
+  `srvr.observer.fault` record.
+- `otelsetup` copies `OTLP.Headers` in `New`; the trace exporter read the caller's map on every
+  export, so changing it after `New` changed, and raced with, the exports.
+- `otelsetup`'s `Shutdown` closes the metrics listener's remaining connections when its deadline
+  passes and returns after the listener's serving goroutine has.
+- `otel.export.failed`'s `exception.message` passes srvr's default redactor.
+
+### Security
+
+- `golang.org/x/net` v0.63.0 in `otelsetup` and `ginsrvr` (GO-2026-6603, -6610, -6611, -6612, -6617,
+  -6860, -6866) and `golang.org/x/crypto` v0.59.0 in `ginsrvr`, `fibersrvr` and
+  `internal/paritytest` (GO-2026-5932).
 
 - The sampled flag of an incoming `traceparent` is read from the flags byte's hex value; flags `0a`,
   `0b`, `0e`, `0f`, `fe` and `ff` were read wrongly.

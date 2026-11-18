@@ -350,3 +350,43 @@ func TestMetricSchemaGolden(t *testing.T) {
 		}
 	}
 }
+
+// TestNew_NilOption covers otel-metrics / Scenario: Nil option.
+func TestNew_NilOption(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []otelsrvr.Option
+		want []string // texts the error names; nil: no error
+	}{
+		{"nil", []otelsrvr.Option{nil}, []string{"Option 0"}},
+		{"WithTracing, nil", []otelsrvr.Option{otelsrvr.WithTracing(), nil}, []string{"Option 1"}},
+		{"nil, empty WithDurationBuckets", []otelsrvr.Option{nil, otelsrvr.WithDurationBuckets()}, []string{"Option 0", "DurationBuckets"}},
+		{"none", nil, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			o, err := otelsrvr.New(tt.opts...)
+
+			if tt.want == nil {
+				if err != nil || o == nil {
+					t.Fatalf("New = %v, %v; want an observer and nil", o, err)
+				}
+
+				return
+			}
+			if !errors.Is(err, otelsrvr.ErrConfig) {
+				t.Fatalf("New = %v, want an error wrapping ErrConfig", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("New = %v, want it to name %q", err, w)
+				}
+			}
+		})
+	}
+}

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/otelsetup"
@@ -365,6 +367,61 @@ func TestFaultyLogger(t *testing.T) {
 
 			if fmt.Sprint(h.got) != fmt.Sprint(tt.want) {
 				t.Errorf("records after the faulty one = %v, want %v", h.got, tt.want)
+			}
+		})
+	}
+}
+
+// TestShutdown_InFlightScrape covers telemetry-setup / Scenario: In-flight
+// scrape at the deadline. A scrape whose client stalls is one that sent
+// only part of its request: http.Server.Shutdown waits for such a
+// connection, and its goroutine waits for the rest of the headers. Not
+// parallel: each row checks that no goroutine is left.
+func TestShutdown_InFlightScrape(t *testing.T) {
+	tests := []struct {
+		name     string
+		scrape   func(t *testing.T, s *otelsetup.Setup)
+		deadline time.Duration
+		want     error
+	}{
+		{"client stalls", func(t *testing.T, s *otelsetup.Setup) {
+			t.Helper()
+			conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", s.MetricsAddr())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			if _, err := conn.Write([]byte("GET /metrics HTTP/1.1\r\nHost: x\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(50 * time.Millisecond) // let the server read the partial request
+		}, 100 * time.Millisecond, context.DeadlineExceeded},
+		{"finished", func(t *testing.T, s *otelsetup.Setup) {
+			t.Helper()
+			if status, _ := scrape(t, s); status != http.StatusOK {
+				t.Fatalf("scrape status = %d", status)
+			}
+		}, time.Second, nil},
+		{"none", func(*testing.T, *otelsetup.Setup) {}, time.Second, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := goleak.IgnoreCurrent()
+
+			s := newSetup(t, otelsetup.WithPrometheusConfig(local))
+			tt.scrape(t, s)
+
+			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			defer cancel()
+
+			if err := s.Shutdown(ctx); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+				t.Fatalf("Shutdown = %v, want %v", err, tt.want)
+			}
+			// Checked while a stalled client is still connected: closing it
+			// would end the server's connection goroutine by itself.
+			if err := findLeaks(before); err != nil {
+				t.Fatalf("goroutines left after Shutdown: %v", err)
 			}
 		})
 	}

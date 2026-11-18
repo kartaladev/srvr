@@ -192,7 +192,8 @@ func WithMeterProvider(mp metric.MeterProvider) Option {
 }
 
 // Observer records OpenTelemetry HTTP server metrics for every request of
-// a srvr server; register it with srvr.WithObserver.
+// a srvr server; register it with srvr.WithObserver. Build it with [New]: a
+// zero Observer has no instruments and records nothing.
 type Observer struct {
 	config Config
 	// duration is always recorded; active, requestSize and responseSize
@@ -229,16 +230,24 @@ func (o *Observer) TraceFromContext(ctx context.Context) (srvr.Trace, bool) {
 	return srvr.Trace{TraceID: sc.TraceID().String(), SpanID: sc.SpanID().String(), Sampled: sc.IsSampled()}, true
 }
 
-// New returns an observer configured by opts. Invalid configuration, or a
-// meter that fails to create an instrument, returns an error wrapping
-// [ErrConfig].
+// New returns an observer configured by opts. Invalid configuration (a
+// nil option is named by its position), or a meter that fails to create an
+// instrument, returns an error wrapping [ErrConfig].
 func New(opts ...Option) (*Observer, error) {
 	s := settings{meterProvider: otel.GetMeterProvider(), tracerProvider: otel.GetTracerProvider()}
-	for _, opt := range opts {
+
+	var nilOpts []error
+	for i, opt := range opts {
+		if opt == nil {
+			nilOpts = append(nilOpts, fmt.Errorf("%w: Option %d is nil", ErrConfig, i))
+
+			continue
+		}
+
 		opt(&s)
 	}
 
-	if err := s.validate(); err != nil {
+	if err := errors.Join(append(nilOpts, s.validate())...); err != nil {
 		return nil, err
 	}
 
@@ -331,6 +340,10 @@ func instrumentError(name string, err error) error {
 
 // Begin implements srvr.Observer.
 func (o *Observer) Begin(ctx context.Context, info srvr.RequestInfo) (context.Context, func(srvr.ResultInfo)) {
+	if o.duration == nil {
+		return ctx, nil // a zero Observer, not built by New: nothing to record
+	}
+
 	method, scheme := methodAttr(info.Method), info.Scheme
 
 	var active metric.AddOption
