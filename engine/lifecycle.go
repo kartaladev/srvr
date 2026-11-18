@@ -606,10 +606,11 @@ func (r *httpRunner) Drain(ctx context.Context) error {
 	return err
 }
 
-// logEvent writes one of srvr's own records, outside any request:
-// schema version, the event's attributes, then the service attributes.
+// logEvent writes one of srvr's own records: schema version, the event's
+// attributes, then the service attributes. Own records are never
+// buffered, so only the base handler's level decides.
 func (c *Core) logEvent(ctx context.Context, level slog.Level, event string, attrs ...slog.Attr) {
-	if !c.log.Enabled(ctx, level) {
+	if !c.log.baseEnabled(ctx, level) {
 		return
 	}
 

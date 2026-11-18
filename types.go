@@ -38,6 +38,10 @@ type (
 	// LogConfig configures srvr's logger; see [engine.LogConfig]. Pass it
 	// with [WithLogConfig].
 	LogConfig = engine.LogConfig
+	// DebugBufferConfig configures per-request debug buffering; see
+	// [engine.DebugBufferConfig]. Pass it with [WithDebugBufferConfig] or
+	// in [LogConfig].
+	DebugBufferConfig = engine.DebugBufferConfig
 	// AccessLogConfig configures the access record written for every
 	// request; see [engine.AccessLogConfig]. Pass it with
 	// [WithAccessLogConfig].

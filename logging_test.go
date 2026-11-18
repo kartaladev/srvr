@@ -65,8 +65,13 @@ func (b *logBuffer) find(t *testing.T, msg string) []map[string]any {
 func (b *logBuffer) where(t *testing.T, key string, value any) []map[string]any {
 	t.Helper()
 
+	return where(b.records(t), key, value)
+}
+
+// where returns the records whose key holds value.
+func where(records []map[string]any, key string, value any) []map[string]any {
 	var out []map[string]any
-	for _, r := range b.records(t) {
+	for _, r := range records {
 		if r[key] == value {
 			out = append(out, r)
 		}

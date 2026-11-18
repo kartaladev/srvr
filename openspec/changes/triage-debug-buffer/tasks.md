@@ -10,28 +10,28 @@
 
 ## 2. Slice: below-level records flushed on failure (net/http)
 
-- [ ] 2.1 Buffering off keeps today's behaviour (triage-debug-buffer / Scenario: Default drops below-level records, all rows); verify `go test -race -run TestDebugBuffer_Off` passes
+- [x] 2.1 Buffering off keeps today's behaviour (triage-debug-buffer / Scenario: Default drops below-level records, all rows); verify `go test -race -run TestDebugBuffer_Off` passes
   - RED: table over the three rows; passes already only if no buffer code path exists - write it first and confirm it fails once `WithDebugBuffer` is referenced but not implemented (compile failure is not an acceptable RED: add the option as a no-op stub returning nil first)
   - GREEN: `WithDebugBuffer(opts ...DebugBufferOption)` option and `debugBufferConfig` with `Enabled` false by default; no allocation when off
   - REFACTOR: none expected; /simplify
-- [ ] 2.2 Flush on failure in order before the access record (triage-debug-buffer / Scenario: Flush on failure, flushed and discarded rows); verify `go test -race -run TestDebugBuffer_Flush` passes
+- [x] 2.2 Flush on failure in order before the access record (triage-debug-buffer / Scenario: Flush on failure, flushed and discarded rows); verify `go test -race -run TestDebugBuffer_Flush` passes
   - RED: table with error, interleaved `INFO` checkpoint, panic, 503, late error, direct 500, 200, 404 and committed-201-then-409 rows asserting the record sequence; fails because below-level records are dropped
   - GREEN: per-request `requestBuffer` in the request context, wrapper `Enabled`/`Handle` routing, flush in the access stage (reading the outcome from `engine.RequestState`) just before the access record, failure status resolved from the returned error even when committed; `OnError` is not touched
   - REFACTOR: Extract Class `requestBuffer`, Move Function for the outcome decision, then /simplify
-- [ ] 2.3 Marking and original time (triage-debug-buffer / Scenario: Marking of flushed records); verify `go test -race -run TestDebugBuffer_Marking` passes
+- [x] 2.3 Marking and original time (triage-debug-buffer / Scenario: Marking of flushed records); verify `go test -race -run TestDebugBuffer_Marking` passes
   - RED: fixed clock, assert `time`, `level`, `srvr.buffered`, attributes and `trace_id`; fails because the flushed record lacks the marker or gets the flush time
   - GREEN: the stored clone replayed through the entry's `logHandler` with `srvr.buffered` added to the top-level attributes ahead of the replayed steps; replay keeps record time and call-time context
   - REFACTOR: /simplify
-- [ ] 2.4 Default threshold and level routing without duplicates (triage-debug-buffer / Scenario: Flush threshold, default rows; Scenario: Level routing, all rows); verify `go test -race -run 'TestDebugBuffer_Threshold|TestDebugBuffer_LevelRouting'` passes
+- [x] 2.4 Default threshold and level routing without duplicates (triage-debug-buffer / Scenario: Flush threshold, default rows; Scenario: Level routing, all rows); verify `go test -race -run 'TestDebugBuffer_Threshold|TestDebugBuffer_LevelRouting'` passes
   - RED: tables including `499`/`500`/`599` boundaries and `DEBUG-4`; fails on duplicate or misrouted records
   - GREEN: routing by call-time log level and buffer level; flush rule `panicked || status >= 500`
   - REFACTOR: Decompose Conditional into `shouldBuffer`/`shouldFlush`, then /simplify
-- [ ] 2.5 Default per-request caps (triage-debug-buffer / Scenario: Per-request limits, default-limit rows `0`, `1`, `100`, `101`); verify `go test -race -run TestDebugBuffer_DefaultLimits` passes
+- [x] 2.5 Default per-request caps (triage-debug-buffer / Scenario: Per-request limits, default-limit rows `0`, `1`, `100`, `101`); verify `go test -race -run TestDebugBuffer_DefaultLimits` passes
   - RED: table; fails because the buffer grows past 100 records
   - GREEN: fixed 100-record / 64 KiB ring evicting the oldest, size estimate including the per-entry overhead
   - REFACTOR: /simplify
-- [ ] 2.6 Godoc for `WithDebugBuffer` stating cost, default off, what is flushed, that flushed records reach the handler's `Handle` without `Enabled`, and that pointer values render at flush time; add an `Example` with a failing handler; verify `go test -run Example` passes
-- [ ] 2.7 Verify slice end to end with an httptest request that fails and one that succeeds, confirm `Enabled`, `Handle`, append and flush branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): buffer below-level logs per request and flush on failure`
+- [x] 2.6 Godoc for `WithDebugBuffer` stating cost, default off, what is flushed, that flushed records reach the handler's `Handle` without `Enabled`, and that pointer values render at flush time; add an `Example` with a failing handler; verify `go test -run Example` passes
+- [x] 2.7 Verify slice end to end with an httptest request that fails and one that succeeds, confirm `Enabled`, `Handle`, append and flush branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): buffer below-level logs per request and flush on failure`
 
 ## 3. Slice: bounds and summary
 

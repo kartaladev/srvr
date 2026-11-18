@@ -38,6 +38,9 @@ type LogConfig struct {
 	// default. Error values still reach the handler as their guarded text,
 	// a plain string, whatever the cap.
 	MaxAttrBytes int `json:"max_attr_bytes" yaml:"max_attr_bytes" env:"MAX_ATTR_BYTES"`
+	// DebugBuffer configures per-request buffering of below-level
+	// records; see [DebugBufferConfig]. Default off.
+	DebugBuffer DebugBufferConfig `json:"debug_buffer" yaml:"debug_buffer" env:"DEBUG_BUFFER_"`
 }
 
 // defaultMaxAttrBytes keeps one hostile or careless value from flooding
@@ -71,7 +74,7 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 			return nil, err
 		}
 
-		return &logHandler{base: ls.Handler, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
+		return ls.wrap(ls.Handler), nil
 	}
 
 	// Every invalid field is reported, Level first.
@@ -113,7 +116,12 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 		return nil, errors.Join(errs...)
 	}
 
-	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
+	return ls.wrap(base), nil
+}
+
+// wrap returns srvr's handler around base with the settings of ls.
+func (ls *LogSettings) wrap(base slog.Handler) *logHandler {
+	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: newBufferPolicy(ls.DebugBuffer), cache: &targetCache{}}
 }
 
 // checkOwnHandler rejects settings that belong to a consumer's handler.
@@ -151,7 +159,7 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 		return slog.Default()
 	}
 
-	return slog.New(req.core.log.bind(&req.trace))
+	return slog.New(req.core.log.bind(req))
 }
 
 // logHandler is the handler srvr wraps around the configured one. It adds
@@ -163,8 +171,10 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 type logHandler struct {
 	base  slog.Handler
 	steps []step
-	// trace is the trace a request logger is bound to, or nil.
-	trace *Trace
+	// req is the request a request logger is bound to, or nil.
+	req *RequestState
+	// buffering is the server's debug buffer policy, nil when off.
+	buffering *bufferPolicy
 	// maxBytes caps string attributes; negative disables the cap.
 	maxBytes int
 	// truncated is set when a recorded With attribute was cut.
@@ -181,10 +191,10 @@ type logHandler struct {
 type targetCache struct{ last atomic.Pointer[cachedTarget] }
 
 // targetKey is the top attributes a target is built with: the trace, when
-// traced, and the truncation flag.
+// traced, the truncation flag and the flushed-record marker.
 type targetKey struct {
-	traceID, spanID string
-	traced, cut     bool
+	traceID, spanID       string
+	traced, cut, buffered bool
 }
 
 // cachedTarget is a target and the key it was built for.
@@ -200,9 +210,46 @@ type step struct {
 	attrs []slog.Attr
 }
 
-// Enabled asks the base handler; a panic there is counted like a failed
-// write and the record is skipped.
-func (h *logHandler) Enabled(ctx context.Context, l slog.Level) (enabled bool) {
+// Enabled reports whether a record at l is written or buffered: the base
+// handler enables it, or the request of ctx has an open debug buffer and l
+// is at or above the buffer level.
+func (h *logHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	if h.baseEnabled(ctx, l) {
+		return true
+	}
+
+	b := h.bufferFor(ctx, l)
+
+	return b != nil && b.open()
+}
+
+// bufferFor returns the debug buffer, open or sealed, a record at l logged
+// with ctx goes to, or nil.
+func (h *logHandler) bufferFor(ctx context.Context, l slog.Level) *requestBuffer {
+	if h.buffering == nil || l < h.buffering.level {
+		return nil
+	}
+
+	if req := h.requestOf(ctx); req != nil {
+		return req.buffer
+	}
+
+	return nil
+}
+
+// requestOf returns the request a request logger is bound to, or the
+// request of ctx, or nil.
+func (h *logHandler) requestOf(ctx context.Context) *RequestState {
+	if h.req != nil {
+		return h.req
+	}
+
+	return requestFrom(ctx)
+}
+
+// baseEnabled asks the base handler; a panic there is counted like a
+// failed write and the record is skipped.
+func (h *logHandler) baseEnabled(ctx context.Context, l slog.Level) (enabled bool) {
 	defer func() {
 		if recover() != nil {
 			logWriteErrors.Add(1)
@@ -243,10 +290,10 @@ func (h *logHandler) with(st step) *logHandler {
 	return c
 }
 
-// bind returns h bound to tr, for a request logger.
-func (h *logHandler) bind(tr *Trace) *logHandler {
+// bind returns h bound to req, for a request logger.
+func (h *logHandler) bind(req *RequestState) *logHandler {
 	c := h.clone()
-	c.trace = tr
+	c.req = req
 
 	return c
 }
@@ -261,10 +308,33 @@ func (h *logHandler) clone() *logHandler {
 	return &c
 }
 
+// Handle writes r when the base handler enables its level now, which may
+// differ from when Enabled was asked; otherwise it buffers r in the
+// request's open debug buffer, or drops it.
 func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
-	h.handle(ctx, r, false)
+	if h.buffering == nil || h.baseEnabled(ctx, r.Level) {
+		h.handle(ctx, r, false)
+
+		return nil
+	}
+
+	// A sealed buffer takes nothing: the record is dropped.
+	if b := h.bufferFor(ctx, r.Level); b != nil {
+		rec, cut := h.cut(r.Clone(), false)
+		b.add(newEntry(ctx, h, rec, cut))
+	}
 
 	return nil
+}
+
+// cut returns r with its values cut to the attribute limit, and whether
+// anything was cut. It cannot panic: it resolves LogValuers with slog's
+// recovering Resolve and reads error and value text guarded.
+func (h *logHandler) cut(r slog.Record, own bool) (slog.Record, bool) {
+	t := truncator{maxBytes: h.maxBytes}
+	r = t.record(r, own)
+
+	return r, t.cut
 }
 
 // handle writes r; own marks a record srvr built itself, whose message is
@@ -272,17 +342,22 @@ func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
 // handler, while the recorded steps are replayed or in Handle, is counted
 // instead of passed on, and the record is skipped.
 func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
+	r, cut := h.cut(r, own)
+	h.write(ctx, r, cut, false)
+}
+
+// write writes r, already cut (cut reports whether anything was), with the
+// correlation keys and, for a flushed record (buffered), srvr.buffered. An
+// error or a panic in the base handler is counted and the record skipped.
+func (h *logHandler) write(ctx context.Context, r slog.Record, cut, buffered bool) {
 	defer func() {
 		if recover() != nil {
 			logWriteErrors.Add(1)
 		}
 	}()
 
-	t := truncator{maxBytes: h.maxBytes}
-	r = t.record(r, own)
-
 	tr, traced := h.traceOf(ctx)
-	key := targetKey{traced: traced, cut: t.cut || h.truncated}
+	key := targetKey{traced: traced, cut: cut || h.truncated, buffered: buffered}
 	if traced {
 		key.traceID, key.spanID = tr.TraceID, tr.SpanID
 	}
@@ -308,6 +383,10 @@ func (h *logHandler) cachedTarget(key targetKey) slog.Handler {
 
 	if key.cut {
 		top = append(top, slog.Bool(keyAttrTruncated, true))
+	}
+
+	if key.buffered {
+		top = append(top, slog.Bool(keyBuffered, true))
 	}
 
 	target := h.target(top)
@@ -339,11 +418,11 @@ func (h *logHandler) target(top []slog.Attr) slog.Handler {
 
 // traceOf returns the bound trace, or the trace of ctx.
 func (h *logHandler) traceOf(ctx context.Context) (Trace, bool) {
-	if h.trace != nil {
-		return *h.trace, true
+	if req := h.requestOf(ctx); req != nil {
+		return req.trace, true
 	}
 
-	return TraceFromContext(ctx)
+	return Trace{}, false
 }
 
 // LogSchemaVersion is the srvr.log.schema value of every record srvr and
@@ -405,6 +484,7 @@ const (
 	keyDuration      = "duration_ms"
 	keyUserAgent     = "user_agent.original"
 	keyAttrTruncated = "srvr.attr.truncated"
+	keyBuffered      = "srvr.buffered"
 	keyCommitted     = "srvr.response.committed"
 	keyURLPath       = "url.path"
 	keyURLQuery      = "url.query"

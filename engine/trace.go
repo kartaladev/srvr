@@ -62,6 +62,9 @@ type RequestState struct {
 	// failure is the error the request failed with, as srvr's prblm hook
 	// or the unmatched interception recorded it.
 	failure *failure
+	// buffer holds the request's below-level records when debug buffering
+	// is on; nil otherwise.
+	buffer *requestBuffer
 	// ends are the non-nil end functions of the request's observers, in
 	// Begin order.
 	ends []endFunc
@@ -184,7 +187,12 @@ func (c *Core) BeginRequest(ctx context.Context, traceparent []string) context.C
 
 // withState returns ctx carrying a new request state for trace tc.
 func (c *Core) withState(ctx context.Context, tc tracectx.Trace) context.Context {
-	return context.WithValue(ctx, stateKey{}, &RequestState{core: c, trace: Trace(tc)})
+	req := &RequestState{core: c, trace: Trace(tc)}
+	if c.log.buffering != nil {
+		req.buffer = &requestBuffer{policy: c.log.buffering}
+	}
+
+	return context.WithValue(ctx, stateKey{}, req)
 }
 
 // traceIDEnricher adds the request's trace id to every problem as the

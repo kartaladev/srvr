@@ -1,12 +1,14 @@
 package srvr_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
@@ -223,4 +225,71 @@ func ExampleWithRouteCheck() {
 	// Output:
 	// GET /healthz (srvr_test.healthRoutes)
 	// <nil>
+}
+
+// Signup logs its progress at DEBUG and fails.
+type Signup struct{}
+
+// Configure adds POST /registrations, which fails after two steps.
+func (Signup) Configure(g *srvr.Group) {
+	g.POST("/registrations", func(_ http.ResponseWriter, r *http.Request) error {
+		log := srvr.LoggerFromContext(r.Context())
+		log.DebugContext(r.Context(), "step one")
+		log.DebugContext(r.Context(), "step two")
+
+		return errors.New("db down")
+	})
+}
+
+// A failing request writes its DEBUG records, which the INFO level would
+// drop, just before its failed record.
+func ExampleWithDebugBuffer() {
+	var out bytes.Buffer
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(&out), srvr.WithDebugBuffer())
+	if err != nil {
+		panic(err)
+	}
+
+	if err := srv.Register(Signup{}); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Start(ctx) }()
+	<-srv.Ready()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+srv.Addr()+"/registrations", nil)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+
+	_ = res.Body.Close()
+
+	cancel()
+	if err := <-done; err != nil { // the drain waits for the request's records
+		panic(err)
+	}
+
+	for line := range strings.Lines(out.String()) {
+		var rec struct {
+			Msg      string `json:"msg"`
+			Level    string `json:"level"`
+			TraceID  string `json:"trace_id"`
+			Buffered bool   `json:"srvr.buffered"`
+		}
+
+		if json.Unmarshal([]byte(line), &rec) == nil && rec.TraceID != "" {
+			fmt.Println(rec.Level, rec.Msg, "buffered:", rec.Buffered)
+		}
+	}
+
+	// Output:
+	// DEBUG step one buffered: true
+	// DEBUG step two buffered: true
+	// ERROR http.request.failed buffered: false
 }

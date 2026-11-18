@@ -415,3 +415,45 @@ func WithErrorRedactor(fn func(string) string) Option {
 func WithoutErrorRedaction() Option {
 	return func(s *engine.Settings) { s.Redactor = func(text string) string { return text } }
 }
+
+// DebugBufferOption sets one field of the debug buffer configuration; pass
+// it to [WithDebugBuffer].
+type DebugBufferOption func(*DebugBufferConfig)
+
+// WithDebugBuffer turns per-request debug buffering on. Records logged
+// with a request's context (or through [LoggerFromContext]) below the log
+// level, at DEBUG or above, are kept in memory for that request instead of
+// being dropped. When the request fails with status 500 or above, or
+// panics, they are written just before its access record, in logging
+// order, with their original time and trace_id and srvr.buffered true;
+// on any other outcome they are discarded unwritten. Records at or above
+// the log level are written immediately as always, never twice.
+//
+// Default off, because it has costs a consumer should choose knowingly:
+// every below-level call made with a request context builds a full record
+// (slog's Enabled short-circuit no longer applies to it), each request
+// holds up to 100 records and 64 KiB, and on failure the log stream gets
+// DEBUG content, which may be more detailed than INFO. Buffered records
+// go through the same truncation (when buffered, so the limits count the
+// cut sizes), redaction and ReplaceAttr as every other record.
+//
+// Flushed records reach the base handler's Handle without its Enabled
+// being asked again: a consumer handler that filters by level inside
+// Handle drops them. A slog.Any value holding a pointer is rendered when
+// the record is flushed, so it shows changes made after it was logged.
+// Records logged without the request's context, such as with
+// context.Background() in a goroutine, follow the level rule unbuffered.
+func WithDebugBuffer(opts ...DebugBufferOption) Option {
+	return func(s *engine.Settings) {
+		s.Log.DebugBuffer.Enabled = true
+
+		for _, opt := range opts {
+			opt(&s.Log.DebugBuffer)
+		}
+	}
+}
+
+// WithDebugBufferConfig sets every field of [DebugBufferConfig].
+func WithDebugBufferConfig(c DebugBufferConfig) Option {
+	return func(s *engine.Settings) { s.Log.DebugBuffer = c }
+}

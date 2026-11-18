@@ -24,11 +24,11 @@ func TestLogHandler_TargetCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tr := Trace{TraceID: "a1", SpanID: "s1"}
-	logger := slog.New(h.bind(&tr).WithAttrs([]slog.Attr{slog.String("step", "x")}))
+	req := &RequestState{trace: Trace{TraceID: "a1", SpanID: "s1"}}
+	logger := slog.New(h.bind(req).WithAttrs([]slog.Attr{slog.String("step", "x")}))
 
 	logger.Info("first")
-	tr = Trace{TraceID: "b2", SpanID: "s2"} // an observer's trace replaced in place
+	req.trace = Trace{TraceID: "b2", SpanID: "s2"} // an observer's trace replaced in place
 	logger.Info("second")
 	logger.Info("third", "long", strings.Repeat("y", 20))
 	logger.Info("fourth")
