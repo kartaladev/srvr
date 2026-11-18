@@ -15,14 +15,24 @@ import (
 func TestTriage_StackCap(t *testing.T) {
 	t.Parallel()
 
-	for _, tt := range []struct {
+	tests := []struct {
+		name string
 		size int
 		cut  bool
-	}{{32768, false}, {32769, true}} {
-		got, cut := cutString(strings.Repeat("s", tt.size), maxStackBytes)
-		if cut != tt.cut || len(strings.TrimSuffix(got, truncatedSuffix)) > maxStackBytes {
-			t.Errorf("%d bytes: cut %v (len %d), want cut %v", tt.size, cut, len(got), tt.cut)
-		}
+	}{
+		{"at the cap", 32768, false},
+		{"one past the cap", 32769, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, cut := cutString(strings.Repeat("s", tt.size), maxStackBytes)
+			if cut != tt.cut || len(strings.TrimSuffix(got, truncatedSuffix)) > maxStackBytes {
+				t.Errorf("%d bytes: cut %v (len %d), want cut %v", tt.size, cut, len(got), tt.cut)
+			}
+		})
 	}
 }
 
@@ -157,10 +167,22 @@ func TestFailure_PanicThroughWrapper(t *testing.T) {
 func TestPanicOf_Bounded(t *testing.T) {
 	t.Parallel()
 
-	for name, err := range map[string]error{"cyclic": selfError{}, "panicking Unwrap": panicUnwrapError{}} {
-		if _, ok := panicOf(err); ok {
-			t.Errorf("%s: reported a panic", name)
-		}
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"cyclic", selfError{}},
+		{"panicking Unwrap", panicUnwrapError{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, ok := panicOf(tt.err); ok {
+				t.Error("reported a panic")
+			}
+		})
 	}
 }
 
@@ -191,5 +213,72 @@ func TestRedactSecrets(t *testing.T) {
 				t.Fatalf("RedactSecrets(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// sliceError is an error whose type is not comparable.
+type sliceError []string
+
+func (e sliceError) Error() string { return "slice" }
+
+// ifaceError is comparable, but a value holding a slice cannot be hashed.
+type ifaceError struct{ v any }
+
+func (ifaceError) Error() string { return "iface" }
+
+// TestMarkSeen: a hashable error is tracked and reported on its second
+// sighting; nil and an error that cannot be a map key are never tracked
+// and never reported, instead of panicking.
+func TestMarkSeen(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		err        error
+		wantSecond bool
+		wantSeen   int
+	}{
+		{"comparable", selfError{}, true, 1},
+		{"nil", nil, false, 0},
+		{"type not comparable", sliceError{"a"}, false, 0},
+		{"comparable type, unhashable value", ifaceError{v: []int{1}}, false, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			seen := map[any]bool{}
+			if markSeen(seen, tt.err) {
+				t.Fatal("first sighting reported as a duplicate")
+			}
+
+			if got := markSeen(seen, tt.err); got != tt.wantSecond {
+				t.Fatalf("second sighting = %v, want %v", got, tt.wantSecond)
+			}
+
+			if len(seen) != tt.wantSeen {
+				t.Fatalf("seen holds %d errors, want %d", len(seen), tt.wantSeen)
+			}
+		})
+	}
+}
+
+// TestRequestState_RouteAccessors: the engines record the matched route
+// and its handler's location through the setters, and read them back.
+func TestRequestState_RouteAccessors(t *testing.T) {
+	t.Parallel()
+
+	var req RequestState
+	if req.Matched() || req.Route() != "" || req.Location() != (Location{}) {
+		t.Fatalf("zero state = %q, %+v, matched %v; want none", req.Route(), req.Location(), req.Matched())
+	}
+
+	loc := Location{function: "main.Users.Get", file: "users.go", line: 7}
+	req.SetRoute("/users/{id}")
+	req.SetLocation(loc)
+
+	if !req.Matched() || req.Route() != "/users/{id}" || req.Location() != loc {
+		t.Fatalf("state = %q, %+v, matched %v; want /users/{id}, %+v, true", req.Route(), req.Location(), req.Matched(), loc)
 	}
 }

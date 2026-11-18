@@ -384,17 +384,27 @@ func TestUnmatched_Redirect(t *testing.T) {
 	base := startServer(t, srv)
 
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	for p, want := range map[string]string{"/dir": "/dir/", "/a/../dir/": "/dir/", "//nope": "/nope"} {
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+p, nil)
-		res, err := client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = io.Copy(io.Discard, res.Body)
-		res.Body.Close()
-		if res.StatusCode < 300 || res.StatusCode > 399 || !strings.HasSuffix(res.Header.Get("Location"), want) {
-			t.Fatalf("GET %s = %d Location %q, want a redirect to %s", p, res.StatusCode, res.Header.Get("Location"), want)
-		}
+	tests := []struct{ name, path, want string }{
+		{"missing trailing slash", "/dir", "/dir/"},
+		{"dot segments", "/a/../dir/", "/dir/"},
+		{"double slash", "//nope", "/nope"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+tt.path, nil)
+			res, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+			if res.StatusCode < 300 || res.StatusCode > 399 || !strings.HasSuffix(res.Header.Get("Location"), tt.want) {
+				t.Fatalf("GET %s = %d Location %q, want a redirect to %s", tt.path, res.StatusCode, res.Header.Get("Location"), tt.want)
+			}
+		})
 	}
 }
 

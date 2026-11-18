@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
+	"github.com/valyala/fasthttp"
 )
 
 // TestMountFields pins the unexported fiber fields srvr reads (the route
@@ -71,7 +72,8 @@ func TestModuleVersion(t *testing.T) {
 }
 
 // TestWalkDefensive: the sub-app walk stops at a mount cycle and at a
-// value that is not an app, instead of recursing forever or panicking.
+// value that is not an app, and skips a nil route in the stack, instead of
+// recursing forever or panicking.
 func TestWalkDefensive(t *testing.T) {
 	t.Parallel()
 
@@ -101,19 +103,30 @@ func TestWalkDefensive(t *testing.T) {
 		}
 	})
 
-	t.Run("not an app", func(t *testing.T) {
-		t.Parallel()
+	for _, tc := range []struct {
+		name string
+		app  reflect.Value
+	}{
+		{"not an app: invalid Value", reflect.Value{}},
+		{"not an app: nil *fiber.App", reflect.ValueOf((*fiber.App)(nil))},
+		{"nil route in the stack", reflect.ValueOf(&struct{ stack [][]*fiber.Route }{stack: [][]*fiber.Route{{nil}}})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-		var o routeOwners
-		for _, v := range []reflect.Value{{}, reflect.ValueOf((*fiber.App)(nil))} {
-			if err := o.walk(v, "/", "T", map[uintptr]bool{}); err != nil {
+			var o routeOwners
+			if err := o.walk(tc.app, "/", "T", map[uintptr]bool{}); err != nil {
 				t.Fatal(err)
 			}
-		}
 
-		if len(o.routes) != 0 {
-			t.Fatalf("routes %v", o.routes)
-		}
+			if len(o.routes) != 0 {
+				t.Fatalf("routes %v", o.routes)
+			}
+		})
+	}
+
+	t.Run("nil group", func(t *testing.T) {
+		t.Parallel()
 
 		if app, err := subApp(reflect.ValueOf((*fiber.Group)(nil))); app.IsValid() || err != nil {
 			t.Fatalf("subApp(nil group) = %v, %v; want the zero Value and nil", app, err)
@@ -289,28 +302,33 @@ func TestMatchKey(t *testing.T) {
 	)
 
 	tests := []struct {
+		name string
 		path string
 		cfg  fiber.Config
 		want string
 	}{
-		{"", lax, "/"},
-		{"users", lax, "/users"},
-		{"/", lax, "/"},
-		{"//", lax, "/"},
-		{"/Users/", lax, "/users"},
-		{"/Users/", cased, "/Users"},
-		{"/Users/", strict, "/users/"},
-		{"/users/:id", lax, "/users/:"},
-		{"/users/:Name/x", lax, "/users/:/x"},
-		{"/users/:id<int>", lax, "/users/:<int>"},
-		{`/a\:b`, lax, "/a:b"},
-		{"/ÄB", lax, "/Äb"}, // ASCII letters only, as fiber
+		{"empty", "", lax, "/"},
+		{"no leading slash", "users", lax, "/users"},
+		{"root", "/", lax, "/"},
+		{"double slash", "//", lax, "/"},
+		{"case folded and trailing slash dropped", "/Users/", lax, "/users"},
+		{"case sensitive", "/Users/", cased, "/Users"},
+		{"strict routing", "/Users/", strict, "/users/"},
+		{"parameter name dropped", "/users/:id", lax, "/users/:"},
+		{"mixed-case parameter name dropped", "/users/:Name/x", lax, "/users/:/x"},
+		{"parameter constraint kept", "/users/:id<int>", lax, "/users/:<int>"},
+		{"escaped colon", `/a\:b`, lax, "/a:b"},
+		{"non-ASCII letters kept", "/ÄB", lax, "/Äb"}, // ASCII letters only, as fiber
 	}
 
 	for _, tt := range tests {
-		if got := matchKey(tt.path, &tt.cfg); got != tt.want {
-			t.Errorf("matchKey(%q, CaseSensitive %v, StrictRouting %v) = %q, want %q", tt.path, tt.cfg.CaseSensitive, tt.cfg.StrictRouting, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := matchKey(tt.path, &tt.cfg); got != tt.want {
+				t.Errorf("matchKey(%q, CaseSensitive %v, StrictRouting %v) = %q, want %q", tt.path, tt.cfg.CaseSensitive, tt.cfg.StrictRouting, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -318,16 +336,22 @@ func TestMatchKey(t *testing.T) {
 func TestGroupPath(t *testing.T) {
 	t.Parallel()
 
-	for _, tt := range []struct{ prefix, path, want string }{
-		{"/api", "", "/api"},
-		{"/api", "users", "/api/users"},
-		{"/api/", "/users", "/api/users"},
-		{"/", "/users", "/users"},
-		{"/api", "/", "/api/"},
-	} {
-		if got := groupPath(tt.prefix, tt.path); got != tt.want {
-			t.Errorf("groupPath(%q, %q) = %q, want %q", tt.prefix, tt.path, got, tt.want)
-		}
+	tests := []struct{ name, prefix, path, want string }{
+		{"empty path", "/api", "", "/api"},
+		{"path without slash", "/api", "users", "/api/users"},
+		{"prefix with trailing slash", "/api/", "/users", "/api/users"},
+		{"root prefix", "/", "/users", "/users"},
+		{"root path", "/api", "/", "/api/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := groupPath(tt.prefix, tt.path); got != tt.want {
+				t.Errorf("groupPath(%q, %q) = %q, want %q", tt.prefix, tt.path, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -358,10 +382,7 @@ func TestFiberRequestState(t *testing.T) {
 		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
 			t.Parallel()
 
-			srv, err := New(srvr.WithLogOutput(io.Discard))
-			if err != nil {
-				t.Fatal(err)
-			}
+			srv := newInternalServer(t)
 
 			var state *engine.RequestState
 			srv.app.Use(func(c fiber.Ctx) error {
@@ -385,6 +406,129 @@ func TestFiberRequestState(t *testing.T) {
 			if state.Route() != tt.route || state.Matched() != tt.matched || state.Status() != tt.status || state.Failed() != tt.failed {
 				t.Fatalf("state route %q matched %v status %d failed %v; want %q %v %d %v",
 					state.Route(), state.Matched(), state.Status(), state.Failed(), tt.route, tt.matched, tt.status, tt.failed)
+			}
+		})
+	}
+}
+
+// newInternalServer returns a server that is never started.
+func newInternalServer(t *testing.T) *Server {
+	t.Helper()
+
+	srv, err := New(srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.cancelBase)
+
+	return srv
+}
+
+// TestConfigure_FieldCheckFails: configure checks fiber's internals before
+// any configurer runs, so a renamed field fails it with an error wrapping
+// srvr.ErrRouteConfig and no configurer registers a route. It swaps the
+// package-level fiberFields, so it is serial: every parallel test of the
+// binary starts only after it has restored them.
+//
+//nolint:paralleltest // swaps the package-level fiberFields.
+func TestConfigure_FieldCheckFails(t *testing.T) {
+	type renamed struct{ other bool } //nolint:unused // stand-in type
+
+	saved := fiberFields
+	fiberFields = append(slices.Clone(saved), fiberField{reflect.TypeFor[renamed](), "mount", reflect.TypeFor[bool]()})
+	t.Cleanup(func() { fiberFields = saved })
+
+	srv := newInternalServer(t)
+	ran := false
+
+	const want = "field fibersrvr.renamed.mount is missing"
+	routes, err := srv.configure([]srvr.RouteConfigurer[fiber.Router]{routes(func(fiber.Router) { ran = true })})
+	if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), want) || routes != nil {
+		t.Fatalf("configure = %v, %v; want an error wrapping srvr.ErrRouteConfig containing %q", routes, err, want)
+	}
+
+	if ran {
+		t.Fatal("a configurer ran after the field check failed")
+	}
+}
+
+// TestConfigure_MountUnreadable: a recorded mount whose group cannot be
+// read fails addMounted, and configure returns that error, wrapping
+// srvr.ErrRouteConfig, with no route listing. A real fiber mount route
+// always has a readable group (its type is pinned by checkFields), so the
+// mount is recorded by hand.
+func TestConfigure_MountUnreadable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		group reflect.Value
+		want  string
+	}{
+		{"group missing", reflect.Value{}, "field fiber.Route.group is missing"},
+		{"group retyped", reflect.ValueOf(&fiber.App{}), "field fiber.Route.group has type *fiber.App"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			bad := mount{group: tt.group, prefix: "/sub", configurer: "T"}
+
+			o := routeOwners{mounts: []mount{bad}}
+			if err := o.addMounted(); !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("addMounted = %v, want an error wrapping srvr.ErrRouteConfig containing %q", err, tt.want)
+			}
+
+			srv := newInternalServer(t)
+			srv.owners.mounts = []mount{bad}
+
+			routes, err := srv.configure(nil)
+			if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), tt.want) || routes != nil {
+				t.Fatalf("configure = %v, %v; want an error wrapping srvr.ErrRouteConfig containing %q", routes, err, tt.want)
+			}
+		})
+	}
+}
+
+// TestFiberHeader: observers read the request's header names and values
+// through fiberHeader, as copies.
+func TestFiberHeader(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		set      map[string]string
+		wantKeys []string
+		get      string
+		wantGet  string
+	}{
+		{"no header", nil, nil, "X-Request-Id", ""},
+		{"one header", map[string]string{"X-Request-Id": "r1"}, []string{"X-Request-Id"}, "X-Request-Id", "r1"},
+		{"two headers", map[string]string{"X-Request-Id": "r1", "Accept": "application/json"}, []string{"Accept", "X-Request-Id"}, "Accept", "application/json"},
+		{"absent name", map[string]string{"Accept": "application/json"}, []string{"Accept"}, "X-Request-Id", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var h fasthttp.RequestHeader
+			for k, v := range tt.set {
+				h.Set(k, v)
+			}
+			f := fiberHeader{&h}
+
+			keys := f.Keys()
+			slices.Sort(keys)
+			if !slices.Equal(keys, tt.wantKeys) {
+				t.Errorf("Keys = %q, want %q", keys, tt.wantKeys)
+			}
+
+			got := f.Get(tt.get)
+			h.Set(tt.get, "changed")
+			if got != tt.wantGet {
+				t.Errorf("Get(%q) = %q, want %q", tt.get, got, tt.wantGet)
 			}
 		})
 	}

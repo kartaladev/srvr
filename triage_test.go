@@ -265,39 +265,46 @@ var hex16 = regexp.MustCompile(`^[0-9a-f]{16}$`)
 func TestTriage_Fingerprint(t *testing.T) {
 	t.Parallel()
 
-	base, out := loggedServer(t, func(g *srvr.Group) {
-		g.GET("/users/{id}", func(_ http.ResponseWriter, r *http.Request) error {
-			switch r.URL.Query().Get("e") {
-			case "once":
-				return fmt.Errorf("user %s: %w", r.PathValue("id"), sql.ErrNoRows)
-			case "twice":
-				return fmt.Errorf("b: %w", fmt.Errorf("a: %w", sql.ErrNoRows))
-			case "panic":
-				panic(r.URL.Query().Get("v"))
-			default:
-				return errors.New("a")
-			}
-		})
-		g.POST("/users", returning(errors.New("a")))
-		// A route for every method: Mount handlers return no error, so the
-		// "Mount handler" rows use a method-less srvr route.
-		g.Handle("", "/files", returning(errors.New("a")))
-		g.Handle("QUERY", "/search", returning(errors.New("a")))
-		g.POST("/search", returning(errors.New("a")))
-	})
-
-	fingerprint := func(method, path string) string {
+	// fingerprints starts a server of its own for the calling subtest, so
+	// the subtests run in parallel, and returns a function that sends one
+	// request and returns the fingerprint of the failed record it adds.
+	fingerprints := func(t *testing.T) func(method, path string) string {
 		t.Helper()
-		before := len(out.find(t, "http.request.failed"))
-		do(t, method, base+path, nil, nil)
-		var recs []map[string]any
-		eventually(t, func() bool { recs = out.find(t, "http.request.failed"); return len(recs) > before }, "no record")
-		fp, _ := recs[len(recs)-1]["error.fingerprint"].(string)
-		if !hex16.MatchString(fp) {
-			t.Fatalf("fingerprint %q is not 16 hex characters", fp)
-		}
 
-		return fp
+		base, out := loggedServer(t, func(g *srvr.Group) {
+			g.GET("/users/{id}", func(_ http.ResponseWriter, r *http.Request) error {
+				switch r.URL.Query().Get("e") {
+				case "once":
+					return fmt.Errorf("user %s: %w", r.PathValue("id"), sql.ErrNoRows)
+				case "twice":
+					return fmt.Errorf("b: %w", fmt.Errorf("a: %w", sql.ErrNoRows))
+				case "panic":
+					panic(r.URL.Query().Get("v"))
+				default:
+					return errors.New("a")
+				}
+			})
+			g.POST("/users", returning(errors.New("a")))
+			// A route for every method: Mount handlers return no error, so the
+			// "Mount handler" rows use a method-less srvr route.
+			g.Handle("", "/files", returning(errors.New("a")))
+			g.Handle("QUERY", "/search", returning(errors.New("a")))
+			g.POST("/search", returning(errors.New("a")))
+		})
+
+		return func(method, path string) string {
+			t.Helper()
+			before := len(out.find(t, "http.request.failed"))
+			do(t, method, base+path, nil, nil)
+			var recs []map[string]any
+			eventually(t, func() bool { recs = out.find(t, "http.request.failed"); return len(recs) > before }, "no record")
+			fp, _ := recs[len(recs)-1]["error.fingerprint"].(string)
+			if !hex16.MatchString(fp) {
+				t.Fatalf("fingerprint %q is not 16 hex characters", fp)
+			}
+
+			return fp
+		}
 	}
 
 	pairs := []struct {
@@ -318,10 +325,15 @@ func TestTriage_Fingerprint(t *testing.T) {
 	}
 
 	for _, p := range pairs {
-		a, b := fingerprint(p.first[0], p.first[1]), fingerprint(p.second[0], p.second[1])
-		if (a == b) != p.equal {
-			t.Errorf("%s: %s vs %s, want equal %v", p.name, a, b, p.equal)
-		}
+		t.Run(p.name, func(t *testing.T) {
+			t.Parallel()
+
+			fingerprint := fingerprints(t)
+			a, b := fingerprint(p.first[0], p.first[1]), fingerprint(p.second[0], p.second[1])
+			if (a == b) != p.equal {
+				t.Errorf("%s vs %s, want equal %v", a, b, p.equal)
+			}
+		})
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -77,10 +76,20 @@ func TestCorrelation_EmptyDerivations(t *testing.T) {
 func TestClientAddress(t *testing.T) {
 	t.Parallel()
 
-	for remote, want := range map[string]string{"127.0.0.1:5000": "127.0.0.1", "[::1]:5000": "::1", "@": "@"} {
-		if got := clientAddress(remote); got != want {
-			t.Errorf("clientAddress(%q) = %q, want %q", remote, got, want)
-		}
+	tests := []struct{ name, remote, want string }{
+		{"IPv4 with port", "127.0.0.1:5000", "127.0.0.1"},
+		{"IPv6 with port", "[::1]:5000", "::1"},
+		{"no port", "@", "@"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := clientAddress(tt.remote); got != tt.want {
+				t.Errorf("clientAddress(%q) = %q, want %q", tt.remote, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -89,17 +98,26 @@ func TestFuncName(t *testing.T) {
 	t.Parallel()
 
 	var nilFunc func()
-	for _, tt := range []struct {
+
+	tests := []struct {
+		name string
 		fn   any
 		want string
 	}{
-		{TestFuncName, "github.com/kartaladev/srvr/engine.TestFuncName"},
-		{nilFunc, ""},
-		{"not a func", ""},
-	} {
-		if got := FuncLocation(tt.fn).Function(); got != tt.want {
-			t.Errorf("FuncLocation(%T).Function() = %q, want %q", tt.fn, got, tt.want)
-		}
+		{"function", TestFuncName, "github.com/kartaladev/srvr/engine.TestFuncName"},
+		{"nil function", nilFunc, ""},
+		{"nil", nil, ""},
+		{"not a function", "not a func", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := FuncLocation(tt.fn).Function(); got != tt.want {
+				t.Errorf("FuncLocation(%T).Function() = %q, want %q", tt.fn, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -137,27 +155,6 @@ func TestResponseRecorder_ReadFrom(t *testing.T) {
 			}
 			if w.Code != tt.wantStatus || w.Body.String() != "hello" {
 				t.Fatalf("response = %d %q", w.Code, w.Body.String())
-			}
-		})
-	}
-}
-
-// BenchmarkCorrelation compares ungrouped and grouped request records: a
-// grouped logger replays its WithGroup and WithAttrs steps per record.
-func BenchmarkCorrelation(b *testing.B) {
-	base := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)} //nolint:sloglint // the benchmark measures encoding records: slog.DiscardHandler is disabled and would skip that work
-	ctx := context.WithValue(b.Context(), stateKey{}, &RequestState{trace: Trace{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7"}})
-
-	loggers := map[string]*slog.Logger{
-		"ungrouped": slog.New(base),
-		"grouped":   slog.New(base).With("table", "users").WithGroup("db"),
-	}
-
-	for name, l := range loggers {
-		b.Run(name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				l.InfoContext(ctx, "query", "k", "v")
 			}
 		})
 	}

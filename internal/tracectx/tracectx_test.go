@@ -1,6 +1,7 @@
 package tracectx_test
 
 import (
+	"encoding/hex"
 	"regexp"
 	"strings"
 	"testing"
@@ -80,17 +81,44 @@ func TestTraceparent_New(t *testing.T) {
 	}
 }
 
-// FuzzTraceparent checks that no header value crashes the parser and that
-// every result carries valid ids.
+// FuzzTraceparent covers test-quality / Scenario: Fuzzed properties, row
+// FuzzTraceparent: no header crashes the parser; an accepted header keeps
+// its trace id and parent id, its sampled flag is the flags byte's low bit
+// and the span id is new; a rejected one yields a fresh valid trace.
 func FuzzTraceparent(f *testing.F) {
-	f.Add("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
-	f.Add("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-x")
-	f.Add("")
+	for _, seed := range []string{
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-fe",
+		"01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-x",
+		"00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-0B",                             // upper-case hex
+		"00-00000000000000000000000000000000-0000000000000000-01",                             // all-zero ids
+		"ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",                             // version ff
+		"01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-" + strings.Repeat("x", 600), // over-long
+		"",
+	} {
+		f.Add(seed)
+	}
 
 	f.Fuzz(func(t *testing.T, header string) {
 		tr := tracectx.FromHeaders([]string{header})
 		if !traceIDRe.MatchString(tr.TraceID) || !spanIDRe.MatchString(tr.SpanID) {
 			t.Fatalf("invalid ids %+v for %q", tr, header)
+		}
+
+		if tr.ParentSpanID == "" { // rejected: a fresh, unsampled trace
+			if tr.Sampled || (len(header) >= 35 && tr.TraceID == header[3:35]) {
+				t.Fatalf("rejected %q gave %+v, want a fresh unsampled trace", header, tr)
+			}
+
+			return
+		}
+
+		flags, err := hex.DecodeString(header[53:55])
+		if err != nil {
+			t.Fatalf("accepted %q whose flags are not hex: %v", header, err)
+		}
+		if tr.TraceID != header[3:35] || tr.ParentSpanID != header[36:52] || tr.Sampled != (flags[0]&1 == 1) || tr.SpanID == tr.ParentSpanID {
+			t.Fatalf("accepted %q gave %+v, want its ids, a new span and sampled = flags bit 0", header, tr)
 		}
 	})
 }

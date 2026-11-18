@@ -501,6 +501,74 @@ type valuePanics struct{ context.Context }
 
 func (valuePanics) Value(any) any { panic("Value panicked") }
 
+// gate blocks an observer until the test opens it, so a test can tell
+// whether the response waited for the observer without timing it.
+type gate struct {
+	entered, release       chan struct{}
+	enterOnce, releaseOnce sync.Once
+	released               atomic.Bool
+}
+
+func newGate() *gate {
+	return &gate{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+// block signals that the observer is blocked and waits until the gate opens.
+func (g *gate) block() {
+	g.enterOnce.Do(func() { close(g.entered) })
+	<-g.release
+}
+
+// open releases the blocked observer; it is safe to call more than once.
+func (g *gate) open() {
+	g.releaseOnce.Do(func() {
+		g.released.Store(true)
+		close(g.release)
+	})
+}
+
+// get sends GET url and returns the status. When blocks is set, the
+// observer is expected to block on g: the response must not arrive
+// before the gate is opened.
+func (g *gate) get(t *testing.T, url string, blocks bool) int {
+	t.Helper()
+
+	if !blocks {
+		return get(t, url).status
+	}
+
+	defer g.open() // a failure below must not leave the server draining a blocked request
+
+	type answer struct {
+		status       int
+		afterRelease bool
+	}
+
+	answered := make(chan answer, 1)
+
+	go func() {
+		status := <-inFlight(url)
+		answered <- answer{status, g.released.Load()}
+	}()
+
+	select {
+	case <-g.entered:
+	case a := <-answered:
+		t.Fatalf("answered with status %d before the observer blocked", a.status)
+	case <-time.After(waitLimit):
+		t.Fatalf("after %s: the observer did not block", waitLimit)
+	}
+
+	g.open()
+
+	a := receive(t, answered, "no response after the observer returned")
+	if !a.afterRelease {
+		t.Fatal("the response arrived while the observer was blocked")
+	}
+
+	return a.status
+}
+
 // TestObserver_Faults covers request-observer "Observer faults", the
 // request rows, plus a returned context whose Value panics and an end
 // panic whose value's Error panics.
@@ -511,46 +579,49 @@ func TestObserver_Faults(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		begin    func(ctx context.Context) (context.Context, func(srvr.ResultInfo))
+		begin    func(ctx context.Context, g *gate) (context.Context, func(srvr.ResultInfo))
 		requests int
-		minTime  time.Duration
+		blocks   bool   // begin or end blocks on g until the test releases it
 		kind     string // the expected fault kind, empty for none
 	}{
-		{"panics in Begin", func(context.Context) (context.Context, func(srvr.ResultInfo)) { panic("boom") }, 1, 0, "begin_panic"},
-		{"nil context", func(context.Context) (context.Context, func(srvr.ResultInfo)) { return nil, func(srvr.ResultInfo) {} }, 1, 0, ""},
-		{"foreign context", func(context.Context) (context.Context, func(srvr.ResultInfo)) {
+		{"panics in Begin", func(context.Context, *gate) (context.Context, func(srvr.ResultInfo)) { panic("boom") }, 1, false, "begin_panic"},
+		{"nil context", func(context.Context, *gate) (context.Context, func(srvr.ResultInfo)) {
+			return nil, func(srvr.ResultInfo) {}
+		}, 1, false, ""},
+		{"foreign context", func(context.Context, *gate) (context.Context, func(srvr.ResultInfo)) {
 			return context.WithValue(context.Background(), ctxKey{}, 1), nil //nolint:usetesting // a context unrelated to the request is the row under test
-		}, 1, 0, ""},
-		{"nil end", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) { return ctx, nil }, 1, 0, ""},
-		{"panics in end", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
+		}, 1, false, ""},
+		{"nil end", func(ctx context.Context, _ *gate) (context.Context, func(srvr.ResultInfo)) { return ctx, nil }, 1, false, ""},
+		{"panics in end", func(ctx context.Context, _ *gate) (context.Context, func(srvr.ResultInfo)) {
 			return ctx, func(srvr.ResultInfo) { panic("boom") }
-		}, 1, 0, "end_panic"},
-		{"panics in Begin on 1000 requests", func(context.Context) (context.Context, func(srvr.ResultInfo)) { panic("boom") }, 1000, 0, "begin_panic"},
-		{"blocks in Begin", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
-			time.Sleep(50 * time.Millisecond)
+		}, 1, false, "end_panic"},
+		{"panics in Begin on 1000 requests", func(context.Context, *gate) (context.Context, func(srvr.ResultInfo)) { panic("boom") }, 1000, false, "begin_panic"},
+		{"blocks in Begin", func(ctx context.Context, g *gate) (context.Context, func(srvr.ResultInfo)) {
+			g.block()
 
 			return ctx, nil
-		}, 1, 50 * time.Millisecond, ""},
-		{"blocks in end", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
-			return ctx, func(srvr.ResultInfo) { time.Sleep(50 * time.Millisecond) }
-		}, 1, 50 * time.Millisecond, ""},
-		{"panics in end with ErrAbortHandler", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
+		}, 1, true, ""},
+		{"blocks in end", func(ctx context.Context, g *gate) (context.Context, func(srvr.ResultInfo)) {
+			return ctx, func(srvr.ResultInfo) { g.block() }
+		}, 1, true, ""},
+		{"panics in end with ErrAbortHandler", func(ctx context.Context, _ *gate) (context.Context, func(srvr.ResultInfo)) {
 			return ctx, func(srvr.ResultInfo) { panic(http.ErrAbortHandler) }
-		}, 1, 0, "end_panic"},
-		{"returns a context whose Value panics", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
+		}, 1, false, "end_panic"},
+		{"returns a context whose Value panics", func(ctx context.Context, _ *gate) (context.Context, func(srvr.ResultInfo)) {
 			return valuePanics{ctx}, nil
-		}, 1, 0, "begin_panic"},
-		{"panics in end with an error whose Error panics", func(ctx context.Context) (context.Context, func(srvr.ResultInfo)) {
+		}, 1, false, "begin_panic"},
+		{"panics in end with an error whose Error panics", func(ctx context.Context, _ *gate) (context.Context, func(srvr.ResultInfo)) {
 			return ctx, func(srvr.ResultInfo) { panic(panickingError{}) }
-		}, 1, 0, "end_panic"},
+		}, 1, false, "end_panic"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			g := newGate()
 			obs := observerFunc(func(ctx context.Context, _ srvr.RequestInfo) (context.Context, func(srvr.ResultInfo)) {
-				return tt.begin(ctx)
+				return tt.begin(ctx, g)
 			})
 			out := &logBuffer{}
 			srv := newServer(t, srvr.WithObserver(obs), srvr.WithLogOutput(out))
@@ -567,13 +638,8 @@ func TestObserver_Faults(t *testing.T) {
 			base := startServer(t, srv)
 
 			for range tt.requests {
-				start := time.Now()
-				if got := get(t, base+"/ping").status; got != http.StatusOK {
+				if got := g.get(t, base+"/ping", tt.blocks); got != http.StatusOK {
 					t.Fatalf("status = %d, want 200", got)
-				}
-
-				if d := time.Since(start); d < tt.minTime {
-					t.Fatalf("response after %v, want at least %v", d, tt.minTime)
 				}
 			}
 
@@ -621,9 +687,10 @@ func TestObserver_FaultsBlockingEnd(t *testing.T) {
 	t.Parallel()
 
 	out := &orderedOutput{}
+	g := newGate()
 	obs := observerFunc(func(ctx context.Context, _ srvr.RequestInfo) (context.Context, func(srvr.ResultInfo)) {
 		return ctx, func(srvr.ResultInfo) {
-			time.Sleep(50 * time.Millisecond)
+			g.block()
 			out.endReturned.Store(true)
 		}
 	})
@@ -631,9 +698,8 @@ func TestObserver_FaultsBlockingEnd(t *testing.T) {
 	srv := newServer(t, srvr.WithObserver(obs), srvr.WithLogOutput(out))
 	mustNil(t, srv.Register(okRoute("/ping")))
 
-	start := time.Now()
-	if got := get(t, startServer(t, srv)+"/ping").status; got != http.StatusOK || time.Since(start) < 50*time.Millisecond {
-		t.Fatalf("status %d after %v", got, time.Since(start))
+	if got := g.get(t, startServer(t, srv)+"/ping", true); got != http.StatusOK {
+		t.Fatalf("status = %d, want 200", got)
 	}
 
 	eventually(t, func() bool { return len(out.find(t, "http.request.completed")) == 1 }, "no access record")

@@ -56,7 +56,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### TestStart_Stop deadline row can hang instead of failing under load
-- **Status:** open
+- **Status:** closed: fixed by skills-compliance task 8.2
 - **Target:** skills-compliance (task 8.2, sleep and timing hygiene)
 - **Context:** `TestStart_Stop/the_Start_context_deadline_passes` (`lifecycle_test.go`) gives `Start` a context with a `100ms` deadline created before `Start`, then blocks on `<-started` (line 90) waiting for the in-flight request to reach the handler. Under CPU load the deadline can pass before the request is served, the server stops, `inFlight` reports `-1`, and the test waits on `started` forever, until the package's 10-minute timeout, instead of failing. Found while repeating the core suite during slice 2; unrelated to that slice's code.
 - **Evidence:** `go test -race -count=1 .` in a loop beside a parallel build: `panic: test timed out after 10m0s` / `running tests: TestStart_Stop/the_Start_context_deadline_passes (9m56s)`, goroutine `TestStart_Stop.func4` at `lifecycle_test.go:90` in `chan receive, 9 minutes`. Not reproduced on demand: it needs load, so no deterministic RED test exists yet.
@@ -89,3 +89,36 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** slice 6's `RELEASING.md` lists the per-module `GOWORK=off` commands as the release gate, because the root Makefile targets (`tidy-check`, `vulncheck`) and the CI `release` job do not exist yet. Found by the slice 6 /simplify review.
 - **Evidence:** unverified: documentation state.
 - **Suggested action:** when 7.3 and 7.4 land, change the gate to `make vet lint test tidy-check vulncheck` from the root and describe the CI `release` job's `replace` check.
+
+### Benchmark baseline before the measured changes
+- **Status:** open
+- **Target:** skills-compliance (task 9.4)
+- **Context:** task 8.4 baseline on an Apple M4 Pro (darwin/arm64, 14 cores), Go 1.27.4, one run each (`-count=1`), so treat differences under ~5% as noise; task 9.4 compares with `benchstat` over repeated runs. Logging goes to `io.Discard` through srvr's JSON handler in every benchmark. `BenchmarkLogHandler` builds the handler with `newLogHandler` (default 1024-byte cap) and logs with a request context; its steps are group-free `With` calls and its `slog.Any` value is a two-key `http.Header`. The pipeline benchmarks run the full per-engine pipeline (`httptest` for net/http and gin, fibersrvr's `Server.Test` over `app.Test` for fiber, whose in-memory connection is part of every measurement).
+
+  | Benchmark | ns/op | B/op | allocs/op |
+  |---|---:|---:|---:|
+  | engine `BenchmarkCorrelation/ungrouped` | 1352 | 752 | 9 |
+  | engine `BenchmarkCorrelation/grouped` | 2508 | 1281 | 15 |
+  | engine `BenchmarkLogHandler/0_steps` | 1174 | 400 | 7 |
+  | engine `BenchmarkLogHandler/0_steps_with_slog.Any` | 2510 | 770 | 20 |
+  | engine `BenchmarkLogHandler/1_step` | 1377 | 712 | 10 |
+  | engine `BenchmarkLogHandler/1_step_with_slog.Any` | 3350 | 1084 | 23 |
+  | engine `BenchmarkLogHandler/3_steps` | 2142 | 1385 | 16 |
+  | engine `BenchmarkLogHandler/3_steps_with_slog.Any` | 4000 | 1759 | 29 |
+  | engine `BenchmarkRedactSecrets/no_secret` | 6239 | 112 | 3 |
+  | engine `BenchmarkRedactSecrets/URL_query_secret` | 13780 | 610 | 11 |
+  | engine `BenchmarkRedactSecrets/key=value_secret` | 8747 | 257 | 5 |
+  | engine `BenchmarkRedactSecrets/32_KiB_stack` | 8221091 | 66049 | 3 |
+  | srvr (net/http) `BenchmarkPipeline/success` | 3613 | 1333 | 19 |
+  | srvr (net/http) `BenchmarkPipeline/handler_error` | 14979 | 7818 | 82 |
+  | srvr (net/http) `BenchmarkPipeline/unmatched` | 18275 | 7424 | 104 |
+  | ginsrvr `BenchmarkPipeline/success` | 3759 | 1341 | 19 |
+  | ginsrvr `BenchmarkPipeline/handler_error` | 15473 | 7883 | 84 |
+  | ginsrvr `BenchmarkPipeline/unmatched` | 18239 | 6642 | 86 |
+  | fibersrvr `BenchmarkPipeline/success` | 20972 | 7692 | 46 |
+  | fibersrvr `BenchmarkPipeline/handler_error` | 36187 | 13653 | 110 |
+  | fibersrvr `BenchmarkPipeline/unmatched` | 41006 | 12361 | 114 |
+
+  Observations, unverified until 9.4 measures a change: each `With` step costs about 3 allocations per record (the steps are replayed in `logHandler.target`); a `slog.Any` attribute adds about 13 allocations and 1.1-2 µs; `RedactSecrets` takes about 8 ms on a 32 KiB stack (about 4 MB/s); net/http's unmatched path costs about 20 more allocations than gin's (the `fallbackRecorder` second ServeMux dispatch in `answerUnmatched`).
+- **Evidence:** `GOWORK=off go test -run x -bench . -benchmem ./engine` and `GOWORK=off go test -run x -bench . -benchmem .` (root module), `GOWORK=off go test -run x -bench . -benchmem ./...` in `ginsrvr` and in `fibersrvr`. Files: `engine/log_bench_test.go`, `server_bench_test.go`, `ginsrvr/server_bench_test.go`, `fibersrvr/server_bench_test.go`.
+- **Suggested action:** baseline for task 9.4's measured changes (`logHandler.target` caching for group-free handlers, single ServeMux routing in `answerUnmatched`, fiber `accessInfo` copies): rerun with `-count=10` before and after each change and compare with `benchstat`.

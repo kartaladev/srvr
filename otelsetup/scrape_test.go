@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -117,18 +118,36 @@ func TestScrape(t *testing.T) {
 	}
 }
 
-// TestScrapeDefaultAddr covers the default-address Scraping row: it binds
-// 127.0.0.1:9464, so it is not parallel.
+// TestScrapeDefaultAddr covers the default-address Scraping row. The
+// default is only observable by binding it (no hook exposes the resolved
+// Config, and MetricsAddr is the bound address), so the test binds
+// 127.0.0.1:9464, is not parallel, and skips when another process holds
+// the port.
 //
 //nolint:paralleltest // binds the fixed port 127.0.0.1:9464 and runs a per-test goleak check
 func TestScrapeDefaultAddr(t *testing.T) {
 	checkGoroutines(t)
 
-	s := setUp(t, otelsetup.WithPrometheus())
+	s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheus()) //nolint:usetesting // the setup is shut down in a cleanup, which runs after t.Context() is cancelled
+	if errors.Is(err, syscall.EADDRINUSE) {
+		t.Skipf("%s is in use by another process: %v", otelsetup.DefaultPrometheusAddr, err)
+	}
+
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	t.Cleanup(func() { shutdown(t, s) })
+	registerClient(t, s.MetricsAddr()) // its cleanup runs before Shutdown
+
+	if got := s.MetricsAddr(); got != otelsetup.DefaultPrometheusAddr {
+		t.Fatalf("MetricsAddr = %q, want %q", got, otelsetup.DefaultPrometheusAddr)
+	}
+
 	base := app(t, s, nil)
 	fetch(t, base+"/users/42")
 
-	_, body := fetch(t, "http://127.0.0.1:9464/metrics")
+	_, body := fetch(t, "http://"+otelsetup.DefaultPrometheusAddr+"/metrics")
 	if !strings.Contains(body, "http_server_request_duration_seconds_count{") || !strings.Contains(body, `http_route="/users/{id}"`) {
 		t.Errorf("default scrape lacks the route's duration:\n%s", body)
 	}
