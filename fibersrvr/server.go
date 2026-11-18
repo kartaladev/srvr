@@ -636,9 +636,11 @@ func dropParamNames(path string) string {
 
 // requestStage is srvr's outermost fiber stage. It gives the request a
 // cancellable context derived from the server's base context, carrying
-// srvr's request state; renders an error the chain returns itself, so it
-// records the status the client gets; and writes the access record. Every
-// value it keeps is copied out of fiber's pooled buffers first.
+// srvr's request state; begins the server's observers, whose end
+// functions the access record runs with the final status; renders an
+// error the chain returns itself, so it records the status the client
+// gets; and writes the access record. Every value it keeps is copied out
+// of fiber's pooled buffers first.
 func (s *Server) requestStage(c fiber.Ctx) error {
 	begin := time.Now()
 
@@ -652,8 +654,11 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 	rejected := c.Response().StatusCode()
 
 	ctx = s.core.BeginRequest(ctx, traceparent(c))
-	c.SetContext(ctx)
 	state, _ := engine.StateFrom(ctx) // never nil: BeginRequest made it
+	if s.core.Observed() {            // requestInfo copies, which a server without observers skips
+		ctx = s.core.BeginObservers(ctx, requestInfo(c))
+	}
+	c.SetContext(ctx)
 
 	if rejected >= http.StatusBadRequest {
 		s.core.RecordRejection(ctx, rejected)
@@ -702,7 +707,18 @@ func (s *Server) accessInfo(c fiber.Ctx, d time.Duration) engine.AccessInfo {
 		UserAgent:  string(c.Request().Header.UserAgent()),
 		Status:     c.Response().StatusCode(),
 		BodySize:   bodySize(c.Response()),
-		Duration:   d,
+		// A negative Content-Length is unknown (-1) or chunked (-2).
+		RequestBodySize: int64(max(c.Request().Header.ContentLength(), 0)),
+		Duration:        d,
+	}
+}
+
+// requestInfo copies what observers learn before routing out of c.
+func requestInfo(c fiber.Ctx) engine.RequestInfo {
+	return engine.RequestInfo{
+		Method: c.Method(), // a stable string in fiber v3, never a pooled buffer
+		Scheme: strings.Clone(c.Scheme()),
+		Host:   string(c.Request().Host()),
 	}
 }
 

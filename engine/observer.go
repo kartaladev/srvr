@@ -74,6 +74,10 @@ type ResultInfo struct {
 	Aborted bool
 }
 
+// Observed reports whether the server has observers, so an engine can skip
+// building the [RequestInfo] for a server without one.
+func (c *Core) Observed() bool { return len(c.settings.Observers) > 0 }
+
 // BeginObservers calls Begin of every observer of the server for the
 // request of ctx, in registration order, each with the context the
 // previous one returned, and keeps their end functions in the request
@@ -83,7 +87,7 @@ type ResultInfo struct {
 // calls it before routing.
 func (c *Core) BeginObservers(ctx context.Context, info RequestInfo) context.Context {
 	req := requestFrom(ctx)
-	if req == nil || len(c.settings.Observers) == 0 {
+	if req == nil || !c.Observed() {
 		return ctx
 	}
 

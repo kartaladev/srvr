@@ -10,6 +10,20 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Unmatched 404 problems differ between net/http and gin/fiber
+- **Status:** open
+- **Target:** unassigned (engine parity; found by otel-observability task 3.3)
+- **Context:** engine-parity "Identical problems across engines" requires the same problem members for the same failure. A request matching no route gets, on net/http, `prblm.ErrNotFound`'s problem with `detail` "The requested resource was not found." (`unmatched.go` writes `prblm.ErrNotFound`), while gin and fiber send a status-only 404 problem without `detail` (ginprblm and fiberprblm render the bare status). The Examples rows only cover handler failures, so the existing parity suite did not catch it. Observers see a different `ResponseBodySize` for the same unmatched request (148 vs 99 bytes in the probe).
+- **Evidence:** `internal/paritytest/unmatched_problem_test.go` `TestUnmatchedProblemParity` (skipped until the fix; it is the fix's RED step), with the skip removed: `go test -count=1 -run TestUnmatchedProblemParity .` in `internal/paritytest`: `gin problem = {"title":"Not Found","status":404,"instance":"/nope","trace_id":"…"}, net/http {"title":"Not Found","status":404,"detail":"The requested resource was not found.","instance":"/nope","trace_id":"…"}` and the same for fiber.
+- **Suggested action:** owner decides which body is canonical (status-only, like 405 on every engine, or `ErrNotFound` with `detail`), adds unmatched rows to engine-parity "Problem parity", and unskips the test. `TestObserverParity` leaves the response size of its unmatched row out until then.
+
+### Slice 2 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** Task 3.1's RED passed at once, as slice 1's seam predicted: gin is served through `LogAccess`, so `ginsrvr/observer_test.go` `TestObserver` is a guard and ginsrvr has no code change. Task 3.2's RED failed as expected (`Begin calls = 0, end calls = 0, want 1 and 1` on every fiber row); the fiber stage now calls `Core.BeginObservers` and its `WriteAccess` runs the end functions with the status it passes after rendering, which closes "RequestState.Status is not live on fiber". The parity harness's fiber handler used `c.SendStatus(200)`, which writes the body `OK`; /simplify changed it to `c.Status(200)` like gin, so the success row compares response sizes too. A fiber server without observers skips building `RequestInfo` (`Core.Observed`), so the default path allocates nothing new. The error hook counts one rendered problem per failed request on every engine, including fiber.
+- **Evidence:** as named.
+- **Suggested action:** none.
+
 ### Slice 1 decisions during apply (2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability

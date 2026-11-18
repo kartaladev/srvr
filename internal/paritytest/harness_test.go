@@ -181,7 +181,9 @@ func startFiber(t *testing.T, o outcome, opts ...srvr.Option) (string, *logBuffe
 				return err
 			}
 
-			return c.SendStatus(http.StatusOK)
+			c.Status(http.StatusOK)
+
+			return nil
 		})
 	}, opts...)
 }
