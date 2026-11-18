@@ -213,7 +213,8 @@ func (c Config) validate() error {
 
 	if c.OTLP.enabled() {
 		if p := c.OTLP.Protocol; p != ProtocolHTTPProtobuf && p != ProtocolGRPC {
-			errs = append(errs, fmt.Errorf("%w: OTLP.Protocol %q must be %q or %q", ErrConfig, p, ProtocolHTTPProtobuf, ProtocolGRPC))
+			errs = append(errs, fmt.Errorf("%w: OTLP.Protocol %q must be %q or %q",
+				ErrConfig, p, ProtocolHTTPProtobuf, ProtocolGRPC))
 		}
 
 		if !c.OTLP.Metrics && !c.OTLP.Traces {

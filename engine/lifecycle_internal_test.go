@@ -116,7 +116,7 @@ func TestRunGuarded_FinishedAsContextEnds(t *testing.T) {
 				ctx := finishedContext{Context: t.Context(), done: done}
 
 				for range 64 {
-					err, abandoned := runGuarded(ctx, tt.fn)
+					abandoned, err := runGuarded(ctx, tt.fn)
 					if abandoned {
 						t.Fatal("runGuarded abandoned fn, which had finished")
 					}

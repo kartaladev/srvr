@@ -54,10 +54,13 @@ type Config struct {
 	BodySizes bool `json:"body_sizes" yaml:"body_sizes" env:"BODY_SIZES"`
 }
 
-// semconvBuckets are the advisory boundaries of http.server.request.duration
+// semconvBuckets returns the advisory boundaries of http.server.request.duration
 // in semantic conventions v1.43. httpconv keeps its copy unexported, so
-// this one must follow it on a semconv upgrade (TestBuckets pins it).
-var semconvBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+// this one must follow it on a semconv upgrade (TestBuckets pins it). It
+// returns a fresh slice, so no caller can change another one's buckets.
+func semconvBuckets() []float64 {
+	return []float64{0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10}
+}
 
 // settings is what the options build.
 type settings struct {
@@ -252,7 +255,7 @@ func New(opts ...Option) (*Observer, error) {
 	}
 
 	if s.DurationBuckets == nil {
-		s.DurationBuckets = slices.Clone(semconvBuckets)
+		s.DurationBuckets = semconvBuckets()
 	}
 
 	o, err := newObserver(s.meterProvider, s.Config)
@@ -358,7 +361,10 @@ func (o *Observer) Begin(ctx context.Context, info srvr.RequestInfo) (context.Co
 			ctx = o.extract(ctx, info.Header)
 		}
 
-		ctx, span = o.tracer.Start(ctx, "HTTP", trace.WithSpanKind(trace.SpanKindServer), trace.WithAttributes(pathAttributes(method, info)...))
+		ctx, span = o.tracer.Start(ctx, "HTTP",
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(pathAttributes(method, info)...),
+		)
 	}
 
 	return ctx, func(res srvr.ResultInfo) {

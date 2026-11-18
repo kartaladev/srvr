@@ -79,12 +79,12 @@ func (c *Core) checkRoutes(waitCtx, checkCtx context.Context, routes Routes) err
 // runCheck runs check i under runGuarded with checkCtx, waiting for it
 // until waitCtx ends.
 func runCheck(waitCtx, checkCtx context.Context, i int, check RouteCheck, routes Routes) error {
-	err, abandoned := runGuarded(waitCtx, func(context.Context) error { return check(checkCtx, routes) })
+	abandoned, err := runGuarded(waitCtx, func(context.Context) error { return check(checkCtx, routes) })
 
 	// runGuarded returns its own *panicError unwrapped, so a type
 	// assertion finds it without walking the check's error chain, which
 	// may cycle or panic in Unwrap or As.
-	pe, panicked := err.(*panicError) //nolint:errorlint // runGuarded's own error, never wrapped: a chain walk is what must be avoided.
+	pe, panicked := err.(*panicError) //nolint:errorlint // runGuarded's own error, never wrapped.
 
 	switch {
 	case abandoned:

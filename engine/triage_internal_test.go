@@ -88,12 +88,30 @@ func (e selfError) Unwrap() error { return e }
 func TestTopFrame(t *testing.T) {
 	t.Parallel()
 
-	stack := []byte("goroutine 1 [running]:\nruntime/debug.Stack()\n\t/x.go:1\ngithub.com/kartaladev/prblm.(*Handler).recoverPanic(0x1)\n\t/y.go:2\npanic({0x1, 0x2})\n\t/z.go:3\nnet/http.HandlerFunc.ServeHTTP(0x1)\n\t/a.go:4\nmain.handler(0x1)\n\t/b.go:5\n")
-	if got := topFrame(stack); got != "main.handler" {
-		t.Fatalf("topFrame = %q, want main.handler", got)
+	tests := []struct {
+		name  string
+		stack string
+		want  string
+	}{
+		{
+			name:  "first consumer frame after panic",
+			stack: "goroutine 1 [running]:\nruntime/debug.Stack()\n\t/x.go:1\ngithub.com/kartaladev/prblm.(*Handler).recoverPanic(0x1)\n\t/y.go:2\npanic({0x1, 0x2})\n\t/z.go:3\nnet/http.HandlerFunc.ServeHTTP(0x1)\n\t/a.go:4\nmain.handler(0x1)\n\t/b.go:5\n",
+			want:  "main.handler",
+		},
+		{name: "no panic frame", stack: "no panic here\n", want: ""},
+		{name: "no trailing newline", stack: "panic({0x1})\n\t/z.go:3\nmain.h()", want: "main.h"},
+		{name: "parenthesis first keeps the line", stack: "panic({0x1})\n(odd)\n", want: "(odd)"},
+		{name: "no parenthesis keeps the line", stack: "panic({0x1})\nmain.h\n", want: "main.h"},
+		{name: "empty", stack: "", want: ""},
 	}
-	if got := topFrame([]byte("no panic here\n")); got != "" {
-		t.Fatalf("topFrame = %q, want empty", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := topFrame([]byte(tt.stack)); got != tt.want {
+				t.Fatalf("topFrame = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

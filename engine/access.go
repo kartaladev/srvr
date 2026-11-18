@@ -34,11 +34,14 @@ func newFailure(err error, p *prblm.Problem, committed bool) *failure {
 	return &failure{err: err, panic: pe, problem: p, committed: committed}
 }
 
-// renderingNotes are the prblm notes about a mistake in rendering, not the
-// request's own failure.
-var renderingNotes = []error{
-	prblm.ErrInvalidStatus, prblm.ErrInvalidType, prblm.ErrUndocumentedType,
-	prblm.ErrEncoding, prblm.ErrShadowedDocumentation,
+// renderingNotes returns the prblm notes about a mistake in rendering, not
+// the request's own failure. It returns an array, a copy no caller can
+// change for another and that needs no allocation.
+func renderingNotes() [5]error {
+	return [...]error{
+		prblm.ErrInvalidStatus, prblm.ErrInvalidType, prblm.ErrUndocumentedType,
+		prblm.ErrEncoding, prblm.ErrShadowedDocumentation,
+	}
 }
 
 // recordFailure keeps the failure of the request in ctx. The first failure
@@ -53,7 +56,7 @@ func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 		return
 	}
 
-	for _, note := range renderingNotes {
+	for _, note := range renderingNotes() {
 		if errors.Is(err, note) {
 			return
 		}
@@ -288,6 +291,15 @@ type responseRecorder struct {
 	bytes       int64
 	wroteHeader bool
 }
+
+// The optional interfaces responseRecorder keeps for the writer it wraps:
+// io.Copy's sendfile path, and what http.ResponseController looks for.
+var (
+	_ io.ReaderFrom                             = (*responseRecorder)(nil)
+	_ http.Hijacker                             = (*responseRecorder)(nil)
+	_ interface{ FlushError() error }           = (*responseRecorder)(nil)
+	_ interface{ Unwrap() http.ResponseWriter } = (*responseRecorder)(nil)
+)
 
 // statusCode returns the final status sent, 200 when the handler wrote
 // none (net/http's default), even after an informational one.
