@@ -58,7 +58,7 @@ With buffering enabled, a below-level record at or above the buffer level, logge
 | `2026-11-17T09:41:07.100Z` | `2026-11-17T09:41:07.120Z` |
 
 ### Requirement: Flushing requires a failing status at or above the threshold
-A request SHALL flush its buffer when its failure status is at or above the flush threshold (default `500`) or a panic was recovered, unless its access record is suppressed, in which case the buffer SHALL be discarded. The failure status is the status resolved for a returned error, even when the response was already committed with another status; without a returned error it is the written status.
+A request SHALL flush its buffer when its failure status is at or above the flush threshold (default `500`) or a panic was recovered, unless its access record is suppressed or its level is not enabled, in which case the buffer SHALL be discarded. The failure status is the status resolved for a returned error, even when the response was already committed with another status; without a returned error it is the written status.
 
 #### Scenario: Flush threshold
 - **Given** buffering enabled with flush threshold `<threshold>` and a handler that logs `DEBUG` `ctx` and ends with `<status>`
@@ -96,6 +96,7 @@ A request SHALL flush its buffer when its failure status is at or above the flus
 |-----------|--------|--------|---------|--------|
 | `400` | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `404` | not written | not written |
 | `400` | `AccessLogConfig{Disabled: true}` | `404` | not written | not written |
+| `400` | (none), with log level `ERROR` | `404` | not written | not written |
 | `400` | (none) | `404` | written | `http.request.failed` |
 | (default) | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `500` | written | `http.request.failed` |
 

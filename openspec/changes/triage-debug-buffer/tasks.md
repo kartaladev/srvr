@@ -2,11 +2,11 @@
 
 ## 1. Consolidation: refresh plan against merged changes
 
-- [ ] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`, `gin-and-fiber-engines`, possibly `otel-observability` and `scrty-integration`); verify they are named in the completion note
-- [ ] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `triage-debug-buffer` or `unassigned` (adopt, defer or close); verify none is left undecided
-- [ ] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code: confirm with gopls the logging wrapper chain, guard and `LogWriteErrors()` (core-server D7), the single outcome point and access-record writer (core-server D8, engines change), the per-request Go context on each engine (fiber not using `fiber.Ctx` locals), `srvr.log.schema` version, that `trace_id`/`span_id` stay top-level on records from a `WithGroup`-derived logger (core-server D1 replay; the marked chain relies on it), that the core wrapper truncates every string attribute with `LogConfig.MaxAttrBytes` and exposes its truncation function to the buffer, that `OnError` only records into `engine.RequestState` and the access stage writes the access record, and whether `triage-error-records`/`structured-logging` are now main specs (if so, consider moving the summary attributes into a MODIFIED delta); verify `openspec validate triage-debug-buffer --strict` passes
-- [ ] 1.4 Record the consolidation outcome at the top of `openspec/changes/triage-debug-buffer/notes.md`; verify the file lists what was refreshed or states none was needed
-- [ ] 1.5 Commit the consolidation as `docs(openspec): consolidate triage-debug-buffer against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`, `gin-and-fiber-engines`, possibly `otel-observability` and `scrty-integration`); verify they are named in the completion note
+- [x] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `triage-debug-buffer` or `unassigned` (adopt, defer or close); verify none is left undecided
+- [x] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code: confirm with gopls the logging wrapper chain, guard and `LogWriteErrors()` (core-server D7), the single outcome point and access-record writer (core-server D8, engines change), the per-request Go context on each engine (fiber not using `fiber.Ctx` locals), `srvr.log.schema` version, that `trace_id`/`span_id` stay top-level on records from a `WithGroup`-derived logger (core-server D1 replay; the marked chain relies on it), that the core wrapper truncates every string attribute with `LogConfig.MaxAttrBytes` and exposes its truncation function to the buffer, that `OnError` only records into `engine.RequestState` and the access stage writes the access record, and whether `triage-error-records`/`structured-logging` are now main specs (if so, consider moving the summary attributes into a MODIFIED delta); verify `openspec validate triage-debug-buffer --strict` passes
+- [x] 1.4 Record the consolidation outcome at the top of `openspec/changes/triage-debug-buffer/notes.md`; verify the file lists what was refreshed or states none was needed
+- [x] 1.5 Commit the consolidation as `docs(openspec): consolidate triage-debug-buffer against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: below-level records flushed on failure (net/http)
 
@@ -20,7 +20,7 @@
   - REFACTOR: Extract Class `requestBuffer`, Move Function for the outcome decision, then /simplify
 - [ ] 2.3 Marking and original time (triage-debug-buffer / Scenario: Marking of flushed records); verify `go test -race -run TestDebugBuffer_Marking` passes
   - RED: fixed clock, assert `time`, `level`, `srvr.buffered`, attributes and `trace_id`; fails because the flushed record lacks the marker or gets the flush time
-  - GREEN: `r.Clone()` replayed through the marked derived chain (`srvr.buffered` top level), replay keeps record time and call-time context
+  - GREEN: the stored clone replayed through the entry's `logHandler` with `srvr.buffered` added to the top-level attributes ahead of the replayed steps; replay keeps record time and call-time context
   - REFACTOR: /simplify
 - [ ] 2.4 Default threshold and level routing without duplicates (triage-debug-buffer / Scenario: Flush threshold, default rows; Scenario: Level routing, all rows); verify `go test -race -run 'TestDebugBuffer_Threshold|TestDebugBuffer_LevelRouting'` passes
   - RED: tables including `499`/`500`/`599` boundaries and `DEBUG-4`; fails on duplicate or misrouted records
@@ -66,8 +66,8 @@
   - GREEN: configurable threshold with range validation
   - REFACTOR: /simplify
 - [ ] 4.3 Discard when the access record is suppressed (triage-debug-buffer / Scenario: Suppressed access record, all rows); verify `go test -race -run TestDebugBuffer_Suppressed` passes
-  - RED: table with skip path and disabled access log at threshold `400`, plus the `500` row that skip never suppresses; fails because the buffer flushes without an access record
-  - GREEN: the access stage discards the buffer when it suppresses the access record
+  - RED: table with skip path, disabled access log and a log level that disables the access record's level at threshold `400`, plus the `500` row that skip never suppresses; fails because the buffer flushes without an access record
+  - GREEN: `writeAccess` discards the buffer when it suppresses the access record or the base handler does not enable its level
   - REFACTOR: /simplify
 - [ ] 4.4 Runtime level change mid-request (triage-debug-buffer / Scenario: Runtime level change during a request, all rows); verify `go test -race -count=20 -run TestDebugBuffer_LevelVar` passes
   - RED: table synchronising the handler with the level change; fails if the level is captured at request start
@@ -80,7 +80,7 @@
 
 - [ ] 5.1 Derived loggers share the buffer (triage-debug-buffer / Scenario: Derived loggers, all rows); verify `go test -race -run TestDebugBuffer_Derived` passes
   - RED: table with `With`, `WithGroup`, default logger and a derived context value; fails because derived handlers lose the buffer, attributes or context, or nest `srvr.buffered` under the group, or `trace_id` under the group (assert top-level `trace_id`, relying on core-server's replay)
-  - GREEN: wrapper `WithAttrs`/`WithGroup` returning derived wrappers holding the normal and marked derived chains; entries store the marked handler and the call-time context
+  - GREEN: entries store the derived `logHandler` (with its recorded steps) and the call-time context; replay adds the marker ahead of the steps
   - REFACTOR: /simplify
 - [ ] 5.2 Concurrent logging in one request (triage-debug-buffer / Scenario: Concurrent logging in one request, both rows); verify `go test -race -count=20 -run TestDebugBuffer_Concurrent` passes
   - RED: table; fails with a data race or lost counts
@@ -116,6 +116,12 @@
   - REFACTOR: /simplify
 - [ ] 6.4 Update `LOGGING.md` with buffering semantics, cost, ordering and limits, and a sample flushed sequence; write `notes.md` carry-overs for sampling successful requests and on-demand flush (Target: `unassigned`); verify the document matches the golden schema test
 - [ ] 6.5 Verify slice end to end on all three engines, confirm every engine's outcome branch is covered in `go tool cover -func` for each touched module, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): flush debug buffers identically on every engine`
+
+## 7. Slice: carried-over leak-check hardening (from goroutine-leak-checks)
+
+- [ ] 7.1 Name srvr's serve goroutine: RED - change the "never `Shutdown`" leak rows of every engine (core, `ginsrvr`, `fibersrvr`, `internal/paritytest`) to match `engine.(*Lifecycle[...]).serveOn` and confirm they fail against the anonymous `serve.func1`; GREEN - move the goroutine body into the unexported method `(*Lifecycle[C]).serveOn`, no behaviour or API change; verify `go test -race -run 'Goroutines|Leak'` passes in every touched module
+- [ ] 7.2 Guard ignores `TestMain` files excluded by build constraints: RED - restore `TestGuardRejectsTestMainBehindBuildTag` in `internal/paritytest` and confirm it fails; GREEN - evaluate each file's `//go:build` line with `go/build/constraint` against the default build context and skip excluded files; verify `go test -race -run 'TestEveryTestPackageChecksLeaks|TestGuardRejectsTestMainBehindBuildTag'` passes
+- [ ] 7.3 Verify the slice, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, update both entries in `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md` and this change's `notes.md` to `closed: fixed`, run /simplify on the slice and commit `test(engine): name the serve goroutine and honour build tags in the leak guard`
 
 ## Workflow follow-up
 

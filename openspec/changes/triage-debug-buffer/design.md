@@ -4,12 +4,12 @@
 
 See proposal.md - Why. This change builds on the logging pipeline from `core-server` design D7 and the triage record builder from D8, and on the engine-neutral request pipeline from `gin-and-fiber-engines`. The relevant facts these give us:
 
-- A base `slog.Handler` (srvr's JSON/text handler, or the consumer's) is wrapped by srvr in a chain: correlation (`trace_id`/`span_id`, kept top-level under `WithGroup` because the wrapper records `WithAttrs`/`WithGroup` steps and replays them after adding correlation), truncation of every string attribute (default 1024 bytes via `LogConfig.MaxAttrBytes`, marked `srvr.attr.truncated`; done in the wrapper, not in `ReplaceAttr`), and guard (recover, count errors via `LogWriteErrors()`).
+- A base `slog.Handler` (srvr's JSON/text handler, or the consumer's) is wrapped by one srvr handler, `engine.logHandler` (`engine/log.go`). It adds `trace_id`/`span_id`, kept top-level under `WithGroup` because it records `WithAttrs`/`WithGroup` steps and replays them on the base handler after the top-level keys (`target`); it truncates every string attribute, error text and the message (`truncator`, default 1024 bytes via `LogConfig.MaxAttrBytes`, marked `srvr.attr.truncated`); and it guards the base handler (recover, count errors via `LogWriteErrors()`). srvr's own records go through `handle(ctx, r, own=true)`.
 - `slog.Logger` calls `Handler.Enabled(ctx, level)` before building a record. That short-circuit is why below-level calls are cheap today.
-- Each request has a fresh Go context created by srvr, carrying the trace and the per-request `engine.RequestState`. prblm's `OnError` hook and panic recovery only record the error, panic and status there; the access stage writes the one access record (`http.request.completed` or `http.request.failed`) when the outcome, final status, committed flag and panic flag are known.
-- On fiber v3, `fiber.Ctx` is pooled and never cancels. The engine adapter creates its own per-request Go context, so nothing request-scoped may live in `fiber.Ctx` locals.
+- Each request has a fresh Go context created by srvr (`StartTrace`/`BeginRequest`), carrying the trace and the per-request `engine.RequestState`. prblm's `OnError` hook and panic recovery only record the failure there (`recordFailure`); `Core.writeAccess` writes the one access record (`http.request.completed` or `http.request.failed`) for net/http and gin (`LogAccess`, including its `http.ErrAbortHandler` recover path) and for fiber (`WriteAccess`), once the outcome, final status, committed flag and panic flag are known. It gates the record on `c.log.Enabled(ctx, level)` and on `AccessLogConfig` suppression.
+- On fiber v3, `fiber.Ctx` is pooled and never cancels. `requestStage` builds its own per-request Go context and sets it with `c.SetContext`; nothing request-scoped lives in `fiber.Ctx` locals. Handlers may log with `c` itself as the context; `requestFrom` reaches the state through `c.Context()`.
 
-All of the above are assumptions. The consolidation group checks them against the merged code (see the tasks).
+Consolidation (2026-11-18) checked these against the merged code with gopls; they hold.
 
 ## Goals / Non-Goals
 
@@ -61,19 +61,20 @@ Buffering is off unless enabled.
 **Failure modes:**
 - A consumer enables it and sees higher latency. Mitigation: benchmark and godoc state the cost, and `Level` can be raised to buffer only `INFO` when the log level is `WARN`.
 
-### D2. The buffer lives in the request context; records are stored with their handler
-A `*requestBuffer` is created per request by the engine-neutral pipeline and stored in srvr's per-request Go context.
+### D2. The buffer lives in the request state; records are stored with their handler
+A `*requestBuffer` is created per request with its `engine.RequestState` (in `withState`) when buffering is enabled, and is reachable only through srvr's per-request Go context; with buffering off the field stays nil and nothing is allocated.
 
-The wrapper handler works like this:
+`engine.logHandler` gains the routing:
 - `Enabled(ctx, l)`:
-  - returns true if the inner chain's `Enabled(ctx, l)` is true (srvr's own handler: `l >= logLevel` through its `Leveler`; a consumer handler: its own decision, since srvr does not know its level);
+  - returns true if the base handler's `Enabled(ctx, l)` is true (srvr's own handler: `l >= logLevel` through its `Leveler`; a consumer handler: its own decision, since srvr does not know its level);
   - otherwise returns true only if `ctx` carries an unsealed buffer and `l >= bufferLevel`.
-- `Handle` re-evaluates at call time, because the level or the seal may change between `Enabled` and `Handle`, and srvr itself calls `Handle` directly for access records:
-  - writes immediately when the inner chain's `Enabled(ctx, l)` is true, so a `LevelVar` change mid-request is honoured;
-  - appends `entry{handler: the marked derived handler, ctx: the call-time ctx, record: r.Clone()}` when `ctx` carries an unsealed buffer and `l >= bufferLevel`;
+- `Handle` re-evaluates at call time, because the level or the seal may change between `Enabled` and `Handle`:
+  - writes immediately when the base handler's `Enabled(ctx, l)` is true, so a `LevelVar` change mid-request is honoured;
+  - appends `entry{handler: h, ctx: the call-time ctx, record: the truncated clone, cut}` when `ctx` carries an unsealed buffer and `l >= bufferLevel`;
   - otherwise drops the record.
+- srvr's own records (`handle(ctx, r, own=true)`: access, lifecycle and warning records) are never buffered, and the access stage checks only the base handler's `Enabled` for the access record, never the buffer-aware one.
 
-Each derived logger from `WithAttrs`/`WithGroup` produces a derived wrapper holding two derived chains: the normal one, and a *marked* one built as `inner.WithAttrs(srvr.buffered=true)` followed by the same `WithAttrs`/`WithGroup` calls. This is the same "attributes before groups" rule core-server's correlation wrapper uses for `trace_id`: the marker is one more recorded `WithAttrs` step ahead of the groups, so this change relies on core-server's replay and adds no second mechanism. Buffered entries replay through the marked chain, so a flushed record keeps its attributes, groups, correlation, truncation and `ReplaceAttr`, and `srvr.buffered` stays a top-level key. Adding the marker to the record itself is wrong: after `WithGroup("db")` it renders as `db.srvr.buffered` (probe P1 in the audit entry of `notes.md`). The marked chain is built lazily, once per derived wrapper, only when buffering is enabled.
+The entry keeps the derived `*logHandler` the record was logged through, with its recorded `WithAttrs`/`WithGroup` steps. Replay calls its `handle` with `srvr.buffered` `true` added to the top-level attributes ahead of the replayed steps, the same mechanism that keeps `trace_id` top-level. So a flushed record keeps its attributes, groups, correlation and `ReplaceAttr`, and `srvr.buffered` stays a top-level key. Adding the marker to the record itself is wrong: after `WithGroup("db")` it renders as `db.srvr.buffered` (probe P1 in the audit entry of `notes.md`). No second derived chain is needed.
 
 Configuration check: an explicit `Level` above the static log level fails construction; `Level` equal to it is accepted and buffers nothing. With `WithLogLevelVar` or a consumer handler the level is not known at construction, so `Level` is not checked.
 
@@ -81,22 +82,21 @@ Configuration check: an explicit `Level` above the static log level fails constr
 
 **Failure modes:**
 - A record logged with a context not derived from the request (for example `context.Background()` in a goroutine) is not buffered and follows the normal level rule. This is documented.
-- `r.Clone()` is required because copies of a `slog.Record` share their attribute backing array ("Copies of a Record share state. Do not modify a Record after handing out a copy", `log/slog/record.go`); an upstream handler (fan-out, middleware) may modify or reuse its record after `Handle` returns. Tested by modifying the caller's record after `Handle`.
-- *Replay context:* the entry keeps the context the record was logged with, not the request context. A context derived from the request (a child span from `otelsrvr`, a consumer `context.WithValue`) would otherwise lose its values on replay (probe P2). Its cancellation does not matter: slog's `Handle` contract says cancelling the context should not affect record processing.
-- *Lazy values:* `LogValuer` attributes are resolved at append (`slog.Value.Resolve`, which recovers a panicking `LogValue`) and the resolved value is stored, so the flushed record shows the state at logging time.
-- *Truncation at buffer time:* after resolving, the record's string attributes, `KindAny` values implementing `error` (replaced by their `Error()` text, so the text is captured at logging time) and the record `msg` are truncated at append with core-server's truncation function and limits, so `MaxBytes` and `TotalBytes` count what will actually be written. On replay the core wrapper sees values already within limits and changes nothing. A `KindAny` value holding a pointer to mutable data is still rendered at flush time and shows later mutations (probe P3); documented in godoc and `LOGGING.md`.
+- The stored record is a clone (`r.Clone()`, or the new record `truncator.record` builds) because copies of a `slog.Record` share their attribute backing array ("Copies of a Record share state. Do not modify a Record after handing out a copy", `log/slog/record.go`); an upstream handler (fan-out, middleware) may modify or reuse its record after `Handle` returns. Tested by modifying the caller's record after `Handle`.
+- *Replay context:* the entry keeps the context the record was logged with, not the request context. A context derived from the request (a child span from `otelsrvr`, a consumer `context.WithValue`) would otherwise lose its values on replay (probe P2). Its cancellation does not matter: slog's `Handle` contract says cancelling the context should not affect record processing. On fiber the call-time context may be the pooled `fiber.Ctx`; replay runs inside `requestStage` before it returns, so the context still belongs to the request.
+- *Lazy values and truncation at buffer time:* at append the record goes through the same `truncator` the handler uses on write: `LogValuer` attributes are resolved (`slog.Value.Resolve`, which recovers a panicking `LogValue`), string attributes, `error` values (replaced by their guarded `Error()` text, captured at logging time) and the `msg` are cut with `LogConfig.MaxAttrBytes`, and whether anything was cut is stored with the entry. So `MaxBytes` and `TotalBytes` count what will actually be written; on replay the values are already within limits and `srvr.attr.truncated` comes from the stored flag. A `KindAny` value holding a pointer to mutable data is still rendered at flush time and shows later mutations (probe P3); documented in godoc and `LOGGING.md`.
 
 ### D3. Flush decision at the single outcome point
-The engine-neutral pipeline already computes `{status, committed, panicked, err}` once, before writing the access record. Using it:
+`Core.writeAccess` is the single outcome point for every engine: it reads `{status, aborted, failure}` from `engine.RequestState` before writing the access record. Using it:
 
-- **Failure status:** for a returned error, the status resolved for that error (through prblm), even when the response was committed with another status - so `writes 200 then returns errors.New("late")` and a streamed `200` followed by an error count as `500`; without a returned error, the written status.
-- **Flush condition:** `panicked || failureStatus >= flushStatus`.
+- **Failure status:** for a returned error, the status resolved for that error (`failure.problem.Status`, through prblm), even when the response was committed with another status - so `writes 200 then returns errors.New("late")` and a streamed `200` followed by an error count as `500`; without a returned error, the written status.
+- **Flush condition:** `panicked || failureStatus >= flushStatus`, where `panicked` is a recovered panic (`failure.panic`) or an aborted request (`RequestState.aborted`).
 - **Order:** on flush, entries are replayed in append order, then the access record is written with the summary. On no flush, the buffer is released.
 - **Seal:** either way, the buffer is sealed under its mutex first, so late `Handle` calls see it sealed and fall back to the level rule.
 
-**Where the flush happens:** in the access stage of the shared pipeline, after it reads the outcome from `engine.RequestState` and immediately before it writes the access record. `OnError` never writes or flushes; it only records the error.
+**Where the flush happens:** in `Core.writeAccess`, after it reads the outcome from `engine.RequestState` and immediately before it writes the access record. The seal comes first, so the access record itself and anything logged concurrently afterwards follow the level rule. `OnError` never writes or flushes; it only records the error.
 
-**Suppressed access record:** when skip paths or a disabled access log suppress the access record (only possible below status `500`), the buffer is discarded even if the status meets a lowered threshold, so flushed records never precede a missing access record.
+**Suppressed access record:** when skip paths or a disabled access log suppress the access record (only possible below status `500`), or the access record's own level is not enabled on the base handler (for example a `4xx` failed record at `WARN` with log level `ERROR`), the buffer is discarded even if the status meets a lowered threshold, so flushed records never precede a missing access record.
 
 **`http.ErrAbortHandler`:** a panic with it counts as a recovered panic: the buffer is flushed before the access record, which core-server writes as `http.request.failed` at `WARN` with `error.kind` `panic`, `error.type` `panic`, `srvr.response.aborted` `true` and no `problem` group (decision A3), and the panic is then re-raised as core-server specifies.
 
@@ -123,7 +123,7 @@ The engine-neutral pipeline already computes `{status, committed, panicked, err}
 - *Estimation too low* for exotic `LogValuer` values. Valuers are resolved before estimating (`slog.Value.Resolve`), with a cap on the resolved string length.
 
 ### D5. Fault-tolerant replay
-Each replayed entry calls `entry.handler.Handle(entry.ctx, rec)` directly, without `Enabled`, inside the existing guard. Errors and panics are counted in `LogWriteErrors()` and skipped. The entry's context is the call-time context, derived from the request context, so correlation still applies. The `srvr.buffered` `true` attribute comes from the marked chain (D2), so a consumer `ReplaceAttr` can see and filter it.
+Each replayed entry calls the stored handler's `handle(entry.ctx, rec)` directly, without `Enabled`, inside the existing guard. Errors and panics are counted in `LogWriteErrors()` and skipped. The entry's context is the call-time context, derived from the request context, so correlation still applies. The `srvr.buffered` `true` attribute is added as a top-level attribute on replay (D2), so a consumer `ReplaceAttr` can see and filter it.
 
 This deliberately breaks the `slog.Handler` contract "Handle ... will only be called when Enabled returns true" (`log/slog/handler.go`). srvr's own JSON/text handlers do not re-check the level in `Handle` (probe P4); consumer handlers may, and godoc for `WithDebugBuffer` says so.
 
@@ -138,7 +138,7 @@ No engine-specific code goes into the buffer. Engines must:
 - create srvr's per-request Go context, which they already do for trace context;
 - report the outcome, which they already do for the access record.
 
-The buffer creation and the flush at the outcome point live in the shared request pipeline in the public `srvr/engine` package (gin-and-fiber-engines), which `ginsrvr` and `fibersrvr` already call, and the outcome is read from the single per-request `engine.RequestState`; the buffer type itself stays unexported behind it. On fiber v3 the buffer is reachable only through that Go context. The parity test runs the same table on all three engines, and a fiber test runs two sequential requests on one app (`app.Test` opens a new connection per call; pooled `fiber.Ctx` reuse is not tied to connections).
+The buffer creation (`withState`) and the flush at the outcome point (`writeAccess`) live in the `srvr/engine` package, which `ginsrvr` (through `StartTrace`/`LogAccess`) and `fibersrvr` (through `BeginRequest`/`WriteAccess`) already call, and the outcome is read from the single per-request `engine.RequestState`; the buffer type itself stays unexported, and no public `engine` API is added. On fiber v3 the buffer is reachable only through that Go context. The parity test runs the same table on all three engines, and a fiber test runs two sequential requests on one app (`app.Test` opens a new connection per call; pooled `fiber.Ctx` reuse is not tied to connections).
 
 **Failure modes:**
 - An engine that writes the access record from a different code path than the one deciding the outcome. Tests per engine cover this.

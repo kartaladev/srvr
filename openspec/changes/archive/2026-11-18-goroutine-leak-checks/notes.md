@@ -10,7 +10,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### srvr's serve goroutine is an anonymous closure
-- **Status:** open; carried over to triage-debug-buffer (owner decision, 2026-11-18)
+- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.1)
 - **Target:** triage-debug-buffer
 - **Context:** the "never `Shutdown`" lifecycle rows identify srvr's serve goroutine by its frame `engine.(*Lifecycle[...]).serve.func1` (`engine/lifecycle.go:312`, `go func() { r.served <- runner.Serve(ln) }()`). The tests match the stable prefix `engine.(*Lifecycle[...]).serve`, but a refactor that moves the goroutine into another function would still break them without any behaviour change. Raised by the /simplify altitude review of group 2; a production change is out of scope for this test-only change.
 - **Evidence:** `TestLifecycle_Goroutines/one_route,_Start_and_never_Shutdown` (`lifecycle_goroutines_test.go`) reports `github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serve.func1`.
@@ -25,7 +25,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Decision:** the parity harness's `fiberServer` shortens `MaxIdleWorkerDuration` to `20ms` through a first configurer, and paritytest drops the cleaner ignore and its "needed" row; a parity lifecycle row proves the cleaner ends after `Shutdown` and a "not hidden" row proves the default duration still leaves it. `fibersrvr` keeps its narrow cleaner ignore, because its `Example()` (`example_test.go`) starts a server with the default `10s` cleaner and cannot use a test-only helper; the Example is not touched. The `updateServerDate.func1` ignore stays in both modules. Recorded in D3, the spec's ignore and parity harness rows, and task group 6.
 
 ### The every-package guard accepts a TestMain behind a build tag
-- **Status:** open; carried over to triage-debug-buffer (owner decision, 2026-11-18)
+- **Status:** adopted by triage-debug-buffer (consolidation 2026-11-18: task 7.2)
 - **Target:** triage-debug-buffer
 - **Context:** the guard in `internal/paritytest/guard_test.go` (`TestEveryTestPackageChecksLeaks`, D5) parses every `_test.go` file of a directory regardless of build constraints, so a package whose only `TestMain` calling `goleak.VerifyTestMain` sits in a file with `//go:build integration` is accepted, although a plain `go test` builds that package without the leak check. No package of the repository has such a file today.
 - **Evidence:** the verifier of task groups 1-5 added a temporary test, `TestGuardRejectsTestMainBehindBuildTag`, which failed with "checkLeakCheck accepted a package whose only TestMain is behind //go:build integration"; the test was not kept.
