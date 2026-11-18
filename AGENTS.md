@@ -6,7 +6,7 @@ Go library (`github.com/kartaladev/srvr`, Go 1.27) for running HTTP servers on a
 
 Multi-module repository; `go.work` is for development only.
 
-- `github.com/kartaladev/srvr` - core and the net/http engine. Depends only on the standard library and prblm.
+- `github.com/kartaladev/srvr` - core and the net/http engine. Depends at runtime only on the standard library and prblm; test-only dependencies such as goleak are allowed.
 - `srvr/engine` - public package (unstable before v1) holding the shared pipeline pieces the engine modules use, because separate modules cannot import core `internal/`.
 - `srvr/ginsrvr` (gin), `srvr/fibersrvr` (fiber v3) - one engine module each.
 - `srvr/otelsrvr` - opt-in metrics and tracing (OpenTelemetry API only); `srvr/otelsetup` - opt-in SDK and exporter wiring.
@@ -75,7 +75,7 @@ Use the gopls language server (LSP, from the `gopls-lsp` plugin) for semantic qu
 - Every behaviour is configurable both programmatically (functional options) and by configuration (plain config structs with `json`/`yaml`/`env` tags that any loader can fill). srvr never reads environment variables or files itself.
 - Invalid configuration fails construction with an error naming the field and value; it never silently falls back.
 - An option that loosens a safety or privacy default must be explicit and clearly named.
-- Public API, defaults, each module's dependency set and the log schema are commitments. The log schema carries `srvr.log.schema`: adding a key keeps the version; renaming or removing a key, or changing its meaning or type, bumps it. The core module depends only on the standard library and prblm.
+- Public API, defaults, each module's dependency set and the log schema are commitments. The log schema carries `srvr.log.schema`: adding a key keeps the version; renaming or removing a key, or changing its meaning or type, bumps it. The core module depends at runtime only on the standard library and prblm: no non-test package may import anything else. Test-only dependencies, such as `go.uber.org/goleak`, are allowed.
 
 ### 8. Conventional commits, one per task group
 

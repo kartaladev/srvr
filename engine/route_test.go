@@ -47,6 +47,11 @@ func TestCollapseMethods(t *testing.T) {
 func TestCheckRoutes(t *testing.T) {
 	t.Parallel()
 
+	// release ends the check srvr abandons in "context ends" once every
+	// subtest is done, so the test leaves no goroutine behind.
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+
 	tests := []struct {
 		name  string
 		check func(context.Context, engine.Routes) error
@@ -59,7 +64,7 @@ func TestCheckRoutes(t *testing.T) {
 		{"panic", func(context.Context, engine.Routes) error { panic("boom") }, 0, func(err error) bool {
 			return errors.Is(err, srvr.ErrRouteConfig) && strings.Contains(err.Error(), "boom")
 		}},
-		{"context ends", func(context.Context, engine.Routes) error { select {} }, 20 * time.Millisecond, func(err error) bool {
+		{"context ends", func(context.Context, engine.Routes) error { <-release; return nil }, 20 * time.Millisecond, func(err error) bool {
 			return errors.Is(err, context.DeadlineExceeded)
 		}},
 	}

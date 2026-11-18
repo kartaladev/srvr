@@ -20,8 +20,9 @@ context: |
     as a bare status. srvr supports it through an opt-in bridge module.
 
   Module layout (multi-module repository, go.work for development)
-  - github.com/kartaladev/srvr: core plus the net/http engine. Dependencies: standard library and
-    prblm core only. No OpenTelemetry, no Prometheus, no gin, no fiber, no scrty.
+  - github.com/kartaladev/srvr: core plus the net/http engine. Runtime dependencies: standard
+    library and prblm core only. No OpenTelemetry, no Prometheus, no gin, no fiber, no scrty.
+    Test-only dependencies such as go.uber.org/goleak are allowed.
   - srvr/ginsrvr (gin), srvr/fibersrvr (fiber v3): one engine each.
   - srvr/otelsrvr: opt-in metrics and tracing, OpenTelemetry API only (never SDK or exporters).
   - srvr/otelsetup: opt-in application wiring for the OTel SDK and exporters (Prometheus, OTLP).
@@ -87,7 +88,7 @@ rules:
     - Requirements describe the default behaviour; where an override exists, include a scenario showing the consumer's override, both programmatic and by config struct.
   design:
     - Slice 1 must be the smallest end-to-end working path the change adds; no slice depends on code that only becomes useful later.
-    - Name the module each new dependency goes in and confirm the core module stays standard library plus prblm.
+    - Name the module each new dependency goes in and confirm the core module stays standard library plus prblm at runtime (test-only dependencies such as goleak are allowed).
     - Every decision that introduces or changes behaviour states the default and how a consumer overrides it, or why there is no override.
     - Hot paths for srvr are the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, Start and Shutdown, and log record construction including error-chain walking and redaction.
   tasks:
