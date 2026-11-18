@@ -81,11 +81,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** Open an issue on kartaladev/scrty; when released, capture the client in `WriteError` and drop the unresolved marker for that case.
 
 ### Ask scrty for an option to leave gin's unmatched-path 404 uncommitted
-- **Status:** open
-- **Target:** unassigned
+- **Status:** accepted by scrty (2026-11-18): planned in scrty change `problem-details-rendering` (design decision 10, MODIFIED framework-adapters requirement "gin refusals reach the error channel and fail closed", tasks 5.1, 5.2 and 6.1); not yet implemented or released
+- **Target:** the srvr change that bumps the scrty pin past v0.1.1
 - **Context:** Planning audit D17. ginsec commits an empty `404` for a refusal on a path gin matched no route for (`httpsec/ginsec/middleware.go:154-166`), so it cannot render as a problem on gin. Accepted as a parity exception.
 - **Evidence:** unverified as a running test; established from the cited source lines.
-- **Suggested action:** Open an issue on kartaladev/scrty for an option that leaves the status uncommitted when the consumer has error middleware; then remove the exception row.
+- **Suggested action:** When a scrty release after v0.1.1 ships `ginsec.WithRefusalsRendered()` (`ginsec.Middleware(chain, opts ...ginsec.Option)`; it skips `WriteHeaderNow` on an unrouted 404 so the error middleware renders it): bump the pin, pass the option in srvr's gin wiring and docs (srvr always renders `c.Error`), drop the D17 parity exception (Scenario "Unmatched-path 404 on gin", tasks 5.2 and 6.5) and turn the gin row into a normal parity row with a RED test first.
 
 ### Planning audit 2026-11-17 decisions
 - **Status:** closed: applied to proposal, specs, design and tasks during planning
