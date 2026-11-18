@@ -84,7 +84,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** a later change decides whether to validate log fields in `Settings.validate` and whether the otel modules get a typed error.
 
 ### RELEASING.md gates name per-module commands until slice 7
-- **Status:** open
+- **Status:** closed: done in slice 7 (`make check` and the CI `release` job)
 - **Target:** skills-compliance (tasks 7.3 and 7.4)
 - **Context:** slice 6's `RELEASING.md` lists the per-module `GOWORK=off` commands as the release gate, because the root Makefile targets (`tidy-check`, `vulncheck`) and the CI `release` job do not exist yet. Found by the slice 6 /simplify review.
 - **Evidence:** unverified: documentation state.

@@ -162,7 +162,7 @@ func raw(t *testing.T, base, text string, body []byte) (*http.Response, []byte) 
 func disconnecting(t *testing.T, base, path string, entered <-chan struct{}) {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 
 	go func() {
@@ -270,7 +270,8 @@ func TestParity_Exceptions(t *testing.T) {
 		})
 
 		disconnecting(t, base, "/x", entered)
-		if r := one(t, logs); r["msg"] != "http.request.failed" || r["http.response.body.size"].(float64) == 0 {
+		r := one(t, logs)
+		if size, ok := r["http.response.body.size"].(float64); r["msg"] != "http.request.failed" || !ok || size == 0 {
 			t.Fatalf("record %v, want a failed record with the problem written", r)
 		}
 	})

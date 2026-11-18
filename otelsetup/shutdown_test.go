@@ -42,13 +42,13 @@ func TestShutdown(t *testing.T) {
 	t.Run("Prometheus only", func(t *testing.T) {
 		t.Parallel()
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local))
+		s, err := otelsetup.New(t.Context(), otelsetup.WithPrometheusConfig(local))
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		addr := s.MetricsAddr()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 
 		start := time.Now()
@@ -64,13 +64,13 @@ func TestShutdown(t *testing.T) {
 	t.Run("already shut down", func(t *testing.T) {
 		t.Parallel()
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local))
+		s, err := otelsetup.New(t.Context(), otelsetup.WithPrometheusConfig(local))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		_ = s.Shutdown(context.Background())
-		if err := s.Shutdown(context.Background()); err != nil {
+		_ = s.Shutdown(t.Context())
+		if err := s.Shutdown(t.Context()); err != nil {
 			t.Fatalf("second Shutdown = %v, want nil", err)
 		}
 	})
@@ -78,7 +78,7 @@ func TestShutdown(t *testing.T) {
 	t.Run("concurrent", func(t *testing.T) {
 		t.Parallel()
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local))
+		s, err := otelsetup.New(t.Context(), otelsetup.WithPrometheusConfig(local))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,7 +89,7 @@ func TestShutdown(t *testing.T) {
 
 		errs := make([]error, 8)
 		for i := range errs {
-			wg.Go(func() { errs[i] = s.Shutdown(context.Background()) })
+			wg.Go(func() { errs[i] = s.Shutdown(t.Context()) })
 		}
 
 		wg.Wait()
@@ -114,7 +114,7 @@ func (panicking) Configure(*srvr.Group) { panic("boom") }
 func TestShutdownHook_NeverServed(t *testing.T) {
 	t.Parallel()
 
-	taken, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	taken, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 		g.GET("/x", func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(http.StatusOK); return nil })
 	})
 
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tests := []struct {
@@ -161,12 +161,12 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local))
+			s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local)) //nolint:usetesting // the setup is shut down in a cleanup, which runs after t.Context() is cancelled
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+			t.Cleanup(func() { _ = s.Shutdown(context.Background()) }) //nolint:usetesting // runs in a cleanup, after t.Context() is cancelled
 
 			addr := s.MetricsAddr()
 			srv := hooked(t, s, tt.opts, tt.conf)
@@ -178,7 +178,7 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 			}
 
 			if tt.shutdownRan {
-				if err := srv.Shutdown(context.Background()); err != nil {
+				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatalf("Shutdown = %v", err)
 				}
 
@@ -195,13 +195,13 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 		s := setUp(t, otelsetup.WithPrometheusConfig(local))
 		srv := hooked(t, s, nil, ok)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 
 		go func() { done <- srv.Start(ctx) }()
 		<-srv.Ready()
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerStarted) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
 			t.Fatalf("second Start = %v", err)
 		}
 
@@ -219,7 +219,7 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 	t.Run("Start after Shutdown", func(t *testing.T) {
 		t.Parallel()
 
-		s, err := otelsetup.New(context.Background(), otelsetup.WithPrometheusConfig(local))
+		s, err := otelsetup.New(t.Context(), otelsetup.WithPrometheusConfig(local))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,11 +227,11 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 		addr := s.MetricsAddr()
 		srv := hooked(t, s, nil, ok)
 
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 			t.Fatalf("Start after Shutdown = %v", err)
 		}
 
@@ -261,7 +261,7 @@ func hooked(t *testing.T, s *otelsetup.Setup, opts []srvr.Option, conf srvr.Rout
 func startFails(t *testing.T, srv *srvr.Server) {
 	t.Helper()
 
-	if err := srv.Start(context.Background()); err == nil {
+	if err := srv.Start(t.Context()); err == nil {
 		t.Fatal("Start returned nil")
 	}
 }
@@ -316,6 +316,8 @@ func (kindCError) Error() string { return "c" }
 
 // TestFaultyLogger covers telemetry-setup "Faulty logger", all rows. It
 // sets the globals, so it is not parallel and resets them.
+//
+//nolint:paralleltest // sets the OpenTelemetry globals and runs a per-test goleak check
 func TestFaultyLogger(t *testing.T) {
 	checkGoroutines(t)
 
@@ -377,6 +379,8 @@ func TestFaultyLogger(t *testing.T) {
 // only part of its request: http.Server.Shutdown waits for such a
 // connection, and its goroutine waits for the rest of the headers. Not
 // parallel: each row checks that no goroutine is left.
+//
+//nolint:paralleltest // each row checks no goroutine is left with goleak.IgnoreCurrent
 func TestShutdown_InFlightScrape(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -412,7 +416,7 @@ func TestShutdown_InFlightScrape(t *testing.T) {
 			s := newSetup(t, otelsetup.WithPrometheusConfig(local))
 			tt.scrape(t, s)
 
-			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 			defer cancel()
 
 			if err := s.Shutdown(ctx); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {

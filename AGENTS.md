@@ -28,7 +28,7 @@ For every behaviour, in small steps:
 
 Never write production code without a failing test that demands it. Never refactor on red.
 
-There is no coverage percentage threshold, but every hot path must be tested and the coverage checked, not assumed: `go test -coverprofile=c.out ./... && go tool cover -func=c.out`. Hot paths: the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, `Start` and `Shutdown`, and log record construction including error-chain walking and redaction.
+There is no coverage percentage threshold, but every hot path must be tested and the coverage checked, not assumed: `make cover` from the root (workspace mode, `-coverpkg=github.com/kartaladev/srvr/...`, so the shared `engine` package counts the engine modules' tests; it prints the engine total), or per module `go test -coverpkg=./... -coverprofile=c.out ./... && go tool cover -func=c.out`. Hot paths: the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, `Start` and `Shutdown`, and log record construction including error-chain walking and redaction.
 
 Every module's tests run under goleak: each test package has a `TestMain` calling `goleak.VerifyTestMain` (a guard in `internal/paritytest` enforces it), and a goroutine that outlives its test is excused only by a named, commented ignore of one function in that package's `leakOptions`. A new goroutine started by srvr needs a test proving it ends when its owner stops.
 
@@ -96,13 +96,17 @@ When a task group is complete and verified, run `/simplify` on that group's chan
 
 ## Verification commands
 
-Run from the directory of every module a slice touches - `./...` never crosses into a nested module (`go help packages`) - with `GOWORK=off` for modules that will be released:
+`make check` from the root runs every check (see the Makefile) in every module with `GOWORK=off`; `make <target> MODULES=ginsrvr` (or `make <target>` inside a module) runs one module. By hand, from the directory of every module a slice touches - `./...` never crosses into a nested module (`go help packages`) - with `GOWORK=off` for modules that will be released:
 
 ```sh
 go vet ./...
 golangci-lint run ./...
 go test -race ./...
-go test -coverprofile=c.out ./... && go tool cover -func=c.out
+go mod tidy -diff
+govulncheck ./...
+go test -coverpkg=./... -coverprofile=c.out ./... && go tool cover -func=c.out
 ```
+
+`make cover` gives the cross-module coverage of the shared packages.
 
 Fiber tests use `app.Test`; net/http and gin tests use `httptest`.

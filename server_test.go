@@ -126,6 +126,8 @@ func TestBodyLimit(t *testing.T) {
 // TestCoreHasNoOTel guards the core module's dependency set: no package of
 // the core, test-only or not, may import OpenTelemetry (design, Context).
 func TestCoreHasNoOTel(t *testing.T) {
+	t.Parallel()
+
 	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", "-test", "./...").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)
@@ -154,7 +156,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(t.Context()) }()
 	waitReady(t, srv, done)
 
 	res := do(t, http.MethodPost, "http://"+srv.Addr()+"/orders", nil, nil)
@@ -163,7 +165,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("got %d %+v, want a 500 problem without detail", res.status, p)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {

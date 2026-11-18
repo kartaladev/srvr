@@ -78,7 +78,7 @@ func TestCheckRoutes(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx := context.Background()
+			ctx := t.Context()
 			if tt.ctx > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, tt.ctx)

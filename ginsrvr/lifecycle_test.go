@@ -22,13 +22,13 @@ func TestGinLifecycle(t *testing.T) {
 	tests := []struct {
 		name  string
 		state string
-		call  func(*ginsrvr.Server) error
+		call  func(context.Context, *ginsrvr.Server) error
 		want  error
 	}{
-		{"Start while running", "running", func(s *ginsrvr.Server) error { return s.Start(context.Background()) }, srvr.ErrServerStarted},
-		{"Shutdown never started", "new", func(s *ginsrvr.Server) error { return s.Shutdown(context.Background()) }, nil},
-		{"Start after stop", "stopped", func(s *ginsrvr.Server) error { return s.Start(context.Background()) }, srvr.ErrServerClosed},
-		{"Register while running", "running", func(s *ginsrvr.Server) error { return s.Register(routes(func(*gin.RouterGroup) {})) }, srvr.ErrServerStarted},
+		{"Start while running", "running", func(ctx context.Context, s *ginsrvr.Server) error { return s.Start(ctx) }, srvr.ErrServerStarted},
+		{"Shutdown never started", "new", func(ctx context.Context, s *ginsrvr.Server) error { return s.Shutdown(ctx) }, nil},
+		{"Start after stop", "stopped", func(ctx context.Context, s *ginsrvr.Server) error { return s.Start(ctx) }, srvr.ErrServerClosed},
+		{"Register while running", "running", func(_ context.Context, s *ginsrvr.Server) error { return s.Register(routes(func(*gin.RouterGroup) {})) }, srvr.ErrServerStarted},
 	}
 
 	for _, tt := range tests {
@@ -41,12 +41,12 @@ func TestGinLifecycle(t *testing.T) {
 			case "running":
 				start(t, srv)
 			case "stopped":
-				if err := srv.Shutdown(context.Background()); err != nil {
+				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			if err := tt.call(srv); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+			if err := tt.call(t.Context(), srv); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
 				t.Fatalf("call = %v, want %v", err, tt.want)
 			}
 		})
@@ -98,7 +98,9 @@ func TestGinShutdownHooks(t *testing.T) {
 		want []string
 	}{
 		{"Start context cancelled while serving", func(t *testing.T, srv *ginsrvr.Server) {
-			ctx, cancel := context.WithCancel(context.Background())
+			t.Helper()
+
+			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() { done <- srv.Start(ctx) }()
 			<-srv.Ready()
@@ -108,13 +110,15 @@ func TestGinShutdownHooks(t *testing.T) {
 			}
 		}, both},
 		{"Shutdown while serving, then again", func(t *testing.T, srv *ginsrvr.Server) {
+			t.Helper()
+
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(context.Background()) }()
+			go func() { done <- srv.Start(t.Context()) }()
 			<-srv.Ready()
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-done; err != nil {
@@ -122,15 +126,19 @@ func TestGinShutdownHooks(t *testing.T) {
 			}
 		}, both},
 		{"Shutdown never started", func(t *testing.T, srv *ginsrvr.Server) {
-			if err := srv.Shutdown(context.Background()); err != nil {
+			t.Helper()
+
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}, after},
 		{"Start(nil), then Shutdown", func(t *testing.T, srv *ginsrvr.Server) {
+			t.Helper()
+
 			if err := srv.Start(nil); !errors.Is(err, srvr.ErrConfig) { //nolint:staticcheck // a nil context is the row under test.
 				t.Fatalf("Start(nil) = %v", err)
 			}
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}, after},
@@ -154,7 +162,7 @@ func TestGinShutdownHooks(t *testing.T) {
 	t.Run("Start fails because the address is in use", func(t *testing.T) {
 		t.Parallel()
 
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +174,7 @@ func TestGinShutdownHooks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		if err := srv.Start(ctx); err == nil {
@@ -193,7 +201,7 @@ func TestGinDebugWarning(t *testing.T) { //nolint:paralleltest // gin's mode is 
 		{gin.TestMode, 0},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range tests { //nolint:paralleltest // gin's mode is process-global.
 		t.Run(tt.mode, func(t *testing.T) {
 			checkGoroutines(t)
 			gin.SetMode(tt.mode)

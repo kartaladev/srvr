@@ -9,32 +9,67 @@ linters:
     - bodyclose
     - contextcheck
     - copyloopvar
+    - depguard
     - errname
     - errorlint
     - exhaustive
+    - forcetypeassert
     - gocritic
     - gosec
+    - intrange
     - misspell
+    - modernize
     - nilerr
     - nilnil
     - noctx
     - nolintlint
+    - paralleltest
     - perfsprint
     - prealloc
     - revive
+    - sloglint
+    - thelper
+    - tparallel
     - unconvert
     - unparam
     - usestdlibvars
+    - usetesting
   settings:
     nolintlint:
       require-explanation: true
       require-specific: true
     exhaustive:
       default-signifies-exhaustive: true
+    usetesting:
+      # t.Context() replaces context.Background() and TODO() in tests.
+      context-background: true
+      context-todo: true
+    depguard:
+      rules:
+        # AGENTS.md rule 7: the core module (root, engine, internal/tracectx)
+        # depends at runtime only on the standard library and prblm.
+        core:
+          files:
+            - $all
+            - "!$test"
+            - "!**/ginsrvr/**"
+            - "!**/fibersrvr/**"
+            - "!**/otelsrvr/**"
+            - "!**/otelsetup/**"
+            - "!**/internal/paritytest/**"
+          allow:
+            - $gostd
+            - github.com/kartaladev/prblm
+            - github.com/kartaladev/srvr
   exclusions:
     presets:
       - std-error-handling
     rules:
+      # Leak tests check every goroutine of the process with goleak, so
+      # they are deliberately serial.
+      - path: leak_test\.go
+        linters:
+          - paralleltest
       - path: _test\.go
         linters:
           - gosec

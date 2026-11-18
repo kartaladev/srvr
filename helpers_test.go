@@ -57,7 +57,10 @@ func waitReady(t *testing.T, srv *srvr.Server, done <-chan error) {
 func startServer(t *testing.T, srv *srvr.Server) string {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Not t.Context(): that ends before the cleanups run, so the server
+	// would start draining before registerClient's cleanup closes the idle
+	// connections, which can hold the drain for seconds.
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must outlive the test body; the cleanup cancels it
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
@@ -94,7 +97,7 @@ type response struct {
 func do(t *testing.T, method, url string, body io.Reader, header map[string]string) response {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), method, url, body)
+	req, err := http.NewRequestWithContext(t.Context(), method, url, body)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -136,7 +139,7 @@ func waitRefused(t *testing.T, addr string) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(context.Background(), "tcp", addr)
+		conn, err := (&net.Dialer{Timeout: 100 * time.Millisecond}).DialContext(t.Context(), "tcp", addr)
 		if err != nil {
 			return
 		}
@@ -182,7 +185,7 @@ func workRoute(d time.Duration, started chan<- struct{}, release <-chan struct{}
 func startBackground(t *testing.T, srv *srvr.Server) <-chan error {
 	t.Helper()
 
-	return startWith(context.Background(), t, srv)
+	return startWith(context.Background(), t, srv) //nolint:usetesting // the server may outlive the test body; callers stop it themselves
 }
 
 // startWith starts srv with ctx, waits until it is ready and returns the
@@ -210,7 +213,7 @@ func mustNil(t *testing.T, err error) {
 func listen(t *testing.T) net.Listener {
 	t.Helper()
 
-	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +315,7 @@ func shutdownBounded(t *testing.T, srv *srvr.Server) error {
 	t.Helper()
 
 	return bounded(t, "Shutdown did not return", func() error {
-		return recoverPanic(func() error { return srv.Shutdown(context.Background()) })
+		return recoverPanic(func() error { return srv.Shutdown(context.Background()) }) //nolint:usetesting // callers run it in cleanups, after t.Context() is cancelled
 	})
 }
 
@@ -364,7 +367,12 @@ var clients sync.Map // string -> *http.Client
 func registerClient(t *testing.T, addr string) {
 	t.Helper()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	tr := base.Clone()
 	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
 	c := &http.Client{Transport: tr}
 	clients.Store(addr, c)
@@ -380,7 +388,9 @@ func registerClient(t *testing.T, addr string) {
 func clientFor(rawURL string) *http.Client {
 	if u, err := url.Parse(rawURL); err == nil {
 		if c, ok := clients.Load(u.Host); ok {
-			return c.(*http.Client)
+			if client, ok := c.(*http.Client); ok {
+				return client
+			}
 		}
 	}
 
@@ -438,7 +448,7 @@ type hostileContext struct {
 func newHostileContext(t *testing.T, after time.Duration, err error) hostileContext {
 	t.Helper()
 
-	c := hostileContext{Context: context.Background(), done: make(chan struct{}), err: err}
+	c := hostileContext{Context: context.Background(), done: make(chan struct{}), err: err} //nolint:usetesting // a never-done base: Done and Err come only from the hostile overrides
 	timer := time.AfterFunc(after, func() { close(c.done) })
 	t.Cleanup(func() { timer.Stop() })
 

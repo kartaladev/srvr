@@ -44,7 +44,7 @@ func TestRecordFailure(t *testing.T) {
 			t.Parallel()
 
 			req := &RequestState{}
-			ctx := context.WithValue(context.Background(), stateKey{}, req)
+			ctx := context.WithValue(t.Context(), stateKey{}, req)
 			for _, r := range tt.reports {
 				recordFailure(ctx, r.err, r.p)
 			}
@@ -58,7 +58,7 @@ func TestRecordFailure(t *testing.T) {
 	t.Run("outside a request", func(t *testing.T) {
 		t.Parallel()
 
-		recordFailure(context.Background(), boom, sent) // must not panic
+		recordFailure(t.Context(), boom, sent) // must not panic
 	})
 }
 
@@ -67,7 +67,7 @@ func TestRecordFailure(t *testing.T) {
 func TestCorrelation_EmptyDerivations(t *testing.T) {
 	t.Parallel()
 
-	h := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)}
+	h := &logHandler{base: slog.DiscardHandler}
 	if h.WithAttrs(nil) != h || h.WithGroup("") != h {
 		t.Fatal("empty derivation returned a new handler")
 	}
@@ -145,8 +145,8 @@ func TestResponseRecorder_ReadFrom(t *testing.T) {
 // BenchmarkCorrelation compares ungrouped and grouped request records: a
 // grouped logger replays its WithGroup and WithAttrs steps per record.
 func BenchmarkCorrelation(b *testing.B) {
-	base := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)}
-	ctx := context.WithValue(context.Background(), stateKey{}, &RequestState{trace: Trace{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7"}})
+	base := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)} //nolint:sloglint // the benchmark measures encoding records: slog.DiscardHandler is disabled and would skip that work
+	ctx := context.WithValue(b.Context(), stateKey{}, &RequestState{trace: Trace{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7"}})
 
 	loggers := map[string]*slog.Logger{
 		"ungrouped": slog.New(base),

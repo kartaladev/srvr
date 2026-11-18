@@ -29,7 +29,9 @@ func (f configFunc) Configure(g *srvr.Group) { f(g) }
 func serve(t *testing.T, conf configFunc, opts ...srvr.Option) string {
 	t.Helper()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Not t.Context(): it is cancelled before the cleanups run, which would
+	// stop the server before registerClient's cleanup closes idle connections.
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must outlive the test body until the cleanup cancels it
 	srv, done := startServing(ctx, t, conf, opts...)
 
 	t.Cleanup(func() {
@@ -81,7 +83,7 @@ func startServing(ctx context.Context, t *testing.T, conf configFunc, opts ...sr
 func send(t *testing.T, method, url, body string) int {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), method, url, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), method, url, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -115,7 +117,7 @@ func collect(t *testing.T, reader sdkmetric.Reader) metricdata.ResourceMetrics {
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
+	if err := reader.Collect(t.Context(), &rm); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -207,7 +209,12 @@ var clients sync.Map // string -> *http.Client
 func registerClient(t *testing.T, addr string) {
 	t.Helper()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	tr := dt.Clone()
 	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
 	c := &http.Client{Transport: tr}
 	clients.Store(addr, c)
@@ -223,7 +230,9 @@ func registerClient(t *testing.T, addr string) {
 func clientFor(rawURL string) *http.Client {
 	if u, err := url.Parse(rawURL); err == nil {
 		if c, ok := clients.Load(u.Host); ok {
-			return c.(*http.Client)
+			if hc, ok := c.(*http.Client); ok {
+				return hc
+			}
 		}
 	}
 

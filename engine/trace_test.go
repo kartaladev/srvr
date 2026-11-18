@@ -43,8 +43,8 @@ func TestStateFrom(t *testing.T) {
 		t.Fatalf("fresh state status %d matched %v failed %v", inside.Status(), inside.Matched(), inside.Failed())
 	}
 
-	bg, bgOK := engine.StateFrom(context.Background())
-	nilState, nilOK := engine.StateFrom(nil) //nolint:staticcheck // a nil context is the row under test.
+	bg, bgOK := engine.StateFrom(context.Background()) //nolint:usetesting // context.Background() is the row under test
+	nilState, nilOK := engine.StateFrom(nil)           //nolint:staticcheck // a nil context is the row under test.
 	tests[0].state, tests[0].ok = bg, bgOK
 	tests[1].state, tests[1].ok = nilState, nilOK
 

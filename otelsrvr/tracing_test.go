@@ -45,6 +45,8 @@ func traced(t *testing.T, conf configFunc, srvOpts []srvr.Option, opts ...otelsr
 // TestTracingSwitch covers otel-tracing "Tracing switch", all rows. The
 // global-provider row replaces the global TracerProvider, so the test is
 // not parallel and restores it.
+//
+//nolint:paralleltest // sets the global TracerProvider and runs a per-test goleak check
 func TestTracingSwitch(t *testing.T) {
 	checkGoroutines(t)
 
@@ -313,10 +315,10 @@ func TestSpanEnding(t *testing.T) {
 			}
 
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(context.Background()) }()
+			go func() { done <- srv.Start(t.Context()) }()
 			<-srv.Ready()
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/x", http.NoBody)
@@ -337,7 +339,7 @@ func TestSpanEnding(t *testing.T) {
 			case tt.cancel:
 				cancel()
 			case tt.shutdown:
-				_ = srv.Shutdown(context.Background())
+				_ = srv.Shutdown(t.Context())
 			}
 
 			<-sent
@@ -347,7 +349,7 @@ func TestSpanEnding(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 
-			_ = srv.Shutdown(context.Background())
+			_ = srv.Shutdown(t.Context())
 
 			if err := <-done; err != nil {
 				t.Logf("Start = %v", err)
@@ -388,6 +390,8 @@ func (fieldsPanics) Fields() []string { panic("Fields panicked") }
 // TestPropagation covers otel-tracing "Parent extraction", all rows, plus
 // faulty propagators (design D11). Rows using the global propagator
 // replace it, so the test is not parallel and restores it.
+//
+//nolint:paralleltest // sets the global TextMapPropagator and runs a per-test goleak check
 func TestPropagation(t *testing.T) {
 	checkGoroutines(t)
 

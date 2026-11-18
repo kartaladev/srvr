@@ -205,7 +205,8 @@ func TestAddSource(t *testing.T) {
 
 			rec := out.waitRecord(t, "handler")
 			src, _ := rec["source"].(map[string]any)
-			if tt.add != (src != nil) || (tt.add && !strings.HasSuffix(src["file"].(string), "logconfig_test.go")) {
+			file, _ := src["file"].(string) // a missing or non-string file fails the suffix check below
+			if tt.add != (src != nil) || (tt.add && !strings.HasSuffix(file, "logconfig_test.go")) {
 				t.Fatalf("source = %v, want present %v and pointing at the handler", rec["source"], tt.add)
 			}
 			if _, has := out.waitRecord(t, "http.request.completed")["source"]; has {
@@ -564,7 +565,7 @@ func TestLogSchemaGolden_Lifecycle(t *testing.T) {
 	taken := listen(t)
 	srv, err := srvr.New(append(opts, srvr.WithAddr(taken.Addr().String()))...)
 	mustNil(t, err)
-	_ = srv.Start(context.Background())
+	_ = srv.Start(t.Context())
 
 	for event, want := range goldenLifecycleKeys {
 		recs := out.find(t, event)

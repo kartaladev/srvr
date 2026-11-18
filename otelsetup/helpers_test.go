@@ -38,7 +38,7 @@ func setUp(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
 func newSetup(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
 	t.Helper()
 
-	s, err := otelsetup.New(context.Background(), opts...)
+	s, err := otelsetup.New(context.Background(), opts...) //nolint:usetesting // the setup is shut down in a cleanup, which runs after t.Context() is cancelled
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -50,7 +50,7 @@ func newSetup(t *testing.T, opts ...otelsetup.Option) *otelsetup.Setup {
 func shutdown(t *testing.T, s *otelsetup.Setup) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) //nolint:usetesting // called from cleanups, which run after t.Context() is cancelled; it needs a fresh 5s deadline
 	defer cancel()
 
 	if err := s.Shutdown(ctx); err != nil {
@@ -62,7 +62,7 @@ func shutdown(t *testing.T, s *otelsetup.Setup) {
 func fetch(t *testing.T, url string) (int, string) {
 	t.Helper()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func resetGlobals(t *testing.T) {
 func freeAddr(t *testing.T) string {
 	t.Helper()
 
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,12 @@ var clients sync.Map // string -> *http.Client
 func registerClient(t *testing.T, addr string) {
 	t.Helper()
 
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("http.DefaultTransport is %T, want *http.Transport", http.DefaultTransport)
+	}
+
+	tr := dt.Clone()
 	tr.MaxIdleConnsPerHost = 16 // parallel requests reuse connections instead of exhausting ports
 	c := &http.Client{Transport: tr}
 	clients.Store(addr, c)
@@ -146,7 +151,9 @@ func registerClient(t *testing.T, addr string) {
 func clientFor(rawURL string) *http.Client {
 	if u, err := url.Parse(rawURL); err == nil {
 		if c, ok := clients.Load(u.Host); ok {
-			return c.(*http.Client)
+			if hc, ok := c.(*http.Client); ok {
+				return hc
+			}
 		}
 	}
 

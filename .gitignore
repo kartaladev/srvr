@@ -5,3 +5,6 @@ coverage.*
 
 # Local, per-developer Claude Code settings
 .claude/settings.local.json
+
+# Workspace checksums are per developer: each module has its own go.sum.
+go.work.sum

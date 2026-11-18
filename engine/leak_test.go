@@ -88,7 +88,7 @@ func TestAbandonedCheck_Goroutines(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 			defer cancel()
 
 			if err := srv.Start(ctx); !errors.Is(err, context.DeadlineExceeded) {

@@ -247,7 +247,7 @@ func TestRouteCheck(t *testing.T) {
 			srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { afterDrain.Add(1); return nil }),
 		)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
 		if err := srv.Start(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -356,7 +356,7 @@ func TestRouteCheck_FaultyErrors(t *testing.T) {
 				done <- fmt.Errorf("Start panicked: %v", v)
 			}
 		}()
-		done <- srv.Start(context.Background())
+		done <- srv.Start(t.Context())
 	}()
 
 	select {
@@ -388,7 +388,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(t.Context()) }()
 
 	select {
 	case <-entered:
@@ -396,7 +396,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 		t.Fatal("the route check did not run")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
@@ -412,7 +412,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 		t.Fatal("Start did not return within 1s")
 	}
 
-	if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+	if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 		t.Fatalf("second Start = %v, want an error wrapping ErrServerClosed", err)
 	}
 }

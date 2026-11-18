@@ -172,7 +172,7 @@ func TestGinPanic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, start(t, srv)+"/items/7", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, start(t, srv)+"/items/7", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -198,7 +198,7 @@ func TestGinAbortRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, start(t, srv)+"/items/7", nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, start(t, srv)+"/items/7", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestGinConsumerFaults(t *testing.T) {
 		if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), "<panic in Error(): ginsrvr_test.selfPanicError>") {
 			t.Fatalf("Start = %v", err)
 		}
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("Shutdown = %v", err)
 		}
 	})
@@ -419,7 +419,7 @@ func TestGinConsumerFaults(t *testing.T) {
 	t.Run("listener Close panics", func(t *testing.T) {
 		t.Parallel()
 
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -431,16 +431,16 @@ func TestGinConsumerFaults(t *testing.T) {
 		}
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 		<-srv.Ready()
 
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("Shutdown = %v", err)
 		}
 		if err := <-done; err != nil {
 			t.Fatalf("Start = %v", err)
 		}
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatalf("second Shutdown = %v", err)
 		}
 
@@ -489,13 +489,13 @@ func TestGinShutdownHooks_Reentrant(t *testing.T) {
 	srv, _ = newServer(t,
 		srvr.WithShutdownHookTimeout(200*time.Millisecond),
 		srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error {
-			go func() { hookErr <- srv.Shutdown(context.Background()) }() //nolint:contextcheck // the row calls Shutdown with context.Background().
+			go func() { hookErr <- srv.Shutdown(context.Background()) }() //nolint:contextcheck,usetesting // the row calls Shutdown with context.Background(), from a hook goroutine that may outlive the test body.
 
 			return nil
 		}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- srv.Start(ctx) }()
 	<-srv.Ready()

@@ -473,7 +473,7 @@ func TestDisabledLimitKinds(t *testing.T) {
 
 			if tt.hook != nil {
 				srv := newServer(t, append(opts, srvr.WithShutdownHook(srvr.AfterDrain, tt.hook))...)
-				_ = srv.Shutdown(context.Background())
+				_ = srv.Shutdown(t.Context())
 			} else {
 				srv := newServer(t, opts...)
 				mustNil(t, srv.Register(on("", "/x", tt.handler)))

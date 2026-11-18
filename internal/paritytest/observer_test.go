@@ -55,7 +55,7 @@ func durationPoint(t *testing.T, reader sdkmetric.Reader) metricdata.HistogramDa
 	t.Helper()
 
 	var rm metricdata.ResourceMetrics
-	must(t, reader.Collect(context.Background(), &rm))
+	must(t, reader.Collect(t.Context(), &rm))
 
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
@@ -67,7 +67,12 @@ func durationPoint(t *testing.T, reader sdkmetric.Reader) metricdata.HistogramDa
 				t.Errorf("unit = %q, want s", m.Unit)
 			}
 
-			points := m.Data.(metricdata.Histogram[float64]).DataPoints
+			hist, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok {
+				t.Fatalf("%s data is %T, want metricdata.Histogram[float64]", m.Name, m.Data)
+			}
+
+			points := hist.DataPoints
 			if len(points) != 1 || points[0].Count != 1 {
 				t.Fatalf("data points = %+v, want one with count 1", points)
 			}

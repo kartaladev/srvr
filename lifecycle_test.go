@@ -51,16 +51,18 @@ func TestStart_Stop(t *testing.T) {
 			trigger: "the Start context is cancelled",
 			run: func(t *testing.T, _ *srvr.Server) (context.Context, func()) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 
 				return ctx, cancel
 			},
 		},
 		{
 			trigger: "Shutdown(ctx) is called from another goroutine",
-			run: func(_ *testing.T, srv *srvr.Server) (context.Context, func()) {
-				return context.Background(), func() {
-					go func() { _ = srv.Shutdown(context.Background()) }()
+			run: func(t *testing.T, srv *srvr.Server) (context.Context, func()) {
+				t.Helper()
+
+				return t.Context(), func() {
+					go func() { _ = srv.Shutdown(context.Background()) }() //nolint:usetesting // the goroutine is not joined and may outlive the test body
 				}
 			},
 		},
@@ -68,7 +70,7 @@ func TestStart_Stop(t *testing.T) {
 			trigger: "the Start context deadline passes",
 			run: func(t *testing.T, _ *srvr.Server) (context.Context, func()) {
 				t.Helper()
-				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 				t.Cleanup(cancel)
 
 				return ctx, func() { <-ctx.Done() }
@@ -157,7 +159,7 @@ func TestStart_ServeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = srv.Start(context.Background())
+	err = srv.Start(t.Context())
 	if err == nil || err.Error() != "accept failed" {
 		t.Fatalf("Start = %v, want the accept error", err)
 	}
@@ -186,11 +188,11 @@ func TestShutdown_WhileConfiguring(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }()
+	go func() { done <- srv.Start(t.Context()) }()
 	<-entered
 
 	shut := make(chan error, 1)
-	go func() { shut <- srv.Shutdown(context.Background()) }()
+	go func() { shut <- srv.Shutdown(t.Context()) }()
 
 	// The first Shutdown has moved the server to stopping once Register
 	// reports it closed.
@@ -198,7 +200,7 @@ func TestShutdown_WhileConfiguring(t *testing.T) {
 	close(release)
 
 	// A second Shutdown waits for the stop too and returns nil.
-	mustNil(t, srv.Shutdown(context.Background()))
+	mustNil(t, srv.Shutdown(t.Context()))
 	if err := <-done; !errors.Is(err, srvr.ErrServerClosed) {
 		t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
 	}
@@ -229,10 +231,10 @@ func TestShutdown_WaitExpires(t *testing.T) {
 	<-started
 
 	first := make(chan error, 1)
-	go func() { first <- srv.Shutdown(context.Background()) }()
+	go func() { first <- srv.Shutdown(t.Context()) }()
 	waitRefused(t, srv.Addr())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -260,7 +262,7 @@ func TestShutdownHooks_Unbounded(t *testing.T) {
 			return nil
 		}),
 	)
-	mustNil(t, srv.Shutdown(context.Background()))
+	mustNil(t, srv.Shutdown(t.Context()))
 
 	if hasDeadline.Load() {
 		t.Fatal("the AfterDrain hook got a deadline, want none")
@@ -281,7 +283,7 @@ func TestLifecycleErrorText(t *testing.T) {
 		return func(t *testing.T, opts []srvr.Option) {
 			t.Helper()
 			srv := newServer(t, append(opts, srvr.WithShutdownHook(srvr.AfterDrain, fn))...)
-			_ = srv.Shutdown(context.Background())
+			_ = srv.Shutdown(t.Context())
 		}
 	}
 	hookReturns := func(err error) func(*testing.T, []srvr.Option) {
@@ -355,7 +357,7 @@ func TestStart_Twice(t *testing.T) {
 		}
 		base := startServer(t, srv)
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerStarted) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
 			t.Fatalf("second Start = %v, want ErrServerStarted", err)
 		}
 		if got := get(t, base+"/ping").status; got != http.StatusOK {
@@ -371,7 +373,7 @@ func TestStart_Twice(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		const n = 8
@@ -409,7 +411,7 @@ func TestStart_Twice(t *testing.T) {
 		t.Parallel()
 
 		srv := newServer(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := startWith(ctx, t, srv)
 		cancel()
 		if err := <-done; err != nil {
@@ -417,11 +419,11 @@ func TestStart_Twice(t *testing.T) {
 		}
 		addr := srv.Addr()
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 			t.Fatalf("Start after stop = %v, want ErrServerClosed", err)
 		}
 
-		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+addr+"/", nil)
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", nil)
 		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 			res.Body.Close()
 			t.Fatal("a request after stop was served: the server must stay stopped")
@@ -450,7 +452,7 @@ func TestStart_Fails(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				return srv, context.Background()
+				return srv, t.Context()
 			},
 			want: func(err error) bool {
 				var opErr *net.OpError
@@ -465,7 +467,7 @@ func TestStart_Fails(t *testing.T) {
 				srv := newServer(t)
 				mustNil(t, srv.Register(&PanicAPI{}))
 
-				return srv, context.Background()
+				return srv, t.Context()
 			},
 			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
 		},
@@ -477,7 +479,7 @@ func TestStart_Fails(t *testing.T) {
 				mustNil(t, srv.Register(okRoute("/dup")))
 				mustNil(t, srv.Register(okRoute("/dup")))
 
-				return srv, context.Background()
+				return srv, t.Context()
 			},
 			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
 		},
@@ -485,7 +487,7 @@ func TestStart_Fails(t *testing.T) {
 			condition: "the Start context is already cancelled",
 			setup: func(t *testing.T) (*srvr.Server, context.Context) {
 				t.Helper()
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 
 				return newServer(t), ctx
@@ -553,7 +555,7 @@ func TestStart_Fails(t *testing.T) {
 
 // doneContext is a done context whose Err returns err.
 type doneContext struct {
-	context.Context //nolint:containedctx // embedded only for Done, Deadline and Value.
+	context.Context // embedded only for Done, Deadline and Value
 
 	err error
 }
@@ -609,7 +611,7 @@ func TestReady(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // Start must run until the cleanup cancels it and checks its result
 			done := make(chan error, 1)
 			go func() { done <- srv.Start(ctx) }()
 			t.Cleanup(func() {
@@ -647,7 +649,7 @@ func TestAddr_BeforeReady(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := srv.Start(context.Background()); !errors.Is(err, syscall.EADDRINUSE) {
+		if err := srv.Start(t.Context()); !errors.Is(err, syscall.EADDRINUSE) {
 			t.Fatalf("Start = %v, want address in use", err)
 		}
 
@@ -661,7 +663,7 @@ func TestAddr_BeforeReady(t *testing.T) {
 func freeAddr(t *testing.T) string {
 	t.Helper()
 
-	ln, err := new(net.ListenConfig).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -737,7 +739,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 			// returned within the limit; it never touches t, as it may run on
 			// a goroutine of its own.
 			shutdown := func() error {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second) //nolint:usetesting // shutdown never touches t: it may run on a goroutine of its own
 				defer cancel()
 
 				begin := time.Now()
@@ -753,9 +755,9 @@ func TestShutdown_WhileStarting(t *testing.T) {
 			done := make(chan error, 1)
 			if tt.shutdowns == 0 {
 				mustNil(t, shutdown())
-				done <- srv.Start(context.Background())
+				done <- srv.Start(t.Context())
 			} else {
-				go func() { done <- recoverPanic(func() error { return srv.Start(context.Background()) }) }()
+				go func() { done <- recoverPanic(func() error { return srv.Start(t.Context()) }) }()
 				receive(t, entered, "the route check did not run")
 
 				results := make(chan error, tt.shutdowns)
@@ -779,7 +781,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 			if srv.Addr() != "" {
 				t.Fatalf("Addr = %q, want no listener bound", srv.Addr())
 			}
-			if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("second Start = %v, want an error wrapping ErrServerClosed", err)
 			}
 			if b, a := c.before.Load(), c.after.Load(); b != 0 || a != 1 {
@@ -804,7 +806,7 @@ func TestShutdown_WhileStarting_Branches(t *testing.T) {
 		shut := make(chan error, 1)
 		ln := listen(t)
 		withAddr := addrListener{Listener: ln, addr: func() net.Addr {
-			go func() { shut <- srv.Shutdown(context.Background()) }()
+			go func() { shut <- srv.Shutdown(t.Context()) }()
 			eventually(t, func() bool { return errors.Is(srv.Register(okRoute("/y")), srvr.ErrServerClosed) }, "Shutdown did not stop the server")
 
 			return ln.Addr()
@@ -813,7 +815,7 @@ func TestShutdown_WhileStarting_Branches(t *testing.T) {
 		mustNil(t, err)
 		mustNil(t, srv.Register(okRoute("/x")))
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 			t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
 		}
 		mustNil(t, receive(t, shut, "Shutdown did not return"))
@@ -836,9 +838,9 @@ func TestShutdown_WhileStarting_Branches(t *testing.T) {
 		mustNil(t, srv.Register(okRoute("/x")))
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 		receive(t, entered, "the first route check did not run")
-		mustNil(t, srv.Shutdown(context.Background()))
+		mustNil(t, srv.Shutdown(t.Context()))
 
 		if err := receive(t, done, "Start did not return"); !errors.Is(err, srvr.ErrServerClosed) {
 			t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)

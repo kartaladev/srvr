@@ -256,8 +256,8 @@ func (c *Core) sourceTrace(ctx context.Context, req *RequestState, o *guardedObs
 // each under recover: a panic, even with http.ErrAbortHandler, is reported
 // and never re-raised.
 func (c *Core) endObservers(ctx context.Context, req *RequestState, res ResultInfo) {
-	for i := len(req.ends) - 1; i >= 0; i-- {
-		c.end(ctx, req.ends[i], res)
+	for _, e := range slices.Backward(req.ends) {
+		c.end(ctx, e, res)
 	}
 }
 

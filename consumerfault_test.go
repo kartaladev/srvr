@@ -54,7 +54,7 @@ func TestMiddleware_ConstructorPanics(t *testing.T) {
 			srv := newServer(t)
 			mustNil(t, srv.Register(tt.api))
 
-			err := startBounded(context.Background(), t, srv)
+			err := startBounded(t.Context(), t, srv)
 
 			text := safeText(err)
 			if !errors.Is(err, srvr.ErrRouteConfig) || errors.Is(err, errPanicked) {
@@ -125,6 +125,8 @@ func (l *panicListener) Close() error {
 // shutdownWhileRunning starts srv, shuts it down and returns Shutdown's
 // result; Start must return nil.
 func shutdownWhileRunning(t *testing.T, srv *srvr.Server) error {
+	t.Helper()
+
 	done := startBackground(t, srv)
 	err := shutdownBounded(t, srv)
 	if startErr := receive(t, done, "Start did not return"); startErr != nil {
@@ -137,7 +139,9 @@ func shutdownWhileRunning(t *testing.T, srv *srvr.Server) error {
 // cancelWhileRunning starts srv, cancels its context and returns Start's
 // result.
 func cancelWhileRunning(t *testing.T, srv *srvr.Server) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
 	done := startWith(ctx, t, srv)
 	cancel()
 
@@ -219,15 +223,17 @@ func TestListener_ClosePanics(t *testing.T) {
 	}{
 		{"Shutdown before Start", shutdownBounded, nil},
 		{"Start with an already-cancelled context", func(t *testing.T, srv *srvr.Server) error {
-			ctx, cancel := context.WithCancel(context.Background())
+			t.Helper()
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 
 			return startBounded(ctx, t, srv)
 		}, context.Canceled},
 		{"Start, where a route configurer panics", func(t *testing.T, srv *srvr.Server) error {
+			t.Helper()
 			mustNil(t, srv.Register(&PanicAPI{}))
 
-			return startBounded(context.Background(), t, srv)
+			return startBounded(t.Context(), t, srv)
 		}, srvr.ErrRouteConfig},
 		{"Shutdown on a running server", shutdownWhileRunning, nil},
 		{"Start, after its context ends while running", cancelWhileRunning, nil},
@@ -249,7 +255,7 @@ func TestListener_ClosePanics(t *testing.T) {
 				t.Fatalf("later Shutdown = %s, want nil", safeText(err))
 			}
 
-			if err := startBounded(context.Background(), t, srv); !errors.Is(err, srvr.ErrServerClosed) {
+			if err := startBounded(t.Context(), t, srv); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("later Start = %s, want ErrServerClosed", safeText(err))
 			}
 		})
@@ -309,7 +315,7 @@ func TestListener_CloseErrors(t *testing.T) {
 func TestListenerOwnership(t *testing.T) {
 	t.Parallel()
 
-	cancelled, cancel := context.WithCancel(context.Background())
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tests := []struct {
@@ -328,7 +334,7 @@ func TestListenerOwnership(t *testing.T) {
 				t.Helper()
 				mustNil(t, srv.Register(&PanicAPI{}))
 
-				return srv.Start(context.Background())
+				return srv.Start(t.Context())
 			},
 			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
 		},
@@ -339,7 +345,7 @@ func TestListenerOwnership(t *testing.T) {
 				mustNil(t, srv.Register(okRoute("/dup")))
 				mustNil(t, srv.Register(okRoute("/dup")))
 
-				return srv.Start(context.Background())
+				return srv.Start(t.Context())
 			},
 			want: func(err error) bool { return errors.Is(err, srvr.ErrRouteConfig) },
 		},
@@ -350,14 +356,18 @@ func TestListenerOwnership(t *testing.T) {
 		},
 		{
 			name: "Shutdown before Start",
-			call: func(_ *testing.T, srv *srvr.Server) error { return srv.Shutdown(context.Background()) },
+			call: func(t *testing.T, srv *srvr.Server) error {
+				t.Helper()
+
+				return srv.Shutdown(t.Context())
+			},
 			want: func(err error) bool { return err == nil },
 		},
 		{
 			name: "served and shut down",
 			call: func(t *testing.T, srv *srvr.Server) error {
 				t.Helper()
-				ctx, stop := context.WithCancel(context.Background())
+				ctx, stop := context.WithCancel(t.Context())
 				done := startWith(ctx, t, srv)
 				stop()
 
@@ -430,7 +440,7 @@ func TestListener_UnusableAddress(t *testing.T) {
 			srv, err := srvr.New(srvr.WithListener(addrListener{Listener: ln, addr: tt.addr}), srvr.WithLogOutput(logs))
 			mustNil(t, err)
 
-			err = bounded(t, "Start did not return", func() error { return recoverPanic(func() error { return srv.Start(context.Background()) }) })
+			err = bounded(t, "Start did not return", func() error { return recoverPanic(func() error { return srv.Start(t.Context()) }) })
 			if !errors.Is(err, srvr.ErrConfig) || errors.Is(err, errPanicked) || !strings.Contains(safeText(err), "Listener") {
 				t.Fatalf("Start = %s, want an error wrapping ErrConfig naming Listener, without panicking", safeText(err))
 			}

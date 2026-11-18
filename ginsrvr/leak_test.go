@@ -1,7 +1,6 @@
 package ginsrvr_test
 
 import (
-	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -85,6 +84,8 @@ func TestLeakCheck(t *testing.T) {
 	}{
 		{"blocked on a channel that is never closed", func(*testing.T) func() { return startBlocked() }, "blockUntil"},
 		{"blocked on a channel the test closes at cleanup", func(t *testing.T) func() {
+			t.Helper()
+
 			t.Cleanup(startBlocked())
 			return nil
 		}, ""},
@@ -131,7 +132,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 
 				srv, _ := newServer(t)
 				startOK(t, srv)
-				if err := srv.Shutdown(context.Background()); err != nil {
+				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatalf("Shutdown = %v", err)
 				}
 

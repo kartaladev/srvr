@@ -149,8 +149,13 @@ func activeRequests(t *testing.T, rm metricdata.ResourceMetrics) int64 {
 		t.Fatal("no http.server.active_requests")
 	}
 
+	data, ok := m.Data.(metricdata.Sum[int64])
+	if !ok {
+		t.Fatalf("http.server.active_requests data is %T, want metricdata.Sum[int64]", m.Data)
+	}
+
 	var sum int64
-	for _, p := range m.Data.(metricdata.Sum[int64]).DataPoints {
+	for _, p := range data.DataPoints {
 		sum += p.Value
 	}
 
@@ -166,8 +171,13 @@ func sizeSum(t *testing.T, rm metricdata.ResourceMetrics, name string) int64 {
 		t.Fatalf("no %s", name)
 	}
 
+	data, ok := m.Data.(metricdata.Histogram[int64])
+	if !ok {
+		t.Fatalf("%s data is %T, want metricdata.Histogram[int64]", name, m.Data)
+	}
+
 	var sum int64
-	for _, p := range m.Data.(metricdata.Histogram[int64]).DataPoints {
+	for _, p := range data.DataPoints {
 		sum += p.Sum
 	}
 
@@ -293,6 +303,8 @@ func TestActiveRequests(t *testing.T) {
 // exporter. go.opentelemetry.io/auto/sdk is imported by the API's own
 // global package and is not the SDK.
 func TestNoSDKDependency(t *testing.T) {
+	t.Parallel()
+
 	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list: %v\n%s", err, out)

@@ -98,6 +98,7 @@ func TestLeakCheck(t *testing.T) {
 			return startBlocked()
 		}, "srvr_test.blockUntil"},
 		{"blocked on a channel the test closes at cleanup", func(t *testing.T) func() {
+			t.Helper()
 			t.Cleanup(startBlocked())
 			return nil
 		}, ""},
@@ -173,9 +174,9 @@ func TestAbandonedHook_Goroutines(t *testing.T) {
 			defer end()
 
 			srv := newServer(t, append([]srvr.Option{srvr.WithShutdownHook(tt.phase, abandonedHook(release))}, tt.opts...)...)
-			done := startWith(context.Background(), t, srv)
+			done := startWith(t.Context(), t, srv)
 
-			ctx := context.Background()
+			ctx := t.Context()
 			if tt.ctx > 0 {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, tt.ctx)
@@ -210,47 +211,55 @@ func TestLifecycle_Goroutines(t *testing.T) {
 		leak string
 	}{
 		{"one route, Start, GET /ok with keep-alive, Shutdown", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t)
 			mustNil(t, srv.Register(okRoute("/ok")))
 			startGetShutdown(t, srv, http.StatusOK)
 		}, ""},
 		{"BeforeDrain and AfterDrain hooks returning nil, Start, Shutdown", func(t *testing.T) {
+			t.Helper()
 			nop := func(context.Context) error { return nil }
 			startGetShutdown(t, newServer(t, srvr.WithShutdownHook(srvr.BeforeDrain, nop), srvr.WithShutdownHook(srvr.AfterDrain, nop)), 0)
 		}, ""},
 		{"WithListener on 127.0.0.1:0, Start, Shutdown", func(t *testing.T) {
+			t.Helper()
 			srv, err := srvr.New(srvr.WithListener(listen(t)))
 			mustNil(t, err)
 			startGetShutdown(t, srv, 0)
 		}, ""},
 		{"one route, Shutdown before Start", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t)
 			mustNil(t, srv.Register(okRoute("/ok")))
 
 			mustNil(t, shutdownBounded(t, srv))
 		}, ""},
 		{"one route, Start with a context cancelled after it is running", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t)
 			mustNil(t, srv.Register(okRoute("/ok")))
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			done := startWith(ctx, t, srv)
 
 			cancel()
 			mustNil(t, receive(t, done, "Start did not return"))
 		}, ""},
 		{"address already in use, Start fails", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t, srvr.WithAddr(listen(t).Addr().String()))
 
-			if err := startBounded(context.Background(), t, srv); err == nil {
+			if err := startBounded(t.Context(), t, srv); err == nil {
 				t.Fatal("Start = nil on an address in use")
 			}
 		}, ""},
 		{"a handler that panics, Start, GET /ok, Shutdown", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t)
 			mustNil(t, srv.Register(on("", "/ok", func(http.ResponseWriter, *http.Request) error { panic("boom") })))
 			startGetShutdown(t, srv, http.StatusInternalServerError)
 		}, ""},
 		{"a handler blocking until its request context ends, Shutdown with a 50ms drain deadline", func(t *testing.T) {
+			t.Helper()
 			started := make(chan struct{})
 			srv := newServer(t)
 			mustNil(t, srv.Register(on("", "/block", func(_ http.ResponseWriter, r *http.Request) error {
@@ -259,13 +268,13 @@ func TestLifecycle_Goroutines(t *testing.T) {
 
 				return nil
 			})))
-			done := startWith(context.Background(), t, srv)
+			done := startWith(t.Context(), t, srv)
 			registerClient(t, srv.Addr())
 
 			res := inFlight("http://" + srv.Addr() + "/block")
 			receive(t, started, "GET /block did not reach its handler")
 
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
 
 			if err := srv.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -275,9 +284,10 @@ func TestLifecycle_Goroutines(t *testing.T) {
 			mustNil(t, receive(t, done, "Start did not return"))
 		}, ""},
 		{"one route, Start and never Shutdown", func(t *testing.T) {
+			t.Helper()
 			srv := newServer(t)
 			mustNil(t, srv.Register(okRoute("/ok")))
-			done := startWith(context.Background(), t, srv)
+			done := startWith(context.Background(), t, srv) //nolint:usetesting // the server must outlive the test body: the cleanup stops it
 
 			t.Cleanup(func() { // stop it after the check, so the binary stays green
 				mustNil(t, shutdownBounded(t, srv))
@@ -312,7 +322,7 @@ func TestLifecycle_Goroutines(t *testing.T) {
 func startGetShutdown(t *testing.T, srv *srvr.Server, want int) {
 	t.Helper()
 
-	done := startWith(context.Background(), t, srv)
+	done := startWith(t.Context(), t, srv)
 	registerClient(t, srv.Addr())
 
 	if want != 0 {
@@ -393,7 +403,7 @@ func TestServeGoroutine(t *testing.T) {
 				mustNil(t, err)
 			}
 			mustNil(t, srv.Register(okRoute("/ok")))
-			done := startWith(context.Background(), t, srv)
+			done := startWith(t.Context(), t, srv)
 
 			// The goroutine exists once Ready is closed, but its stack shows
 			// serveOn only once it has been scheduled.
@@ -403,7 +413,7 @@ func TestServeGoroutine(t *testing.T) {
 			}
 
 			begin := time.Now()
-			if err := srv.Shutdown(context.Background()); (tt.drain == 0 && err != nil) || (tt.drain > 0 && !errors.Is(err, context.DeadlineExceeded)) {
+			if err := srv.Shutdown(t.Context()); (tt.drain == 0 && err != nil) || (tt.drain > 0 && !errors.Is(err, context.DeadlineExceeded)) {
 				t.Fatalf("Shutdown = %v", err)
 			}
 			if d, limit := time.Since(begin), time.Second+tt.drain+300*time.Millisecond; d > limit {

@@ -24,16 +24,16 @@ func TestFiberLifecycle(t *testing.T) {
 	tests := []struct {
 		name  string
 		state string
-		call  func(*fibersrvr.Server) error
+		call  func(context.Context, *fibersrvr.Server) error
 		want  error
 	}{
-		{"Start while running", "running", func(s *fibersrvr.Server) error { return s.Start(context.Background()) }, srvr.ErrServerStarted},
-		{"Shutdown never started", "new", func(s *fibersrvr.Server) error { return s.Shutdown(context.Background()) }, nil},
-		{"Start after stop", "stopped", func(s *fibersrvr.Server) error { return s.Start(context.Background()) }, srvr.ErrServerClosed},
-		{"Register while running", "running", func(s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerStarted},
-		{"Register after stop", "stopped", func(s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerClosed},
-		{"Shutdown(nil) while running", "running", func(s *fibersrvr.Server) error {
-			err := s.Shutdown(nil) //nolint:staticcheck // a nil context is the row under test.
+		{"Start while running", "running", func(ctx context.Context, s *fibersrvr.Server) error { return s.Start(ctx) }, srvr.ErrServerStarted},
+		{"Shutdown never started", "new", func(ctx context.Context, s *fibersrvr.Server) error { return s.Shutdown(ctx) }, nil},
+		{"Start after stop", "stopped", func(ctx context.Context, s *fibersrvr.Server) error { return s.Start(ctx) }, srvr.ErrServerClosed},
+		{"Register while running", "running", func(_ context.Context, s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerStarted},
+		{"Register after stop", "stopped", func(_ context.Context, s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerClosed},
+		{"Shutdown(nil) while running", "running", func(_ context.Context, s *fibersrvr.Server) error {
+			err := s.Shutdown(nil) //nolint:contextcheck,staticcheck // a nil context is the row under test.
 			if !errors.Is(err, srvr.ErrConfig) {
 				return err
 			}
@@ -56,12 +56,12 @@ func TestFiberLifecycle(t *testing.T) {
 			case "running":
 				start(t, srv)
 			case "stopped":
-				if err := srv.Shutdown(context.Background()); err != nil {
+				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			if err := tt.call(srv); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
+			if err := tt.call(t.Context(), srv); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
 				t.Fatalf("call = %v, want %v", err, tt.want)
 			}
 		})
@@ -113,7 +113,9 @@ func TestFiberShutdownHooks(t *testing.T) {
 		want []string
 	}{
 		{"Start context cancelled while serving", func(t *testing.T, srv *fibersrvr.Server) {
-			ctx, cancel := context.WithCancel(context.Background())
+			t.Helper()
+
+			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
 			go func() { done <- srv.Start(ctx) }()
 			<-srv.Ready()
@@ -123,13 +125,15 @@ func TestFiberShutdownHooks(t *testing.T) {
 			}
 		}, both},
 		{"Shutdown while serving, then again", func(t *testing.T, srv *fibersrvr.Server) {
+			t.Helper()
+
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(context.Background()) }()
+			go func() { done <- srv.Start(t.Context()) }()
 			<-srv.Ready()
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-done; err != nil {
@@ -137,15 +141,19 @@ func TestFiberShutdownHooks(t *testing.T) {
 			}
 		}, both},
 		{"Shutdown never started", func(t *testing.T, srv *fibersrvr.Server) {
-			if err := srv.Shutdown(context.Background()); err != nil {
+			t.Helper()
+
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}, after},
 		{"Start(nil), then Shutdown", func(t *testing.T, srv *fibersrvr.Server) {
+			t.Helper()
+
 			if err := srv.Start(nil); !errors.Is(err, srvr.ErrConfig) { //nolint:staticcheck // a nil context is the row under test.
 				t.Fatalf("Start(nil) = %v", err)
 			}
-			if err := srv.Shutdown(context.Background()); err != nil {
+			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 		}, after},
@@ -187,18 +195,18 @@ func TestFiberShutdownHooks(t *testing.T) {
 		}
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 		<-srv.Ready()
 
 		go func() {
-			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/slow", nil)
+			req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/slow", nil) //nolint:usetesting // the request goroutine may outlive the test body.
 			if res, err := clientFor(req.URL.String()).Do(req); err == nil {
 				_ = res.Body.Close()
 			}
 		}()
 		<-started
 
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 		defer cancel()
 
 		if err := srv.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
@@ -219,13 +227,13 @@ func TestFiberShutdownHooks(t *testing.T) {
 		rec := &hookRecorder{}
 		srv, _ := newServer(t, rec.options()...)
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(context.Background()) }()
+		go func() { done <- srv.Start(t.Context()) }()
 		<-srv.Ready()
 
-		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerStarted) {
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
 			t.Fatalf("second Start = %v", err)
 		}
-		if err := srv.Shutdown(context.Background()); err != nil {
+		if err := srv.Shutdown(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		if err := <-done; err != nil {
@@ -240,7 +248,7 @@ func TestFiberShutdownHooks(t *testing.T) {
 	t.Run("Start fails because the address is in use", func(t *testing.T) {
 		t.Parallel()
 
-		ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,7 +260,7 @@ func TestFiberShutdownHooks(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		if err := srv.Start(ctx); err == nil {
@@ -301,7 +309,7 @@ func TestFiberDrain(t *testing.T) {
 			}
 
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(context.Background()) }()
+			go func() { done <- srv.Start(t.Context()) }()
 			<-srv.Ready()
 
 			// One client connection of its own, kept alive.
@@ -309,7 +317,7 @@ func TestFiberDrain(t *testing.T) {
 			defer client.CloseIdleConnections()
 
 			request := func() {
-				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/w", nil)
+				req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/w", nil) //nolint:usetesting // run in a goroutine that may outlive the test body.
 				if res, err := client.Do(req); err == nil {
 					_ = res.Body.Close()
 				}
@@ -323,7 +331,7 @@ func TestFiberDrain(t *testing.T) {
 				<-started
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), tt.deadline)
+			ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 			defer cancel()
 
 			if err := srv.Shutdown(ctx); !errors.Is(err, tt.want) || (tt.want == nil && err != nil) {
@@ -347,7 +355,7 @@ func TestFiberDrain(t *testing.T) {
 func TestFiberShutdownNeverServed(t *testing.T) {
 	t.Parallel()
 
-	if err := fiber.New().ShutdownWithContext(context.Background()); err != nil {
+	if err := fiber.New().ShutdownWithContext(t.Context()); err != nil {
 		t.Fatalf("ShutdownWithContext = %v, want nil", err)
 	}
 }

@@ -137,6 +137,8 @@ func TestFiberConfig(t *testing.T) {
 
 	for _, tt := range rejected {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			srv, err := fibersrvr.New(tt.opts...)
 			if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig naming %q", srv, err, tt.want)
