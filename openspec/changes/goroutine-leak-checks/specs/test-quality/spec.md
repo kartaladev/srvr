@@ -35,7 +35,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 |--------|-----------|----------|
 | `github.com/kartaladev/srvr` | (none) | no |
 | `github.com/kartaladev/srvr` | ends on its own `20ms` after the test | no |
-| `github.com/kartaladev/srvr` | sleeping in `time.Sleep` with no srvr frame, never ending | yes, naming `time.Sleep` |
+| `github.com/kartaladev/srvr` | sleeping in `time.Sleep` with no srvr frame, outliving goleak's retry window | yes, naming `time.Sleep` |
 
 #### Scenario: Every test package runs the leak check
 - **Given** the test packages of the repository's modules
@@ -102,6 +102,11 @@ Every goroutine srvr or a dependency starts for a server, a listener, a provider
 | an `otelsetup.Setup` | Prometheus on an address already in use | `New` fails | no |
 | an `otelsetup.Setup` | Prometheus enabled on `127.0.0.1:0` | `New` and never `Shutdown` | yes, naming the metrics server's serve goroutine |
 
+##### Examples: parity harness
+| owner | setup | lifecycle | reported |
+|-------|-------|-----------|----------|
+| a fiber server of the `internal/paritytest` harness | one route `GET /ok`, fasthttp's `MaxIdleWorkerDuration` shortened to `20ms` | `Start`, `GET /ok`, `Shutdown` | no, including fasthttp's idle-worker cleaner `(*workerPool).Start.func2` |
+
 #### Scenario: Abandoned consumer code is the only goroutine left
 - **Given** `<owner>` with consumer code that ignores its context and blocks until the test releases it
 - **When** srvr abandons that code at its budget and the test checks for goroutines `<release>`
@@ -128,9 +133,8 @@ A goroutine that outlives its test on purpose SHALL be excluded only by an ignor
 | module | function | reason | with options |
 |--------|----------|--------|--------------|
 | `github.com/kartaladev/srvr/fibersrvr` | `github.com/valyala/fasthttp.updateServerDate.func1` | fasthttp refreshes its `Date` header once per process and never stops | not reported |
-| `github.com/kartaladev/srvr/fibersrvr` | `github.com/valyala/fasthttp.(*workerPool).Start.func2` | fasthttp's idle-worker cleaner sleeps up to `10s` before it sees `Stop` | not reported |
+| `github.com/kartaladev/srvr/fibersrvr` | `github.com/valyala/fasthttp.(*workerPool).Start.func2` | fasthttp's idle-worker cleaner sleeps up to `10s` (`MaxIdleWorkerDuration`'s default) before it sees `Stop`, and the package's `Example` runs a server with that default, which it cannot shorten | not reported |
 | `github.com/kartaladev/srvr/internal/paritytest` | `github.com/valyala/fasthttp.updateServerDate.func1` | as in `fibersrvr` | not reported |
-| `github.com/kartaladev/srvr/internal/paritytest` | `github.com/valyala/fasthttp.(*workerPool).Start.func2` | as in `fibersrvr` | not reported |
 | `github.com/kartaladev/srvr/internal/paritytest/gincycle` | the package's named cyclic-error handler | gin's `c.Error` never returns for a cyclic chain, so the handler goroutine cannot be stopped (engine-parity documented difference) | not reported |
 
 ##### Examples: not hidden
@@ -138,3 +142,4 @@ A goroutine that outlives its test on purpose SHALL be excluded only by an ignor
 |--------|----------|--------|--------------|
 | `github.com/kartaladev/srvr/fibersrvr` | a fiber server started and never shut down | its serve and worker goroutines are not deliberate | reported, naming srvr's serve goroutine |
 | `github.com/kartaladev/srvr/internal/paritytest` | a gin handler blocked on a channel never closed | only the `gincycle` binary ignores its handler | reported, naming the blocked handler |
+| `github.com/kartaladev/srvr/internal/paritytest` | fasthttp's idle-worker cleaner of a fiber server left at the default `MaxIdleWorkerDuration`, after `Shutdown` | the parity binary does not ignore the cleaner: its harness shortens the duration so the cleaner ends | reported, naming `github.com/valyala/fasthttp.(*workerPool).Start.func2` |

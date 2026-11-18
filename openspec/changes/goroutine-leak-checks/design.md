@@ -32,6 +32,8 @@ goleak's `VerifyTestMain` and `Find` retry for about 430ms (20 retries, backoff 
 3. **Otel modules under goleak**: `otelsrvr` and `otelsetup` `TestMain`s; lifecycle rows for an `otelsrvr` traced server and for `otelsetup` (Prometheus listener, OTLP over HTTP and gRPC, a failed `New`, a never-stopped setup); the existing non-parallel tests that start listeners or exporters check per test. Satisfies the otel rows of the first two scenarios.
 4. **Parity module, guard and rules**: `internal/paritytest` `TestMain` with the fasthttp ignores; the gin cyclic test moves to `internal/paritytest/gincycle` with its own `TestMain` ignoring only its named handler; a guard parses every test package directory of the repository and fails when one lacks a `TestMain` calling `goleak.VerifyTestMain`; `AGENTS.md` testing rules and the change order. Satisfies the paritytest rows, "Every test package runs the leak check" (all rows), and the remaining rows of "Each ignore is needed and narrow".
 
+5. **Parity cleaner ends instead of being ignored** (owner decision after slice 4): the parity harness's `fiberServer` registers, before the test's configurer, one that sets the fiber app's fasthttp `MaxIdleWorkerDuration` to `20ms`; the paritytest cleaner ignore and its "needed" row go; a parity lifecycle row proves the cleaner ends after `Shutdown`, and a "not hidden" row proves the default duration still leaves it, so the helper stays needed. fibersrvr is unchanged. Satisfies the "parity harness" rows of "Lifecycle leaves no goroutine behind" and the paritytest cleaner row of "Each ignore is needed and narrow" (not hidden).
+
 Each slice ends with every module it touched green under goleak; no slice needs a later one.
 
 ## Decisions
@@ -54,7 +56,9 @@ A helper `checkGoroutines(t)` per module captures `goleak.IgnoreCurrent()` when 
 
 `goleak.IgnoreAnyFunction` with the full function name, because the top frame of the fasthttp goroutines is `time.Sleep`, which `IgnoreTopFunction` could only match by ignoring every sleeping goroutine. Each ignore sits in `leak_test.go` with a comment giving the reason and the dependency version it was observed with. A test per ignoring module (test-quality "Each ignore is needed and narrow") starts the goroutine, asserts `goleak.Find` without the option reports that function and with the options does not, and that a fiber server never shut down is still reported (its serve and worker goroutines are not ignored).
 
-**Failure modes:** a fasthttp upgrade renames the closure - the "needed" row fails and names the function, so the ignore is updated rather than silently dead; the cleaner of a never-stopped server is hidden - the server's other goroutines are still reported (row "not hidden").
+Where a test can end a dependency goroutine, it does so instead of ignoring it (owner decision, slice 5). fasthttp's idle-worker cleaner sleeps `MaxIdleWorkerDuration` (`10s` by default; `0` means the default) between checks of its stop channel; `Serve` reads the value at start and stops the pool before returning, and srvr's serve goroutine ends after that, so with a short duration the cleaner ends within one sleep after `Shutdown`. `internal/paritytest` therefore shortens it to `20ms` in its one fiber helper (`fiberServer`, through a first configurer `r.(*fiber.App).Server().MaxIdleWorkerDuration = 20ms`; it panics with a clear message if the router is not a `*fiber.App`, which srvr turns into a `Start` error) and does not ignore the cleaner. `fibersrvr` keeps the cleaner ignore: its `Example()` (`example_test.go`) starts a server with the default duration and must not show test-only plumbing. fasthttp's `updateServerDate` refresher is started once per process and never ends, so it stays ignored in both modules.
+
+**Failure modes:** a fasthttp upgrade renames the closure - the "needed" row fails and names the function, so the ignore is updated rather than silently dead; the cleaner of a never-stopped server is hidden - the server's other goroutines are still reported (row "not hidden"); a parity fiber server that bypasses the helper keeps the 10s cleaner and fails the binary only when no later test runs long enough - every fiber server of the module is built by `fiberServer` (one `fibersrvr.New` call site), and the "not hidden" cleaner row passes the default duration through the same helper; a write to `MaxIdleWorkerDuration` racing with `Serve` - the configurer runs during `Register`/`Start`, before `Serve` reads it (-race clean).
 
 ### D4 The gin cyclic test runs in its own binary
 
@@ -83,7 +87,7 @@ No production hot path changes unless a srvr leak is proven. The tests exercise 
 ## Risks / Trade-offs
 
 - [goleak's ~430ms retry window is too short under load for a goroutine that ends asynchronously] → owners are stopped synchronously in cleanups; 5 foreground runs per module; a flaky failure is recorded in `notes.md` with its output rather than widened into a broad ignore.
-- [The fasthttp cleaner ignore hides a cleaner whose server was never stopped] → the server's own goroutines are still reported (D3).
+- [The fasthttp cleaner ignore hides a cleaner whose server was never stopped] → the server's own goroutines are still reported (D3); only `fibersrvr` keeps that ignore, the parity binary ends the cleaner instead.
 - [goleak appears in consumers' module graphs] → accepted by the owner; no package is compiled into consumers (proposal, Defaults and Customization).
 - [Test-only `go.mod` requirement in the core contradicts the old wording of rule 7] → rule 7, the layout line and `openspec/config.yaml` are amended in slice 1, before the requirement is added.
 

@@ -74,6 +74,16 @@
 - [x] 5.5 Verify the change end to end: from every module's directory (`.`, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` with `GOWORK=off`; `internal/paritytest`) run vet, golangci-lint, `go test -race ./...` and coverage (unchanged or higher than at `52fdbfc`); then run every module's suite 5 times in the foreground (`go test -race -count=1 ./...`) and record that all passed; `pgrep -fl '\.test'` after each test command shows no binary of this repository; `openspec validate goroutine-leak-checks --strict` passes
 - [x] 5.6 Re-read `notes.md` and make sure every open entry has a target; run /simplify on the slice's changes, re-run the parity tests, and commit `test(paritytest): fail parity tests on leaked goroutines and guard every package`; verify with `git log -1 --stat`
 
+## 6. Slice: paritytest ends fasthttp's idle-worker cleaner instead of ignoring it
+
+- [ ] 6.1 The parity harness ends fasthttp's cleaner (test-quality / Scenario: Lifecycle leaves no goroutine behind, parity harness row; Scenario: Each ignore is needed and narrow, paritytest cleaner row of "not hidden" and the removed paritytest cleaner ignore row); verify `go test -race -count=20 -run 'TestLeakIgnores|TestLifecycle_Goroutines' .` passes in `internal/paritytest`
+  - RED: remove the cleaner ignore (`fasthttpWorkerCleaner`) from paritytest's `leakOptions` and its "needed" row from `TestLeakIgnores`; add `TestLifecycle_Goroutines` (non-parallel, parity harness row: a fiber server through `fiberServer`, `GET /ok`, `Shutdown` in a subtest, then `goleak.Find` with `leakOptions` and `IgnoreCurrent` reports nothing) and the "not hidden" cleaner row to `TestLeakIgnores` (default duration -> reported with `leakOptions`, naming `(*workerPool).Start.func2`); run and record the lifecycle row failing on `(*workerPool).Start.func2`. Fails to compile until the helper takes an idle-worker duration
+  - GREEN: `fiberServer` registers first a configurer setting `r.(*fiber.App).Server().MaxIdleWorkerDuration` (`20ms` by default; the "not hidden" row passes `0`, fasthttp's default), panicking with a clear message when the router is not a `*fiber.App`; no production code changes
+  - REFACTOR: Extract Function for the idle-worker configurer if `fiberServer` grows past one concern, then /simplify
+- [ ] 6.2 Every fiber server of `internal/paritytest` goes through the helper: `grep -rn 'fibersrvr.New' internal/paritytest` lists only `fiberServer`, and each `fiberServer` call site is checked; `fibersrvr` (its ignore, `TestLeakIgnores` and `Example`) is unchanged (`git diff --stat -- fibersrvr` empty); verify by the grep and the diff
+- [ ] 6.3 Verify the slice: in `internal/paritytest` run `go vet ./...`, `golangci-lint run ./...`, `go test -race -count=1 ./...` 5 times in the foreground, and `go test -race -count=20 -run 'TestLeakIgnores|TestLifecycle_Goroutines' .`; `pgrep -fl '\.test'` after each test command shows no binary of this repository; `openspec validate goroutine-leak-checks --strict` passes
+- [ ] 6.4 Run /simplify on the slice's changes, re-run the parity tests, and commit `test(paritytest): end fasthttp's idle-worker cleaner instead of ignoring it`; verify with `git log -1 --stat`
+
 ## Workflow follow-up
 
 - Archive the change after the project's review requirements are satisfied (`/opsx:archive`), syncing `test-quality` into `openspec/specs/`.
