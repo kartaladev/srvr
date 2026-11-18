@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,30 +13,27 @@ import (
 	"github.com/kartaladev/srvr"
 )
 
-// TestRouteFlagFields pins the unexported fiber.Route fields declared
-// reads, so a fiber upgrade that renames them fails here instead of
-// turning middleware into duplicate routes.
-func TestRouteFlagFields(t *testing.T) {
-	t.Parallel()
-
-	rt := reflect.TypeFor[fiber.Route]()
-	for _, name := range []string{"use", "mount", "autoHead"} {
-		if f, ok := rt.FieldByName(name); !ok || f.Type.Kind() != reflect.Bool {
-			t.Errorf("fiber.Route has no bool field %q", name)
-		}
-	}
-}
-
-// TestMountFields pins the unexported fiber fields the sub-app walk reads
-// (Route.group, Group.app, App.stack), so srvr's own fiber upgrade that
+// TestMountFields pins the unexported fiber fields srvr reads (the route
+// flags Route.use, Route.mount, Route.autoHead and the sub-app fields
+// Route.group, Group.app, App.stack), so srvr's own fiber upgrade that
 // renames or retypes them fails here; a consumer's upgrade fails Start
-// through the same check (TestMountFieldCheck).
+// through the same check (TestInternalFieldCheck).
 func TestMountFields(t *testing.T) {
 	t.Parallel()
 
-	for _, f := range mountFields {
-		if err := f.check(); err != nil {
-			t.Error(err)
+	pinned := map[string]bool{}
+
+	if err := checkFields(fiberFields); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, f := range fiberFields {
+		pinned[f.owner.Name()+"."+f.name] = true
+	}
+
+	for _, name := range []string{"Route.use", "Route.mount", "Route.autoHead", "Route.group", "Group.app", "App.stack"} {
+		if !pinned[name] {
+			t.Errorf("field %s is not in the checked list", name)
 		}
 	}
 }
@@ -178,7 +176,7 @@ func TestReadInternals(t *testing.T) {
 	}{
 		{"no error", func() error { return nil }, nil, ""},
 		{"error", func() error { return failed }, failed, "failed"},
-		{"panic", func() error { panic("reflect: call of reflect.Value.Len on ptr Value") }, srvr.ErrRouteConfig, "fiber " + fiberVersion() + ": cannot list mounted sub-app routes: reading fiber's internals panicked: reflect: call of reflect.Value.Len on ptr Value"},
+		{"panic", func() error { panic("reflect: call of reflect.Value.Len on ptr Value") }, srvr.ErrRouteConfig, "fiber " + fiberVersion() + ": cannot read fiber's internals for the route listing: reading fiber's internals panicked: reflect: call of reflect.Value.Len on ptr Value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -216,65 +214,47 @@ func TestSubAppUnreadable(t *testing.T) {
 	}
 }
 
-// TestMountFieldCheck: with a mounted sub-app, fiber fields that are
-// renamed or retyped fail before the walk with an error wrapping
-// srvr.ErrRouteConfig naming the field and the fiber version; with no
-// mount nothing is checked (engine-support / Scenario: Fiber mount
-// internals unreadable).
-func TestMountFieldCheck(t *testing.T) {
+// TestInternalFieldCheck: fiber fields srvr reads - the route flags and
+// the sub-app fields - that are renamed or retyped fail with an error
+// wrapping srvr.ErrRouteConfig naming the field and the fiber version.
+// configure runs the check on every Start, before any configurer, so it
+// applies whether or not a sub-app is mounted (engine-support / Scenario:
+// Fiber mount internals unreadable).
+func TestInternalFieldCheck(t *testing.T) {
 	t.Parallel()
 
-	// Only their types are inspected.
-	type renamedRoute struct{ grp *fiber.Group }   //nolint:unused // stand-in type
-	type retypedApp struct{ stack []*fiber.Route } //nolint:unused // stand-in type
+	// Stand-in owner types; only their types are inspected.
+	type renamed struct{ other bool } //nolint:unused // stand-in type
+	type retyped struct {
+		use, mount, autoHead int            //nolint:unused // stand-in fields
+		stack                []*fiber.Route //nolint:unused // stand-in field
+	}
 
-	renamed := []mountField{{reflect.TypeFor[renamedRoute](), "group", reflect.TypeFor[*fiber.Group]()}, groupApp, appStack}
-	retyped := []mountField{routeGroup, groupApp, {reflect.TypeFor[retypedApp](), "stack", reflect.TypeFor[[][]*fiber.Route]()}}
+	field := func(owner reflect.Type, name string, want reflect.Type) fiberField {
+		return fiberField{owner, name, want}
+	}
+	boolType, renamedType, retypedType := reflect.TypeFor[bool](), reflect.TypeFor[renamed](), reflect.TypeFor[retyped]()
 
 	for _, tc := range []struct {
-		name   string
-		mount  bool
-		fields []mountField
-		want   string // "" for no error
+		name  string
+		field fiberField
+		want  string
 	}{
-		{"renamed field", true, renamed, "field fibersrvr.renamedRoute.group is missing"},
-		{"retyped field", true, retyped, "field fibersrvr.retypedApp.stack has type []*fiber.Route, want [][]*fiber.Route"},
-		{"fields as pinned", true, mountFields, ""},
-		{"renamed field, no mount", false, renamed, ""},
-		{"retyped field, no mount", false, retyped, ""},
+		{"use renamed", field(renamedType, "use", boolType), "field fibersrvr.renamed.use is missing"},
+		{"mount renamed", field(renamedType, "mount", boolType), "field fibersrvr.renamed.mount is missing"},
+		{"autoHead renamed", field(renamedType, "autoHead", boolType), "field fibersrvr.renamed.autoHead is missing"},
+		{"use retyped", field(retypedType, "use", boolType), "field fibersrvr.retyped.use has type int, want bool"},
+		{"mount retyped", field(retypedType, "mount", boolType), "field fibersrvr.retyped.mount has type int, want bool"},
+		{"autoHead retyped", field(retypedType, "autoHead", boolType), "field fibersrvr.retyped.autoHead has type int, want bool"},
+		{"group renamed", field(renamedType, "group", reflect.TypeFor[*fiber.Group]()), "field fibersrvr.renamed.group is missing"},
+		{"stack retyped", field(retypedType, "stack", reflect.TypeFor[[][]*fiber.Route]()), "field fibersrvr.retyped.stack has type []*fiber.Route, want [][]*fiber.Route"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			app := fiber.New()
-			sub := fiber.New()
-			sub.Get("/users", func(c fiber.Ctx) error { return c.SendStatus(200) })
-
-			var o routeOwners
-			o.current = "T"
-
-			before := len(firstStack(app))
-			if tc.mount {
-				app.Use("/api", sub)
-			}
-
-			o.recordMounts(app, before)
-
-			err := o.addMounted(tc.fields)
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("addMounted = %v, want nil", err)
-				}
-
-				return
-			}
-
+			err := checkFields(append(slices.Clone(fiberFields), tc.field))
 			if !errors.Is(err, srvr.ErrRouteConfig) || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "fiber "+fiberVersion()+":") {
-				t.Fatalf("addMounted = %v, want an error wrapping srvr.ErrRouteConfig containing %q and the fiber version", err, tc.want)
-			}
-
-			if len(o.routes) != 0 {
-				t.Fatalf("routes %v listed before the check failed", o.routes)
+				t.Fatalf("checkFields = %v, want an error wrapping srvr.ErrRouteConfig containing %q and the fiber version", err, tc.want)
 			}
 		})
 	}

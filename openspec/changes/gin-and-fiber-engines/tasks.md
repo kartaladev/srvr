@@ -217,11 +217,11 @@ A consumer's fiber upgrade that renames or retypes `Route.group`, `Group.app` or
   - REFACTOR: `TestMountFields` checks the same field list the runtime check uses (Remove Duplicate Code); then /simplify
 - [x] 8.3 `fibersrvr` godoc: a sub-app must not be shared between servers that configure concurrently (fiber's own race, notes.md "A fiber sub-app shared between servers races in fiber")
 - [x] 8.4 Verify the slice: from `fibersrvr` with `GOWORK=off`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...` and coverage of the new branches; no stray `.test` processes; close the notes.md entry; run /simplify and commit `fix(fibersrvr): fail Start when fiber's mount internals are unreadable`
-- [ ] 8.5 Route flag fields checked on every Start (engine-support / Scenario: Fiber mount internals unreadable, the rows without a sub-app; owner decision 2026-11-18, notes.md "Fiber route flag fields are still read with a silent fallback"); verify `go test -race -run 'TestInternalFieldCheck|TestMountFields'` passes in `fibersrvr`
+- [x] 8.5 Route flag fields checked on every Start (engine-support / Scenario: Fiber mount internals unreadable, the rows without a sub-app; owner decision 2026-11-18, notes.md "Fiber route flag fields are still read with a silent fallback"); verify `go test -race -run 'TestInternalFieldCheck|TestMountFields'` passes in `fibersrvr`
   - RED: the field-check table gains stand-in rows for renamed and retyped `use`, `mount` and `autoHead`, and its no-mount rows now expect the error; `TestMountFields` asserts the pinned list holds all six fields; fails because the check is skipped without a mount and the pinned list lacks the flags
   - GREEN: add the three `bool` flags to the pinned field list and check the whole list on every `Start`
   - REFACTOR: Move Statement - the check moves from `addMounted` to the start of `configure`, before any configurer runs, as one function over the field list (`checkFields`); `addMounted` loses its test-only parameter; then /simplify
-- [ ] 8.6 Verify: from `fibersrvr` and `internal/paritytest` with `GOWORK=off`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...`; no stray `.test` processes; commit `fix(fibersrvr): fail Start when fiber's route flag fields are unreadable`
+- [x] 8.6 Verify: from `fibersrvr` and `internal/paritytest` with `GOWORK=off`, `go vet ./...`, `golangci-lint run ./...`, `go test -race ./...`; no stray `.test` processes; commit `fix(fibersrvr): fail Start when fiber's route flag fields are unreadable`
 
 ## Workflow follow-up
 

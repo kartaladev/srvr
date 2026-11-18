@@ -10,7 +10,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** apply group 7.
 
 ### Fiber mount internals not fail-safe after a consumer's fiber upgrade
-- **Status:** closed: fixed in task group 8 (2026-11-18); `fibersrvr/routeflag_internal_test.go` `TestWalkUnreadable`, `TestReadInternals`, `TestSubAppUnreadable`, `TestMountFieldCheck`, `TestModuleVersion`
+- **Status:** closed: fixed in task group 8 (2026-11-18); `fibersrvr/routeflag_internal_test.go` `TestWalkUnreadable`, `TestReadInternals`, `TestSubAppUnreadable`, `TestInternalFieldCheck` (named `TestMountFieldCheck` until task 8.5), `TestModuleVersion`
 - **Target:** gin-and-fiber-engines
 - **Context:** The sub-app walk (design D8) reads `Route.group`, `Group.app` and `App.stack` by reflection; `TestMountFields` pins them only in srvr's CI. After a consumer's fiber upgrade a renamed field silently dropped mounted routes from the listing and the duplicate check (D8 accepted "degrade to listing nothing"), and a retyped field panicked in `Start`, because only `engine.Configure` recovers. Owner decision 2026-11-18 (rule 7): fail `Start` with `srvr.ErrRouteConfig` naming the field and fiber version.
 - **Evidence:** scratch tests in the `fibersrvr` internal package: `TestZZWalkRenamedStackIsVisible` (walk over a struct with `trees [][]*fiber.Route`) listed nothing with no way to report it; `TestZZWalkRetypedStackDoesNotPanic` (struct with `stack []*fiber.Route`) panicked with `reflect: call of reflect.Value.Len on ptr to non-array Value`.
