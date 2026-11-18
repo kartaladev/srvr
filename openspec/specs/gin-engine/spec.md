@@ -179,10 +179,10 @@ srvr's pipeline (trace context, access record, recovery, problem rendering) SHAL
 | writes `200` then calls `c.Error(errors.New("late"))` | `200` | `http.request.failed` |
 
 ### Requirement: Gin engine customisation cannot remove srvr's safety settings
-srvr SHALL set Gin's trusted proxies to none (gin trusts every proxy by default), then run `ginsrvr.WithEngine(func(*gin.Engine))` before installing its pipeline, then re-assert `ContextWithFallback`, `HandleMethodNotAllowed`, `RedirectTrailingSlash` off and its recovery. A hook that registers routes or middleware SHALL be rejected, because they would run outside srvr's pipeline.
+srvr SHALL set Gin's trusted proxies to none (gin trusts every proxy by default), then run `ginsrvr.WithGinEngine(func(*gin.Engine))` before installing its pipeline, then re-assert `ContextWithFallback`, `HandleMethodNotAllowed`, `RedirectTrailingSlash` off and its recovery. A hook that registers routes or middleware SHALL be rejected, because they would run outside srvr's pipeline.
 
 #### Scenario: Engine hook
-- **Given** a `ginsrvr` server whose `WithEngine` hook `<hook>`
+- **Given** a `ginsrvr` server whose `WithGinEngine` hook `<hook>`
 - **When** the server is constructed, started and handles a request
 - **Then** the effective result is `<result>`
 

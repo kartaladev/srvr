@@ -115,3 +115,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** the source entries in `skills-compliance/notes.md`: "Unmatched-request failed records cannot be sampled", "The user agent is logged by default without an opt-out", "Slice 2 /simplify: efficiency items deferred to the benchmarks", "Configuration errors: ...", "Task 9.4: measured performance changes", "Target cache: patterns where it cannot hit", "Kept as is after the audit" (update) and "Slice 3: defects found beyond the audit" (fiber row).
 - **Suggested action:** archive `skills-compliance` before this change (this change's `engine-support` delta restates a requirement that change modifies); close each source entry when its task here is done.
 
+
+### engine-support main spec fails strict validation on requirement length
+- **Status:** open
+- **Target:** unassigned
+- **Context:** `openspec validate --specs --strict` fails `engine-support`: three requirement texts exceed 500 characters - "Engines share one per-request state" (579, already in main before `skills-compliance` was archived), and "srvr re-exports the shared types" (522) and "Registered routes are listed with their configurer" (581), both as `skills-compliance` modified them. Found while archiving `skills-compliance` on 2026-11-18; the sync copied the delta text faithfully.
+- **Evidence:** `openspec validate engine-support --type spec --strict`: `[WARNING] requirements[7]`, `[9]`, `[10]`: "Requirement text is very long (>500 characters)"; 14 of 15 main specs pass.
+- **Suggested action:** a planning change (or this change's next consolidation) moves the examples out of each requirement text into its scenarios, or splits each into requirements stating one behaviour, without changing behaviour.
