@@ -187,7 +187,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 	// Failed records are the triage record: suppression never applies.
 	suppressed := msg == eventRequestCompleted && c.settings.Access.suppressed(info.Path, status)
 	written := !suppressed && c.log.baseEnabled(ctx, level)
-	c.flushBuffer(req, status, written)
+	summary := c.flushBuffer(req, status, written)
 
 	if !written {
 		return
@@ -223,6 +223,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 		record.AddAttrs(c.triageAttrs(info.Method, req, fail)...)
 	}
 
+	record.AddAttrs(summary...)
 	c.log.handle(ctx, record, true)
 }
 

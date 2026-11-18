@@ -35,25 +35,25 @@
 
 ## 3. Slice: bounds and summary
 
-- [ ] 3.1 Configurable per-request limits (triage-debug-buffer / Scenario: Per-request limits, over-limit rows `MaxRecords: 10`, `MaxBytes: 1024`, `MaxBytes: 50`); verify `go test -race -run TestDebugBuffer_Limits` passes
+- [x] 3.1 Configurable per-request limits (triage-debug-buffer / Scenario: Per-request limits, over-limit rows `MaxRecords: 10`, `MaxBytes: 1024`, `MaxBytes: 50`); verify `go test -race -run TestDebugBuffer_Limits` passes
   - RED: table including an oversized single record; fails because the caps are fixed
   - GREEN: configurable record and byte caps, `LogValuer` resolved and stored at append, string attributes, error values (`Error()` text) and `msg` truncated at append with core-server's truncation function so byte accounting uses truncated sizes (both `MaxBytes: 2048` rows), oversized records dropped and counted
   - REFACTOR: Replace Primitive with Object for size accounting, then /simplify
-- [ ] 3.2 Process-wide budget (triage-debug-buffer / Scenario: Process-wide budget, both rows); verify `go test -race -count=20 -run TestDebugBuffer_Budget` passes and a test asserts the budget returns to `0` after 1000 mixed requests
+- [x] 3.2 Process-wide budget (triage-debug-buffer / Scenario: Process-wide budget, both rows); verify `go test -race -count=20 -run TestDebugBuffer_Budget` passes and a test asserts the budget returns to `0` after 1000 mixed requests
   - RED: concurrent table asserting peak reserved bytes and `truncated`; fails because no shared budget exists
   - GREEN: `atomic.Int64` reserve/release, release deferred at the outcome point
   - REFACTOR: Extract Class `budget`, then /simplify
-- [ ] 3.3 Summary attributes (triage-debug-buffer / Scenario: Summary attributes, all rows); verify `go test -race -run TestDebugBuffer_Summary` passes
+- [x] 3.3 Summary attributes (triage-debug-buffer / Scenario: Summary attributes, all rows); verify `go test -race -run TestDebugBuffer_Summary` passes
   - RED: table; fails because the access record lacks `srvr.debug_buffer.*`
   - GREEN: summary attributes on access records at or above the threshold or with a recovered panic, only when enabled
   - REFACTOR: /simplify
-- [ ] 3.4 Invalid limits (triage-debug-buffer / Scenario: Invalid limits, all rows); verify `go test -race -run TestDebugBuffer_InvalidLimits` passes
+- [x] 3.4 Invalid limits (triage-debug-buffer / Scenario: Invalid limits, all rows); verify `go test -race -run TestDebugBuffer_InvalidLimits` passes
   - RED: table; fails because invalid values are accepted
   - GREEN: construction-time validation naming the field, zero meaning default
   - REFACTOR: /simplify
-- [ ] 3.5 Add the new keys to the central log-key file, the golden-record test and `LOGGING.md` without bumping `srvr.log.schema` (additive keys keep the version); verify `go test -run TestLogSchemaGolden` passes and the schema version is unchanged
-- [ ] 3.6 Add `BenchmarkDebugBuffer` (off, on-success, on-failure) and record `ns/op` and allocations in `notes.md`; verify the benchmark runs with `go test -run x -bench DebugBuffer -benchmem`
-- [ ] 3.7 Verify slice end to end, confirm eviction, budget exhaustion and release branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): bound debug buffers and summarise them on failure`
+- [x] 3.5 Add the new keys to the central log-key file, the golden-record test and `LOGGING.md` without bumping `srvr.log.schema` (additive keys keep the version); verify `go test -run TestLogSchemaGolden` passes and the schema version is unchanged
+- [x] 3.6 Add `BenchmarkDebugBuffer` (off, on-success, on-failure) and record `ns/op` and allocations in `notes.md`; verify the benchmark runs with `go test -run x -bench DebugBuffer -benchmem`
+- [x] 3.7 Verify slice end to end, confirm eviction, budget exhaustion and release branches are covered in `go tool cover -func`, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, run /simplify on the slice and commit `feat(core): bound debug buffers and summarise them on failure`
 
 ## 4. Slice: configuration
 

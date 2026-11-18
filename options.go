@@ -447,10 +447,43 @@ func WithDebugBuffer(opts ...DebugBufferOption) Option {
 	return func(s *engine.Settings) {
 		s.Log.DebugBuffer.Enabled = true
 
-		for _, opt := range opts {
+		for i, opt := range opts {
+			if opt == nil {
+				s.Errs = append(s.Errs, engine.NewConfigError("DebugBufferOption", i, "is nil"))
+
+				continue
+			}
+
 			opt(&s.Log.DebugBuffer)
 		}
 	}
+}
+
+// BufferLevel sets the lowest level buffered (default DEBUG). It must not
+// be above a log level set with a level option or LogConfig; equal to it,
+// nothing is buffered.
+func BufferLevel(l slog.Level) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.Level = l.String() }
+}
+
+// MaxRecords caps the records one request buffers (default 100); the
+// oldest are evicted and counted as dropped.
+func MaxRecords(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.MaxRecords = n }
+}
+
+// MaxBytes caps the estimated bytes one request buffers (default 64 KiB);
+// the oldest records are evicted and counted as dropped, and a single
+// record larger than n is dropped.
+func MaxBytes(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.MaxBytes = n }
+}
+
+// TotalBytes caps the estimated bytes all requests of the server buffer
+// together (default 16 MiB); a record that does not fit is dropped and the
+// request's buffer counts as truncated.
+func TotalBytes(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.TotalBytes = n }
 }
 
 // WithDebugBufferConfig sets every field of [DebugBufferConfig].

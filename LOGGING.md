@@ -64,6 +64,20 @@ Never logged at any level: request or response bodies, `Authorization`, `Cookie`
 query string, the raw path and the client address, unless the named opt-in above is set. Error text
 goes to logs, never to 5xx responses.
 
+## Debug buffer keys
+
+With `WithDebugBuffer` (off by default), records logged with a request context below the log level are
+kept per request and written only when the request fails (status at or above the flush threshold,
+default 500, or a recovered panic), just before its access record. Adding these keys kept
+`srvr.log.schema` at 1.
+
+| Key | Type | On | Meaning |
+|-----|------|----|---------|
+| `srvr.buffered` | bool | a flushed record | always `true`, top-level even under `WithGroup`; the record keeps its original `time`, `level`, attributes and `trace_id` |
+| `srvr.debug_buffer.flushed` | number | the access record of a request that flushed (also with nothing buffered) | records written from the buffer |
+| `srvr.debug_buffer.dropped` | number | same | records evicted for the per-request limits, larger than `MaxBytes` on their own, or refused by the process-wide `TotalBytes` budget |
+| `srvr.debug_buffer.truncated` | bool | same | the process-wide budget refused at least one record |
+
 ## Lifecycle events
 
 | Event | Level | Keys |

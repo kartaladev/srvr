@@ -2,6 +2,7 @@ package srvr_test
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -313,13 +314,14 @@ func TestDebugBuffer_DefaultLimits(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
-		logged  int
-		flushed []int
+		logged         int
+		flushed        []int
+		count, dropped int
 	}{
-		{0, nil},
-		{1, span(1, 1)},
-		{100, span(1, 100)},
-		{101, span(2, 101)},
+		{0, nil, 0, 0},
+		{1, span(1, 1), 1, 0},
+		{100, span(1, 100), 100, 0},
+		{101, span(2, 101), 100, 1},
 	} {
 		t.Run(strconv.Itoa(tt.logged), func(t *testing.T) {
 			t.Parallel()
@@ -327,6 +329,167 @@ func TestDebugBuffer_DefaultLimits(t *testing.T) {
 			trail := requestRecords(t, http.MethodGet, "/x", logNumbered(tt.logged), srvr.WithDebugBuffer())
 			if got := numbers(trail); !slices.Equal(got, tt.flushed) {
 				t.Fatalf("flushed %v, want %v", got, tt.flushed)
+			}
+
+			checkSummary(t, trail, tt.count, tt.dropped)
+		})
+	}
+}
+
+// logLarge returns a handler that logs one DEBUG numbered record whose
+// attr holds 5000 bytes of x, then returns boom.
+func logLarge(attr func(string) slog.Attr) srvr.HandlerFunc {
+	return func(_ http.ResponseWriter, r *http.Request) error {
+		srvr.LoggerFromContext(r.Context()).LogAttrs(r.Context(), slog.LevelDebug, "numbered", slog.Int("n", 1), attr(strings.Repeat("x", 5000)))
+
+		return errors.New("boom")
+	}
+}
+
+// TestDebugBuffer_Limits covers triage-debug-buffer / Scenario: Per-request
+// limits, over-limit rows.
+func TestDebugBuffer_Limits(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		opts    []srvr.DebugBufferOption
+		handler srvr.HandlerFunc
+		// flushed checks the numbers flushed.
+		flushed func([]int) bool
+		// logged is the number of records the handler logs.
+		logged int
+	}{
+		{"MaxRecords 10", []srvr.DebugBufferOption{srvr.MaxRecords(10)}, logNumbered(25), func(got []int) bool { return slices.Equal(got, span(16, 25)) }, 25},
+		{"MaxBytes 1024", []srvr.DebugBufferOption{srvr.MaxBytes(1024)}, logNumbered(50), func(got []int) bool {
+			return len(got) >= 1 && len(got) <= 10 && slices.Equal(got, span(51-len(got), 50))
+		}, 50},
+		{"MaxBytes 50", []srvr.DebugBufferOption{srvr.MaxBytes(50)}, logNumbered(1), func(got []int) bool { return len(got) == 0 }, 1},
+		{"MaxBytes 2048, long attribute", []srvr.DebugBufferOption{srvr.MaxBytes(2048)}, logLarge(func(s string) slog.Attr { return slog.String("note", s) }), func(got []int) bool { return slices.Equal(got, []int{1}) }, 1},
+		{"MaxBytes 2048, long error", []srvr.DebugBufferOption{srvr.MaxBytes(2048)}, logLarge(func(s string) slog.Attr { return slog.Any("err", errors.New(s)) }), func(got []int) bool { return slices.Equal(got, []int{1}) }, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			trail := requestRecords(t, http.MethodGet, "/x", tt.handler, srvr.WithDebugBuffer(tt.opts...))
+			got := numbers(trail)
+			if !tt.flushed(got) {
+				t.Fatalf("flushed %v", got)
+			}
+
+			checkSummary(t, trail, len(got), tt.logged-len(got))
+		})
+	}
+}
+
+// failedOf returns the one failed record in trail.
+func failedOf(t *testing.T, trail []map[string]any) map[string]any {
+	t.Helper()
+
+	failed := where(trail, "msg", "http.request.failed")
+	if len(failed) != 1 {
+		t.Fatalf("%d failed records in %v", len(failed), messages(trail))
+	}
+
+	return failed[0]
+}
+
+// checkSummary checks the debug buffer summary of the failed record in
+// trail.
+func checkSummary(t *testing.T, trail []map[string]any, flushed, dropped int) {
+	t.Helper()
+
+	rec := failedOf(t, trail)
+	if rec["srvr.debug_buffer.flushed"] != float64(flushed) || rec["srvr.debug_buffer.dropped"] != float64(dropped) {
+		t.Fatalf("summary flushed %v dropped %v, want %d and %d", rec["srvr.debug_buffer.flushed"], rec["srvr.debug_buffer.dropped"], flushed, dropped)
+	}
+}
+
+// TestDebugBuffer_Summary covers triage-debug-buffer / Scenario: Summary
+// attributes.
+func TestDebugBuffer_Summary(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name    string
+		opts    []srvr.Option
+		logged  int
+		summary map[string]any // nil: no srvr.debug_buffer.* keys
+	}{
+		{"enabled, 3", []srvr.Option{srvr.WithDebugBuffer()}, 3, map[string]any{"flushed": float64(3), "dropped": float64(0), "truncated": false}},
+		{"enabled, 0", []srvr.Option{srvr.WithDebugBuffer()}, 0, map[string]any{"flushed": float64(0), "dropped": float64(0), "truncated": false}},
+		{"disabled, 3", nil, 3, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := failedOf(t, requestRecords(t, http.MethodGet, "/x", logNumbered(tt.logged), tt.opts...))
+			for _, name := range []string{"flushed", "dropped", "truncated"} {
+				got, ok := rec["srvr.debug_buffer."+name]
+				if want, wanted := tt.summary[name]; ok != wanted || got != want {
+					t.Errorf("srvr.debug_buffer.%s = %v (present %v), want %v (present %v)", name, got, ok, want, wanted)
+				}
+			}
+		})
+	}
+}
+
+// TestDebugBuffer_InvalidLimits covers triage-debug-buffer / Scenario:
+// Invalid limits.
+func TestDebugBuffer_InvalidLimits(t *testing.T) {
+	t.Parallel()
+
+	buffer := func(c srvr.DebugBufferConfig) srvr.Option {
+		c.Enabled = true
+
+		return srvr.WithDebugBufferConfig(c)
+	}
+
+	tests := []struct {
+		name   string
+		buffer srvr.Option
+		// handler is a consumer's log handler; nil logs to io.Discard.
+		handler slog.Handler
+		wantErr bool
+		// field is named by the error; empty for an error naming no
+		// particular field.
+		field string
+	}{
+		{name: "MaxRecords 0", buffer: buffer(srvr.DebugBufferConfig{MaxRecords: 0})},
+		{name: "MaxRecords -1", buffer: buffer(srvr.DebugBufferConfig{MaxRecords: -1}), wantErr: true, field: "MaxRecords"},
+		{name: "MaxBytes -1", buffer: buffer(srvr.DebugBufferConfig{MaxBytes: -1}), wantErr: true, field: "MaxBytes"},
+		{name: "TotalBytes below MaxBytes", buffer: buffer(srvr.DebugBufferConfig{TotalBytes: 1024, MaxBytes: 65536}), wantErr: true, field: "TotalBytes"},
+		{name: "MaxBytes 0", buffer: buffer(srvr.DebugBufferConfig{MaxBytes: 0})},
+		{name: "TotalBytes 0", buffer: buffer(srvr.DebugBufferConfig{TotalBytes: 0})},
+		{name: "TotalBytes equal to MaxBytes", buffer: buffer(srvr.DebugBufferConfig{TotalBytes: 65536, MaxBytes: 65536})},
+		{name: "Level loud", buffer: buffer(srvr.DebugBufferConfig{Level: "loud"}), wantErr: true, field: "Level"},
+		{name: "Level warn above INFO", buffer: buffer(srvr.DebugBufferConfig{Level: "warn"}), wantErr: true, field: "Level"},
+		{name: "Level info at INFO", buffer: buffer(srvr.DebugBufferConfig{Level: "info"})},
+		{name: "Level warn with a handler", buffer: buffer(srvr.DebugBufferConfig{Level: "warn"}), handler: slog.DiscardHandler},
+		{name: "nil option", buffer: srvr.WithDebugBuffer(nil), wantErr: true},
+		{name: "MaxRecords option -1", buffer: srvr.WithDebugBuffer(srvr.MaxRecords(-1)), wantErr: true, field: "MaxRecords"},
+		{name: "BufferLevel option WARN above INFO", buffer: srvr.WithDebugBuffer(srvr.BufferLevel(slog.LevelWarn)), wantErr: true, field: "Level"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logTo := srvr.WithLogOutput(io.Discard)
+			if tt.handler != nil {
+				logTo = srvr.WithLogHandler(tt.handler)
+			}
+
+			_, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), logTo, tt.buffer)
+
+			var ce *srvr.ConfigError
+			switch {
+			case !tt.wantErr && err != nil:
+				t.Fatalf("New = %v, want a server", err)
+			case tt.wantErr && (!errors.Is(err, srvr.ErrConfig) || !errors.As(err, &ce) || !strings.Contains(err.Error(), tt.field)):
+				t.Fatalf("New = %v, want ErrConfig naming %q", err, tt.field)
 			}
 		})
 	}

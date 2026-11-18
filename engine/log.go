@@ -67,14 +67,55 @@ type LogSettings struct {
 }
 
 // newLogHandler resolves the base handler (the consumer's, or JSON or text
-// to the output) and wraps it in srvr's handler.
+// to the output) and the debug buffer policy, and wraps the base handler
+// in srvr's handler.
 func newLogHandler(ls *LogSettings) (*logHandler, error) {
-	if ls.Handler != nil {
-		if err := ls.checkOwnHandler(); err != nil {
-			return nil, err
-		}
+	base, err := ls.baseHandler()
+	if err != nil {
+		return nil, err
+	}
 
-		return ls.wrap(ls.Handler), nil
+	var buffering *bufferPolicy // nil: buffering is off
+	if ls.DebugBuffer.Enabled {
+		buffering = newBufferPolicy(ls.DebugBuffer)
+	}
+
+	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: buffering, cache: &targetCache{}}, nil
+}
+
+// parseLevel parses a log/slog level name, such as "debug" or "info-4",
+// set in field.
+func parseLevel(field, name string) (slog.Level, error) {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(name)); err != nil {
+		return l, NewConfigError(field, strconv.Quote(name), "is not a log/slog level such as debug, info, warn, error or info-4")
+	}
+
+	return l, nil
+}
+
+// staticLevel returns the log level when it is known at construction: set
+// by name, or the default INFO, and not a LevelVar, a consumer's handler
+// or an invalid name.
+func (ls *LogSettings) staticLevel() (slog.Level, bool) {
+	if ls.Handler != nil || ls.LevelVar != nil {
+		return 0, false
+	}
+
+	if ls.Level == "" {
+		return slog.LevelInfo, true
+	}
+
+	l, err := parseLevel("Level", ls.Level)
+
+	return l, err == nil
+}
+
+// baseHandler returns the consumer's handler, or srvr's JSON or text
+// handler to the output.
+func (ls *LogSettings) baseHandler() (slog.Handler, error) {
+	if ls.Handler != nil {
+		return ls.Handler, ls.checkOwnHandler()
 	}
 
 	// Every invalid field is reported, Level first.
@@ -84,10 +125,9 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 	if ls.LevelVar != nil {
 		leveler = ls.LevelVar
 	} else if ls.Level != "" {
-		var l slog.Level
-		if err := l.UnmarshalText([]byte(ls.Level)); err != nil {
-			errs = append(errs, NewConfigError("Level", strconv.Quote(ls.Level),
-				"is not a log/slog level such as debug, info, warn, error or info-4"))
+		l, err := parseLevel("Level", ls.Level)
+		if err != nil {
+			errs = append(errs, err)
 		}
 
 		leveler = l
@@ -112,16 +152,7 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
 	}
 
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
-	}
-
-	return ls.wrap(base), nil
-}
-
-// wrap returns srvr's handler around base with the settings of ls.
-func (ls *LogSettings) wrap(base slog.Handler) *logHandler {
-	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: newBufferPolicy(ls.DebugBuffer), cache: &targetCache{}}
+	return base, errors.Join(errs...)
 }
 
 // checkOwnHandler rejects settings that belong to a consumer's handler.
@@ -485,14 +516,18 @@ const (
 	keyUserAgent     = "user_agent.original"
 	keyAttrTruncated = "srvr.attr.truncated"
 	keyBuffered      = "srvr.buffered"
-	keyCommitted     = "srvr.response.committed"
-	keyURLPath       = "url.path"
-	keyURLQuery      = "url.query"
-	keyClientAddress = "client.address"
-	keyProblem       = "problem"
-	keyProblemStatus = "status"
-	keyProblemType   = "type"
-	keyProblemTitle  = "title"
+
+	keyBufferFlushed   = "srvr.debug_buffer.flushed"
+	keyBufferDropped   = "srvr.debug_buffer.dropped"
+	keyBufferTruncated = "srvr.debug_buffer.truncated"
+	keyCommitted       = "srvr.response.committed"
+	keyURLPath         = "url.path"
+	keyURLQuery        = "url.query"
+	keyClientAddress   = "client.address"
+	keyProblem         = "problem"
+	keyProblemStatus   = "status"
+	keyProblemType     = "type"
+	keyProblemTitle    = "title"
 )
 
 // WarningCode is the srvr.warning.code of a server.config.warning record:

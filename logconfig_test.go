@@ -629,6 +629,43 @@ func TestLogSchemaGolden_ObserverFault(t *testing.T) {
 	}
 }
 
+// goldenDebugBufferKeys pins the additive debug buffer keys
+// (srvr.log.schema unchanged): a flushed record of a handler that logs a
+// plain DEBUG message, and the summary on the failed record.
+var (
+	goldenFlushedKeys       = []string{"level", "msg", "span_id", "srvr.buffered", "time", "trace_id"}
+	goldenBufferSummaryKeys = []string{"srvr.debug_buffer.dropped", "srvr.debug_buffer.flushed", "srvr.debug_buffer.truncated"}
+)
+
+// TestLogSchemaGolden_DebugBuffer pins the keys a failed request writes
+// with debug buffering on.
+func TestLogSchemaGolden_DebugBuffer(t *testing.T) {
+	t.Parallel()
+
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/fail", func(_ http.ResponseWriter, r *http.Request) error {
+			srvr.LoggerFromContext(r.Context()).DebugContext(r.Context(), "step")
+
+			return errors.New("boom")
+		})
+	}, srvr.WithServiceVersion("1.4.2"), srvr.WithDebugBuffer())
+	do(t, http.MethodGet, base+"/fail", nil, map[string]string{"User-Agent": "golden"})
+
+	failed := out.waitRecord(t, "http.request.failed")
+	want := slices.Sorted(slices.Values(slices.Concat(goldenKeys["http.request.failed"], goldenBufferSummaryKeys)))
+	if got := flatKeys(failed, ""); !slices.Equal(got, want) {
+		t.Errorf("failed keys = %v\nwant %v", got, want)
+	}
+
+	if got := flatKeys(out.waitRecord(t, "step"), ""); !slices.Equal(got, goldenFlushedKeys) {
+		t.Errorf("flushed keys = %v\nwant %v", got, goldenFlushedKeys)
+	}
+
+	if failed["srvr.log.schema"] != float64(goldenSchemaVersion) {
+		t.Errorf("srvr.log.schema = %v", failed["srvr.log.schema"])
+	}
+}
+
 // TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
 func TestLogSchemaDocumented(t *testing.T) {
 	t.Parallel()
@@ -636,7 +673,8 @@ func TestLogSchemaDocumented(t *testing.T) {
 	doc, err := os.ReadFile("LOGGING.md")
 	mustNil(t, err)
 
-	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"})
+	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"},
+		goldenFlushedKeys, goldenBufferSummaryKeys)
 	for event, k := range goldenKeys {
 		keys = append(keys, event)
 		keys = append(keys, k...)

@@ -119,3 +119,39 @@ func BenchmarkRedactSecrets(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkDebugBuffer measures one request that logs five DEBUG records
+// below the INFO level and ends: with buffering off (the records are
+// dropped by Enabled), on with a 200 (buffered, then discarded) and on
+// with a 500 (buffered, then written before the access record).
+func BenchmarkDebugBuffer(b *testing.B) {
+	cases := []struct {
+		name    string
+		enabled bool
+		status  int
+	}{
+		{"off", false, http.StatusOK},
+		{"on-success", true, http.StatusOK},
+		{"on-failure", true, http.StatusInternalServerError},
+	}
+
+	for _, bc := range cases {
+		b.Run(bc.name, func(b *testing.B) {
+			c := bufferedCore(b, func(s *Settings) { s.Log.DebugBuffer.Enabled = bc.enabled })
+			info := AccessInfo{Method: http.MethodGet, Status: bc.status}
+
+			b.ReportAllocs()
+
+			for b.Loop() {
+				ctx := c.BeginRequest(b.Context(), nil)
+				logger := LoggerFromContext(ctx)
+
+				for i := range 5 {
+					logger.DebugContext(ctx, "step", "i", i, "user.id", "42")
+				}
+
+				c.WriteAccess(ctx, info)
+			}
+		})
+	}
+}

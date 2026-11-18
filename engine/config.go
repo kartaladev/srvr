@@ -198,6 +198,7 @@ func (s *Settings) validate() []error {
 		validateShutdownTimeout,
 		validateMaxHeaderBytes,
 		validateObservers,
+		validateDebugBuffer,
 	} {
 		if err := check(s); err != nil {
 			errs = append(errs, err)
