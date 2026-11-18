@@ -32,8 +32,11 @@ func Configure[G any](c interface{ Configure(G) }, g G) (err error) {
 // served for every method), its pattern in the engine's own syntax and the
 // Go type of the configurer that registered it.
 type Route struct {
-	Method     string
-	Pattern    string
+	// Method is the HTTP method, or "" for a route served for every method.
+	Method string
+	// Pattern is the route pattern in the engine's own syntax.
+	Pattern string
+	// Configurer is the Go type of the configurer that declared the route.
 	Configurer string
 }
 

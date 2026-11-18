@@ -21,7 +21,9 @@ import (
 // field.
 type LogConfig struct {
 	// Level is the minimum level: a log/slog level name with an optional
-	// offset, such as "debug", "WARN" or "info-4". Default "info".
+	// offset, such as "debug", "WARN" or "info-4". Default "info": every
+	// request and lifecycle record srvr writes, without debug noise or its
+	// cost in production.
 	Level string `json:"level" yaml:"level" env:"LEVEL"`
 	// Format is "json" (the default, for log agents) or "text".
 	Format string `json:"format" yaml:"format" env:"FORMAT"`
@@ -47,9 +49,15 @@ const defaultMaxAttrBytes = 1024
 type LogSettings struct {
 	LogConfig
 
-	Output     io.Writer
-	LevelVar   *slog.LevelVar
-	Handler    slog.Handler
+	// Output receives the JSON or text records; nil means os.Stdout.
+	Output io.Writer
+	// LevelVar, when set, replaces LogConfig.Level so the level can change
+	// at runtime.
+	LevelVar *slog.LevelVar
+	// Handler is a consumer's slog.Handler; it replaces Output, Format and
+	// the level, and srvr still wraps it.
+	Handler slog.Handler
+	// SetDefault makes the server's logger slog.Default at construction.
 	SetDefault bool
 	// HandlerFrom names the option that set Handler, for conflict errors.
 	HandlerFrom string

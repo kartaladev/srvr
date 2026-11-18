@@ -112,11 +112,22 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 // package srvr re-exports them under (srvr.ErrConfig and so on), so
 // errors.Is matches either name.
 var (
-	ErrConfig        = errors.New("srvr: invalid configuration")
+	// ErrConfig is wrapped by every error construction returns for invalid
+	// configuration, and by Start for a nil context or a faulty listener.
+	ErrConfig = errors.New("srvr: invalid configuration")
+	// ErrServerStarted is returned by Start and Register once the server
+	// has been started.
 	ErrServerStarted = errors.New("srvr: server already started")
-	ErrServerClosed  = errors.New("srvr: server closed")
-	ErrRouteConfig   = errors.New("srvr: invalid route configuration")
-	ErrShutdownHook  = errors.New("srvr: shutdown hook failed")
+	// ErrServerClosed is returned by Start and Register once the server
+	// has stopped, and by a Start that Shutdown interrupted.
+	ErrServerClosed = errors.New("srvr: server closed")
+	// ErrRouteConfig is wrapped by the error Start returns when a
+	// configurer panics or registers an invalid route, or a route check
+	// fails.
+	ErrRouteConfig = errors.New("srvr: invalid route configuration")
+	// ErrShutdownHook is wrapped by every shutdown hook failure Start and
+	// Shutdown return.
+	ErrShutdownHook = errors.New("srvr: shutdown hook failed")
 )
 
 // IsNil reports whether v is nil or an interface holding a nil pointer,

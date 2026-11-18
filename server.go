@@ -88,6 +88,12 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 // context route checks receive is cancelled and Start returns an error
 // wrapping [ErrServerClosed] without binding; a check that ignores its
 // context keeps Start waiting until it returns or ctx is done.
+//
+// Start writes a server.failed record for a failure to start or serve and
+// a server.shutdown_hook.failed record for each failing hook, so a caller
+// that also logs the returned error logs it twice. It writes none for a
+// nil ctx, [ErrServerStarted], [ErrServerClosed] or a start Shutdown
+// interrupted.
 func (s *Server) Start(ctx context.Context) error {
 	return s.lc.Start(ctx, func(configurers []RouteConfigurer[*Group]) (engine.Runner, engine.Routes, error) {
 		mux, routes, err := s.router(configurers)
@@ -109,7 +115,8 @@ func (s *Server) Start(ctx context.Context) error {
 // close the server; while another call is
 // stopping the server it waits for that stop and returns nil; once stopped
 // it returns nil. A nil ctx returns an error wrapping [ErrConfig] and
-// leaves the server running.
+// leaves the server running. A failing shutdown hook is logged as
+// server.shutdown_hook.failed as well as returned.
 func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx) }
 
 // router runs the configurers and returns the ServeMux holding their

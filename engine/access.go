@@ -130,17 +130,26 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 // besides the request state. An engine copies every value out of buffers
 // it reuses before passing it.
 type AccessInfo struct {
-	Method     string
-	Path       string
-	RawQuery   string
+	// Method is the request method.
+	Method string
+	// Path is the request path, logged only with IncludePath.
+	Path string
+	// RawQuery is the query string, logged only with IncludeQuery.
+	RawQuery string
+	// RemoteAddr is the client address, logged only with
+	// IncludeClientAddress.
 	RemoteAddr string
-	UserAgent  string
-	Status     int
-	BodySize   int64
+	// UserAgent is the User-Agent header.
+	UserAgent string
+	// Status is the response status.
+	Status int
+	// BodySize is the number of response body bytes written.
+	BodySize int64
 	// RequestBodySize is the request's declared Content-Length, 0 when
 	// unknown.
 	RequestBodySize int64
-	Duration        time.Duration
+	// Duration is the time from the start of the request to the response.
+	Duration time.Duration
 }
 
 // httpAccess returns the access information of a net/http request.

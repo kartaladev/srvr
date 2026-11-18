@@ -35,13 +35,16 @@ func Example() {
 		panic(err)
 	}
 
-	_ = srv.Register(configFunc(func(g *srvr.Group) {
+	err = srv.Register(configFunc(func(g *srvr.Group) {
 		g.GET("/users/{id}", func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusOK)
 
 			return nil
 		})
 	}))
+	if err != nil {
+		panic(err)
+	}
 
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -130,7 +133,10 @@ func Example_disableListener() {
 		panic(err)
 	}
 
-	_ = srv.Register(configFunc(func(g *srvr.Group) {
+	err = srv.Register(configFunc(func(g *srvr.Group) {
 		g.Group("/ops").Mount("/metrics", setup.MetricsHandler())
 	}))
+	if err != nil {
+		panic(err)
+	}
 }

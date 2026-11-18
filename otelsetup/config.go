@@ -78,8 +78,11 @@ type PrometheusConfig struct {
 
 // OTLP protocols.
 const (
+	// ProtocolHTTPProtobuf is OTLP over HTTP with protobuf bodies, the
+	// default: it passes ordinary HTTP proxies and needs no HTTP/2.
 	ProtocolHTTPProtobuf = "http/protobuf"
-	ProtocolGRPC         = "grpc"
+	// ProtocolGRPC is OTLP over gRPC.
+	ProtocolGRPC = "grpc"
 )
 
 // OTLPConfig configures OTLP export. Fields left empty fall back to what

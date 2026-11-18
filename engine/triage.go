@@ -253,8 +253,11 @@ type unresolvable struct{ err error }
 
 func (u *unresolvable) Error() string { return "srvr: error chain cannot be resolved" }
 
-// GuardChain returns err, or an *unresolvable wrapping nothing when err's
-// chain has a cycle.
+// GuardChain makes err safe to resolve into a problem: prblm resolves an
+// error with errors.Is and errors.As, which loop forever or crash on a
+// chain that cycles or whose Unwrap panics. It returns err unchanged when
+// its chain can be walked, and otherwise an error resolved as the safe 500
+// problem; the access record still describes err itself.
 func GuardChain(err error) error {
 	if err != nil && hasCycle(err) {
 		return &unresolvable{err: err}

@@ -27,7 +27,10 @@ type Trace struct {
 type TraceConfig struct {
 	// IgnoreIncoming starts a new trace for every request, ignoring any
 	// traceparent header. Default false: a valid incoming traceparent is
-	// continued, as W3C Trace Context defines.
+	// continued, as W3C Trace Context defines, so a trace spans services.
+	// On a server not behind a trusted gateway any client chooses that
+	// trace_id, and with it which records share one: set IgnoreIncoming
+	// there.
 	IgnoreIncoming bool `json:"ignore_incoming" yaml:"ignore_incoming" env:"IGNORE_INCOMING"`
 }
 

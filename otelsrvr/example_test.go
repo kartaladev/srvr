@@ -30,13 +30,16 @@ func Example() {
 		panic(err)
 	}
 
-	_ = srv.Register(configFunc(func(g *srvr.Group) {
+	err = srv.Register(configFunc(func(g *srvr.Group) {
 		g.GET("/users/{id}", func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusOK)
 
 			return nil
 		})
 	}))
+	if err != nil {
+		panic(err)
+	}
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -48,7 +51,9 @@ func Example() {
 	if err != nil {
 		panic(err)
 	}
-	_ = res.Body.Close()
+	if err := res.Body.Close(); err != nil {
+		panic(err)
+	}
 
 	http.DefaultClient.CloseIdleConnections()
 	stop()
@@ -58,7 +63,9 @@ func Example() {
 	}
 
 	var rm metricdata.ResourceMetrics
-	_ = reader.Collect(context.Background(), &rm)
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		panic(err)
+	}
 
 	m := rm.ScopeMetrics[0].Metrics[0]
 	point := m.Data.(metricdata.Histogram[float64]).DataPoints[0]
@@ -84,7 +91,7 @@ func Example_tracing() {
 		panic(err)
 	}
 
-	_ = srv.Register(configFunc(func(g *srvr.Group) {
+	err = srv.Register(configFunc(func(g *srvr.Group) {
 		g.GET("/users/{id}", func(w http.ResponseWriter, r *http.Request) error {
 			tr, _ := srvr.TraceFromContext(r.Context())
 			fmt.Println("handler trace:", tr.TraceID)
@@ -93,6 +100,9 @@ func Example_tracing() {
 			return nil
 		})
 	}))
+	if err != nil {
+		panic(err)
+	}
 
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -107,7 +117,9 @@ func Example_tracing() {
 	if err != nil {
 		panic(err)
 	}
-	_ = res.Body.Close()
+	if err := res.Body.Close(); err != nil {
+		panic(err)
+	}
 
 	http.DefaultClient.CloseIdleConnections()
 	stop()

@@ -101,6 +101,22 @@ response, and is neither detected nor logged. Adding this event kept `srvr.log.s
 
 It carries `srvr.log.schema` 1; adding it kept the version.
 
+## What reaches the log by default
+
+- `user_agent.original` is on every access record of a request that sent `User-Agent`. It is how
+  triage tells a browser, a mobile app version or a crawler apart, and srvr cuts it to `MaxAttrBytes` like any value. Some mobile SDKs put
+  device identifiers in it; if that counts as personal data for you, drop the key in your own
+  `slog.Handler` (srvr has no option to omit it yet).
+- Paths, query strings, client addresses, headers, cookies and bodies are not logged unless an
+  explicitly named option turns them on (`WithAccessLogIncludePath`, `WithAccessLogIncludeQuery`,
+  `WithAccessLogIncludeClientAddress`).
+
+## Trusting incoming trace context
+
+srvr continues a valid incoming `traceparent` by default, so on a server not behind a trusted gateway
+any client chooses the `trace_id`; set `TraceConfig.IgnoreIncoming` (or
+`WithIgnoreIncomingTraceContext`) there. Its godoc gives the reason.
+
 ## Redaction
 
 `exception.message` and `exception.stacktrace` of `http.request.failed`, `server.failed` and
