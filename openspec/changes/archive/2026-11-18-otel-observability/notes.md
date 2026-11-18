@@ -24,7 +24,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** apply task group 9.
 
 ### otelsrvr's go.mod requires the OpenTelemetry SDK for its tests
-- **Status:** open
+- **Status:** open (skills-compliance consolidation 2026-11-18: deferred - moving the SDK tests into their own module is a layout change outside the audit; slice 4 only bumps vulnerable versions)
 - **Target:** unassigned
 - **Context:** `otelsrvr`'s non-test packages import only the OpenTelemetry API (`TestNoSDKDependency` checks `go list -deps .`), but its tests record through the SDK (`sdk/metric` `ManualReader`, `sdk/trace/tracetest`), so its `go.mod` requires `go.opentelemetry.io/otel/sdk` and `go.opentelemetry.io/otel/sdk/metric` v1.47.0. Under module graph pruning those requirements are part of every consumer's module graph, so a consumer of `otelsrvr` gains SDK v1.47.0 as a minimum version (an upgrade of any SDK they already use, and SDK entries in their `go.sum`), although no SDK package is compiled into their binary. No test looks at `otelsrvr`'s `go.mod` (design Context states what `TestNoSDKDependency` and `TestCoreHasNoOTel` enforce). Owner decision 2026-11-18: document now (design Context and Risks, `otelsrvr` godoc), fix later.
 - **Evidence:** `otelsrvr/go.mod` `require go.opentelemetry.io/otel/sdk v1.47.0` and `go.opentelemetry.io/otel/sdk/metric v1.47.0`; `cd otelsrvr && GOWORK=off go mod graph | grep 'otelsrvr go.opentelemetry.io/otel/sdk'` lists both edges.
@@ -216,7 +216,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### engine-support "Engines share one per-request state" exceeds the 500-character requirement limit
-- **Status:** open
+- **Status:** open (skills-compliance consolidation 2026-11-18: deferred - this change's engine-support delta does not modify that requirement, and splitting it means moving its scenarios)
 - **Target:** unassigned (next change that touches engine-support)
 - **Context:** archiving otel-observability merged its MODIFIED requirement verbatim into `openspec/specs/engine-support/spec.md`. The added trace-source clause pushes the requirement text past 500 characters, so `openspec validate engine-support --type spec --strict` reports a length warning; non-strict validation passes. The sync rules forbid trimming MODIFIED text only to meet the limit.
 - **Evidence:** `openspec validate engine-support --type spec --strict` → `requirements[9]: Requirement text is very long (>500 characters)`.

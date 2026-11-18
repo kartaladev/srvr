@@ -205,7 +205,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** when tagging, release core `v0.2.0` first, then set the engine modules' `require` to it, drop the `replace` lines, run `GOWORK=off go mod tidy` and the verification, and tag `ginsrvr/v0.1.0` and `fibersrvr/v0.1.0`.
 
 ### Engine modules duplicate the core's test helpers
-- **Status:** open
+- **Status:** open (skills-compliance consolidation 2026-11-18: deferred - a public test-support package is new API and no audit finding asks for it)
 - **Target:** unassigned
 - **Context:** `ginsrvr/helpers_test.go` repeats about 150 lines of the core's `helpers_test.go` and `logging_test.go` (JSON log buffer, request/response helper with problem parsing, start and readiness helpers), and fibersrvr and `internal/paritytest` will need the same. Separate modules cannot share `_test.go` files, so removing the copies needs a public test-support package (for example `srvr/engine/enginetest`), which is new API and a design decision outside this change's plan. Found by the /simplify reuse review of task group 3.
 - **Evidence:** unverified: duplication observed by reading the files, not a defect.
@@ -240,7 +240,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none; `http.response.body.size` of a streamed fiber response is its declared length, a difference from net/http's bytes written (to pin with task 5.4's exception rows if parity needs it).
 
 ### Public engine package stability before v1
-- **Status:** open
+- **Status:** open (skills-compliance consolidation 2026-11-18: partly adopted - slice 5 types `ConfigError`, renames `RouteErrorf`/`Only`, replaces `Core.Settings()` and hides `RequestState` route fields; the full pre-v1 surface review stays open)
 - **Target:** unassigned
 - **Context:** `github.com/kartaladev/srvr/engine` is public because the engine modules are separate Go modules; its godoc marks it as for srvr's own engines and unstable before v1. It now holds the shared types srvr aliases (`Config`, `Option`, `Settings`, sentinels), `Core`, `Lifecycle[C]`, `RequestState`, `BeginRequest`/`WriteAccess`/`AccessInfo`, `RecordRejection`, `Warn` with `WarningCode`, `RouteError`, `Configure`, `ForEngine`/`EngineOptions`, `FuncLocation`/`FuncPointer`, `GuardChain`, `ValueText`. Every symbol is a compatibility decision once v1 is tagged.
 - **Evidence:** unverified: API review item, not a defect.
