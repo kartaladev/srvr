@@ -2,19 +2,19 @@
 
 ## 1. Consolidation: refresh plan against merged changes
 
-- [ ] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`, `gin-and-fiber-engines`); verify they are named in the completion note
-- [ ] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `otel-observability` or `unassigned` (adopt, defer or close); verify none is left undecided
-- [ ] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code - in particular the pipeline order, `srvr.Trace`/`TraceFromContext`, route derivation per engine, `ServiceConfig`, core's `WithShutdownHook` phases and `ShutdownHookTimeout`, `AccessLogConfig.IncludePath`, `TraceConfig.IgnoreIncoming` (`WithIgnoreIncomingTraceContext()`), the fields of `engine.RequestState` (route, matched, status, failure, trace context; this change adds the trace source), whether the fiber access stage owns error rendering, whether `trace-context`/`structured-logging` need MODIFIED deltas, and current otel/semconv/Prometheus exporter versions; verify `openspec validate otel-observability --strict` passes
-- [ ] 1.4 Record the consolidation outcome at the top of `openspec/changes/otel-observability/notes.md`; verify the file lists what was refreshed or states none was needed
-- [ ] 1.5 Commit the consolidation as `docs(openspec): consolidate otel-observability against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
+- [x] 1.1 Sync with the main branch and list every change merged or archived since this change was planned (expected: `core-server`, `gin-and-fiber-engines`); verify they are named in the completion note
+- [x] 1.2 Decide every open `notes.md` carry-over from earlier changes addressed to `otel-observability` or `unassigned` (adopt, defer or close); verify none is left undecided
+- [x] 1.3 Refresh this change's proposal, specs, design and tasks against the current main specs and merged code - in particular the pipeline order, `srvr.Trace`/`TraceFromContext`, route derivation per engine, `ServiceConfig`, core's `WithShutdownHook` phases and `ShutdownHookTimeout`, `AccessLogConfig.IncludePath`, `TraceConfig.IgnoreIncoming` (`WithIgnoreIncomingTraceContext()`), the fields of `engine.RequestState` (route, matched, status, failure, trace context; this change adds the trace source), whether the fiber access stage owns error rendering, whether `trace-context`/`structured-logging` need MODIFIED deltas, and current otel/semconv/Prometheus exporter versions; verify `openspec validate otel-observability --strict` passes
+- [x] 1.4 Record the consolidation outcome at the top of `openspec/changes/otel-observability/notes.md`; verify the file lists what was refreshed or states none was needed
+- [x] 1.5 Commit the consolidation as `docs(openspec): consolidate otel-observability against main`, or skip when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
 
 ## 2. Slice: observer hook and duration metric on net/http
 
-- [ ] 2.1 Create module `github.com/kartaladev/srvr/otelsrvr` (go 1.27) requiring only `go.opentelemetry.io/otel`, `/metric`, `/trace` (SDK only in `_test.go` via a test-only require), add it to `go.work`, CI and `release-modules`; verify `GOWORK=off go list -deps ./otelsrvr | grep -c sdk` prints `0` for non-test packages
+- [ ] 2.1 Create module `github.com/kartaladev/srvr/otelsrvr` (go 1.27) requiring only `go.opentelemetry.io/otel`, `/metric`, `/trace` and the srvr core through `replace ../` until it is tagged (SDK only in `_test.go` via a test-only require), add it to `go.work` and a CI job (no `release-modules` target exists; tagging is the "Workflow follow-up" step); verify `GOWORK=off go list -deps ./otelsrvr | grep -c sdk` prints `0` for non-test packages
 - [ ] 2.2 Add a dependency-guard test in the core module asserting it imports no `go.opentelemetry.io` package; verify `go test -run TestCoreHasNoOTel` passes
 - [ ] 2.3 Observer called once per request on net/http (request-observer / Scenario: Begin and end per engine, net/http rows); verify `go test -race -run TestObserver_NetHTTP` passes
   - RED: table over the net/http rows (including the unmatched row) with a recording observer; fails because `WithObserver` does not exist
-  - GREEN: `Observer`, `RequestInfo`, `ResultInfo`, `WithObserver`, pipeline call between access log and recovery, reading route, status and failure from `engine.RequestState`
+  - GREEN: `Observer`, `RequestInfo`, `ResultInfo` in `engine` with srvr aliases, `WithObserver`, the `Core.Observe` http stage between `LogAccess` and `LimitBody`, reading route, status and failure from `engine.RequestState`
   - REFACTOR: Extract Function for building `ResultInfo` from the request state, then /simplify
 - [ ] 2.4 Observer placement (request-observer / Scenario: Observer view of the request, net/http rows); verify `go test -race -run TestObserver_Placement` passes
   - RED: table asserting trace id at Begin and status/kind at end, including the unmatched `GET /nope` row with kind `error`; fails if placed outside trace context or inside recovery
@@ -35,11 +35,11 @@
 
 - [ ] 3.1 Observer on gin (request-observer / Scenario: Begin and end per engine, gin rows; Scenario: Observer view of the request, gin row; otel-metrics / Scenario: Duration per engine, gin row); verify `cd ginsrvr && go test -race -run TestObserver` passes with a recording observer, and the otel-metrics gin row passes in the test-only `internal/paritytest` module (ginsrvr's go.mod gains no OTel requirement)
   - RED: table; fails because ginsrvr does not call the observer
-  - GREEN: shared `srvr/engine` observer stage placed before `ginprblm.Middleware`; begin before `c.Next()`, end from `engine.RequestState` (route from `c.FullPath()`) after
+  - GREEN: the shared `Core.Observe` http stage around the gin engine, between `LogAccess` and `LimitBody` as on net/http (design D1 as merged), outside the whole gin chain; end from `engine.RequestState` (route set by `requestStage` from `c.FullPath()`, failure classified after `c.Next()`)
   - REFACTOR: /simplify
 - [ ] 3.2 Observer on fiber (same scenarios, fiber rows); verify `cd fibersrvr && go test -race -run TestObserver` passes using `app.Test`, and the otel-metrics fiber row passes in `internal/paritytest`
   - RED: table including the `errors.New("boom")` and unmatched rows; fails because fibersrvr does not call the observer, reports the middleware's `/` route, or reports status `200` before the error is rendered
-  - GREEN: begin before `c.Next()`; end reads status, matched route (empty when unmatched) and failure from `engine.RequestState`, which the access stage filled after calling the error handler (gin-and-fiber-engines D7); the observer stage never calls the error handler; strings copied before end
+  - GREEN: `Core.BeginObserve` in `requestStage` after `BeginRequest` and before `c.Next()`; the end functions run from `Core.WriteAccess` with the status the stage passes after calling the error handler (gin-and-fiber-engines D7), and route (empty when unmatched) and failure from `engine.RequestState`, so the state's status needs no live source (closes the carry-over "RequestState.Status is not live on fiber"); the observer stage never calls the error handler; strings copied before end
   - REFACTOR: /simplify
 - [ ] 3.3 Add a cross-engine parity test in `internal/paritytest` asserting identical `ResultInfo` and data points for the same request on all three engines except `http.route`, which is compared per engine syntax, and that the error handler runs exactly once per failed fiber request; verify `cd internal/paritytest && go test -race -run TestObserverParity` passes
 - [ ] 3.4 Verify slice end to end on all engines and confirm engine adapter branches are covered in `go tool cover -func`; in `srvr/engine`'s module, `ginsrvr`, `fibersrvr` and `internal/paritytest`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...` (`internal/paritytest` is not released and may use `go.work`); run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(engines): call request observers on gin and fiber`
@@ -51,7 +51,7 @@
   - GREEN: ordered slice, reverse-order end
   - REFACTOR: /simplify
 - [ ] 4.2 Faulty observers (request-observer / Scenario: Observer faults, all rows); verify `go test -race -run TestObserver_Faults` passes
-  - RED: table with nil, typed-nil, Begin panic, nil ctx, nil end, end panic, end panic with `http.ErrAbortHandler`, repeated panic, blocking `Begin` and blocking end-function rows (the blocking end row asserts the client already has its response and the access record follows the end function); fails because panics escape or an observer's `http.ErrAbortHandler` is re-raised
+  - RED: table with nil, typed-nil, Begin panic, nil ctx, nil end, end panic, end panic with `http.ErrAbortHandler`, repeated panic, blocking `Begin` and blocking end-function rows (the blocking end row waits for the owner decision in notes.md "A blocking end function cannot let the client have its response first"), a `Begin` returning a context whose `Value` panics, and an end panic whose value's `Error()` panics; fails because panics escape or an observer's `http.ErrAbortHandler` is re-raised; no lock is held while observer code runs
   - GREEN: guarded calls, fallbacks, once-per-kind fault logging
   - REFACTOR: Extract Class `guardedObserver`, then /simplify
 - [ ] 4.3 Add the `srvr.observer.fault` record to core's golden-record test (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes
@@ -80,7 +80,7 @@
   - GREEN: up-down counter incremented at Begin, decremented in end; body size histograms
   - REFACTOR: /simplify
 - [ ] 5.6 Provider faults (otel-metrics / Scenario: Provider faults, all rows); verify `go test -race -run TestProviderFaults` passes
-  - RED: table with failing meter and shut-down SDK provider; fails on error wrapping
+  - RED: table with failing meter, a meter whose instrument constructor panics, a histogram whose `Record` panics, a typed-nil provider and shut-down SDK provider; fails on error wrapping or an escaping panic
   - GREEN: wrap creation errors in `ErrConfig`
   - REFACTOR: /simplify
 - [ ] 5.7 Golden test of metric names, units and attribute keys against semconv v1.43; verify `go test -run TestMetricSchemaGolden` passes
@@ -89,7 +89,7 @@
 ## 6. Slice: tracing and trace source
 
 - [ ] 6.1 Trace source in core (request-observer / Scenario: Trace source, all rows); verify `go test -race -run TestTraceSource` passes
-  - RED: table; fails because core ignores observer-supplied ids
+  - RED: table, plus a source whose `TraceFromContext` panics (ignored, core's trace kept, one `srvr.observer.fault` `trace_source_panic`); fails because core ignores observer-supplied ids
   - GREEN: `TraceSource` interface consulted by logging, problem enrichment and `TraceFromContext`; ADD a trace-source field to `engine.RequestState` (gin-and-fiber-engines defines the struct with route, matched, status, failure and trace context only), filled by the observer stage so the outer access record sees the source's ids
   - REFACTOR: /simplify
 - [ ] 6.2 Tracing switch (otel-tracing / Scenario: Tracing switch, all rows); verify `cd otelsrvr && go test -race -run TestTracingSwitch` passes
@@ -123,7 +123,7 @@
 
 - [ ] 7.1 Create module `github.com/kartaladev/srvr/otelsetup` with SDK, sdk/metric, Prometheus exporter and client_golang; add to `go.work`, CI and release list; verify `GOWORK=off go build ./...` passes in `otelsetup`
 - [ ] 7.2 Provider construction, Prometheus rows (telemetry-setup / Scenario: Provider construction, Prometheus rows and the rejected rows that do not involve OTLP); verify `cd otelsetup && go test -race -run TestNew` passes
-  - RED: table; fails because `otelsetup.New` does not exist
+  - RED: table, including a failure after the meter provider was built (it is shut down, no global touched, no listener left bound); fails because `otelsetup.New` does not exist
   - GREEN: `Config`, `New(ctx, opts...)`, `WithConfig`, validation, resource from service fields, meter provider with Prometheus reader on a dedicated registry
   - REFACTOR: Split Phase (validate, build, start), then /simplify
 - [ ] 7.3 Configuration precedence, non-OTLP rows (telemetry-setup / Scenario: Configuration precedence, `service.name` and flush-timeout rows); verify `go test -race -run TestConfigPrecedence` passes (environment set with `t.Setenv`, so not parallel)
@@ -136,11 +136,11 @@
   - REFACTOR: /simplify
 - [ ] 7.5 Globals (telemetry-setup / Scenario: Globals, all rows); verify `go test -race -run TestSetGlobal` passes (globals restored after each case)
   - RED: table; fails because globals are always/never set
-  - GREEN: `SetGlobal` installing providers and composite propagator
+  - GREEN: `SetGlobal` installing providers and composite propagator as the last step of a successful `New`; a failing `New` leaves every global unchanged
   - REFACTOR: /simplify
 - [ ] 7.6 Shutdown, misuse and servers that never served (telemetry-setup / Scenario: Flush outcomes, Prometheus row; Scenario: Lifecycle misuse; Scenario: Server that never served, all rows); verify `go test -race -run 'TestShutdown|TestShutdownHook_NeverServed'` passes
   - RED: tables; fails because shutdown is not idempotent, the hook does not run when the server never started or `Start` failed after leaving its initial state, or it runs for `Start(nil)`, `ErrServerStarted` or `ErrServerClosed`
-  - GREEN: idempotent bounded `Shutdown`; `ShutdownHook()` returning `srvr.WithShutdownHook(srvr.AfterDrain, setup.Shutdown)` (core's mechanism; no hook mechanism is added here)
+  - GREEN: idempotent bounded `Shutdown` (no mutex held across provider calls; a panicking or blocking provider `Shutdown` is bounded and reported, errors joined); `ShutdownHook()` returning `srvr.WithShutdownHook(srvr.AfterDrain, setup.Shutdown)` (core's mechanism; no hook mechanism is added here)
   - REFACTOR: /simplify
 - [ ] 7.7 Godoc and an `Example` serving Prometheus metrics for a srvr server with `setup.ShutdownHook()`, documenting which `OTEL_*` variables the SDK reads when fields are empty; verify `go test -run Example` passes
 - [ ] 7.8 Verify slice end to end (srvr server + otelsrvr + otelsetup -> scrape shows the route) and confirm construction rollback and shutdown branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): wire SDK and Prometheus scraping`
@@ -165,7 +165,7 @@
   - REFACTOR: /simplify
 - [ ] 8.5 Export failures never fail requests (telemetry-setup / Scenario: Collector down during traffic, all rows); verify `go test -race -run TestExportFailure` passes
   - RED: table; fails because errors are not logged or flood the log
-  - GREEN: global error handler under `SetGlobal`, per-kind rate limiting
+  - GREEN: global error handler under `SetGlobal`, per-kind rate limiting; an export error whose `Error()` panics is logged with a placeholder
   - REFACTOR: /simplify
 - [ ] 8.6 Add the `otel.export.failed` record to a golden-record test in `otelsetup` (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes in `otelsetup`
 - [ ] 8.7 Document `otelsetup` configuration (Prometheus in Kubernetes with `Addr: ":9464"`, OTLP endpoints, which `OTEL_*` variables apply to empty fields and that explicit fields win) in the module README; write `notes.md` entries for a stdout exporter and runtime metrics (Target: `unassigned`); verify README examples compile via `Example` tests

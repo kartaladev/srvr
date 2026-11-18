@@ -6,8 +6,8 @@ After `core-server` and `gin-and-fiber-engines`, srvr services produce triage-re
 
 ## What Changes
 
-- Core module (`github.com/kartaladev/srvr`), no new dependency: an engine-neutral `Observer` hook - `Begin(ctx, RequestInfo) (context.Context, func(ResultInfo))` - registered with `WithObserver`, called once per request by the net/http, gin and fiber engines, between the access log and panic recovery. A trace-context source hook lets an observer supply the request's trace id and span id, so logs and problems use the active span when tracing is on. Per-request state the observer needs (route, status, failure) lives in the shared `engine.RequestState` from `gin-and-fiber-engines`; this change adds the trace-source field to it.
-- New module `github.com/kartaladev/srvr/otelsrvr` (OpenTelemetry API only - `go.opentelemetry.io/otel`, `/metric`, `/trace` v1.47.x; never the SDK or exporters outside tests):
+- Core module (`github.com/kartaladev/srvr`), no new dependency: an engine-neutral `Observer` hook, declared in `srvr/engine` and re-exported by srvr (gin-and-fiber-engines D1 Option A), - `Begin(ctx, RequestInfo) (context.Context, func(ResultInfo))` - registered with `WithObserver`, called once per request by the net/http, gin and fiber engines, between the access log and panic recovery. A trace-context source hook lets an observer supply the request's trace id and span id, so logs and problems use the active span when tracing is on. Per-request state the observer needs (route, status, failure) lives in the shared `engine.RequestState` from `gin-and-fiber-engines`; this change adds the trace-source field to it.
+- New module `github.com/kartaladev/srvr/otelsrvr` (OpenTelemetry API only - `go.opentelemetry.io/otel`, `/metric`, `/trace` v1.47.x - plus the srvr core for the observer types; never the SDK or exporters outside tests):
   - `http.server.request.duration` histogram (seconds) with semantic-convention v1.43 attributes, bounded cardinality.
   - Optional `http.server.active_requests`, `http.server.request.body.size`, `http.server.response.body.size`.
   - Optional server spans with propagation through the configured propagator (the global one, falling back to W3C TraceContext when the global one is a no-op); when enabled, srvr's `trace_id`/`span_id` come from the active span.
@@ -39,7 +39,7 @@ Opt-ins:
 - `telemetry-setup`: opt-in SDK and exporter wiring in `otelsetup` - Prometheus, OTLP, resource, lifecycle and flushing.
 
 ### Modified Capabilities
-<!-- None at the main-spec level yet: core-server and gin-and-fiber-engines are unarchived when this is planned. The consolidation group must check whether trace-context and structured-logging requirements need MODIFIED deltas once those changes are archived (the trace-context source becomes replaceable). -->
+- `engine-support`: "Engines share one per-request state" - the state also holds the trace an observer's trace source supplied (consolidation 2026-11-18). `trace-context` and `structured-logging` need no delta: their rows speak of the request's trace id, which request-observer "Observers may supply the trace context" defines when a source is present.
 
 ## Scope by Gall's Law
 
@@ -53,6 +53,6 @@ Deliberately left out: logs over OTLP (logs stay JSON on stdout), client-side (o
 - Two new modules with new dependency sets: `otelsrvr` (~18 modules, OTel API) and `otelsetup` (SDK ~24, Prometheus exporter ~51, OTLP ~90). The Prometheus exporter is pre-1.0 (v0.69.x).
 - Metric names and attributes become a public contract alongside the log schema.
 
-Assumptions about earlier changes (checked by consolidation group 1):
+Assumptions about earlier changes (checked by consolidation group 1 on 2026-11-18 against the merged code; the corrections are in design D1-D3 and notes.md "Consolidation 2026-11-18"):
 - `core-server`: request pipeline order trace context -> access log -> recovery -> router exists; `srvr.Trace` and `TraceFromContext` exist; `http.route` is derived from `r.Pattern` without the method; `ServiceConfig` exposes name, version and environment; core owns shutdown hooks - `srvr.WithShutdownHook(srvr.BeforeDrain|srvr.AfterDrain, fn)`, `AfterDrain` hooks bounded by `Config.ShutdownHookTimeout` (default 5s) separately from the 15s drain, run once on every stop path (`Start` context cancelled, `Shutdown`, `Shutdown` of a never-started server, every `Start` failure after the server leaves its initial state; never `Start(nil)` or misuse errors); `AccessLogConfig.IncludePath` and `TraceConfig.IgnoreIncoming` exist.
 - `gin-and-fiber-engines`: `ginsrvr` and `fibersrvr` reuse core's engine-neutral pipeline pieces, expose the matched route template (gin `c.FullPath()`, fiber route path read after `c.Next()` or `c.Endpoint()`), and accept core server options such as `WithObserver`. They share the pipeline through the public `srvr/engine` package (gin-and-fiber-engines D1), so the observer stage is added there once; route templates stay in each engine's syntax (`/users/:id` on gin and fiber). One per-request holder, `engine.RequestState` (`engine.StateFrom(ctx)`), carries route, matched flag, status, failure and trace context; this change adds a trace-source field to it; on fiber the access stage calls the error handler (gin-and-fiber-engines D7), so the observer only reads the final status; unmatched 404/405 are failed requests on every engine.
