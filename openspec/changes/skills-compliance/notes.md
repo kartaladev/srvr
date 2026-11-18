@@ -35,15 +35,15 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Unmatched-request failed records cannot be sampled
-- **Status:** open
-- **Target:** unassigned
+- **Status:** open (carried, owner decision 2026-11-18)
+- **Target:** triage-debug-buffer (task 9.1: opt-in burst-per-interval limit, design D7)
 - **Context:** every unmatched request writes an `http.request.failed` `WARN` record, even with the access log disabled, so a path scanner controls log volume (`engine/access.go`, suppression applies only to `http.request.completed`). The fingerprint fix (task 2.2) bounds grouping, not volume.
 - **Evidence:** unverified: follows from the code; the triage design makes failed records unsuppressible on purpose.
 - **Suggested action:** a later change decides whether to offer an explicit sampling or rate-limit option for unmatched failed records.
 
 ### The user agent is logged by default without an opt-out
-- **Status:** open
-- **Target:** unassigned
+- **Status:** open (carried, owner decision 2026-11-18)
+- **Target:** triage-debug-buffer (task 9.2)
 - **Context:** `user_agent.original` is on every access record (`engine/access.go`); some mobile SDK user agents carry device identifiers. Task 6.5 documents it.
 - **Evidence:** unverified: privacy judgement.
 - **Suggested action:** a later change may add an explicit `AccessLogConfig` field to omit it.
@@ -54,6 +54,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `srvr.LogWriteErrors` keeps its name (low-confidence naming finding; the name is in the log-schema docs); `RouteRegistrar` stays (named in the project context as public shape); test files stay grouped by concern (commit `0470d34`); log-and-return of `server.failed` and `server.shutdown_hook.failed` stays (the records are schema commitments), with godoc noting that a caller logging the returned error logs it twice (task 6.1); `fibersrvr`'s per-request `context.WithCancel(base)` stays unless slice 8's fiber benchmark shows contention.
 - **Evidence:** unverified: design judgement.
 - **Suggested action:** none.
+- **Update (2026-11-18):** the owner reversed the `srvr.LogWriteErrors` decision: it becomes `srvr.LogRecordsLost` in `triage-debug-buffer` (task 10.1, design D9). The owner also moved the first release into `triage-debug-buffer` (slice 11, tags only after confirmation).
 
 ### TestStart_Stop deadline row can hang instead of failing under load
 - **Status:** closed: fixed by skills-compliance task 8.2
@@ -63,8 +64,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** in task 8.2, start the deadline only after the request is in flight (or select on `started` together with the request's result and a bound), so a lost race fails fast with a message.
 
 ### Slice 2 /simplify: efficiency items deferred to the benchmarks
-- **Status:** open (task 9.4 applied only the target cache; these stay deferred, owner decision 2026-11-18: timings too noisy to judge)
-- **Target:** unassigned
+- **Status:** open (carried, owner decision 2026-11-18)
+- **Target:** triage-debug-buffer (task 8.5)
 - **Context:** the slice 2 efficiency review (read-only, no measurement) found two costs on the logging hot path: with a limit set, any `slog.Any` value forces a record rebuild (`mayNeedRewrite`), and `capAny` formats every such value with `fmt` to measure it, after which the base handler formats a value that fits a second time. Suggested cheaper forms: skip formatting for small fixed-size kinds (`time.Time`, `netip.Addr`, scalars), or format into a counting writer that stops after `maxBytes+1`. A third item, a keyword pre-scan before `secretPair` in `RedactSecrets`, only touches failed requests; the cheap `?`/`&` pre-check for `queryValue` was applied. Design D2 already accepts the formatting cost pending a benchmark.
 - **Evidence:** unverified: code reading; `BenchmarkLogHandler` (task 8.4, with and without `slog.Any`) decides.
 - **Suggested action:** measure on a quiet machine with `benchstat`: (1) skipping `fmt` formatting for small fixed-size `slog.Any` kinds or a counting writer in `capAny`; (2) a keyword pre-scan before `secretPair` in `RedactSecrets`, which the baseline puts at about 8 ms for a 32 KiB panic stack; apply each at a 10% or larger gain.
@@ -74,11 +75,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** skills-compliance
 - **Context:** (1) after `runCheck` stopped walking the chain, `Start`'s returned error still unwrapped to the consumer's self-cyclic error, so a caller's `errors.Is(err, X)` for any `X` not in the chain looped forever; `guard(err)` now hides an unwalkable chain (task 3.1). (2) `http.Server.Shutdown` waits for `Serve` on a `WaitGroup` without regard to its context (Go 1.27.4 `net/http/server.go` `Shutdown` and `Close`, `listenerGroup.Wait()`), so a `WithListener` listener whose `Close` does not unblock `Accept` hung srvr's `Shutdown` forever on net/http and gin; `httpRunner.Drain` now returns at the drain deadline (task 3.4). fibersrvr was not checked for the same listener (no spec row); fiber's `ShutdownWithContext` is a separate path.
 - **Evidence:** (1) `TestRouteCheck_FaultyErrors/Unwrap_returns_the_error_itself` with `go test -race -timeout 20s`: `panic: test timed out`, goroutine in `errors.is` called from `routing_test.go:785`. (2) `TestServeGoroutine/a_WithListener_listener_whose_Close_does_not_unblock_Accept`: `panic: test timed out after 2m0s`, goroutine `[sync.WaitGroup.Wait]` in `net/http.(*Server).Shutdown` called from `engine.(*httpRunner).Drain`.
-- **Suggested action:** none for net/http and gin. A later change may add the stuck-listener row for fiber.
+- **Suggested action:** none for net/http and gin. The fiber stuck-listener row is carried to `triage-debug-buffer` (task 10.4, owner decision 2026-11-18).
 
 ### Configuration errors: log fields are checked after the other fields; otel modules keep plain errors
-- **Status:** open
-- **Target:** unassigned
+- **Status:** open (carried, owner decision 2026-11-18; item 3, the `MaxHeaderBytesSet` name, stays as design D5 chose)
+- **Target:** triage-debug-buffer (tasks 10.2 and 10.3)
 - **Context:** found by the slice 5 /simplify altitude review. (1) `LogConfig.Level` and `Format` are validated in `newLogHandler`, after `newSettings` has already returned the other fields' errors, so `LogConfig{Level: "loud"}` with `WithMaxHeaderBytes(-1)` reports only `MaxHeaderBytes`; moving both checks into `Settings.validate` would name every invalid field in one joined error. (2) `otelsrvr` and `otelsetup` return `fmt.Errorf("%w: ...", ErrConfig)` with their own sentinels, not a `*ConfigError`-like type, so `errors.As` cannot read their field. (3) `Core.MaxHeaderBytesSet` reads like a bool; design D5 chose the name.
 - **Evidence:** unverified: code reading (`engine/log.go` `newLogHandler`, `engine/config.go` `newSettings`); no spec row covers a log field together with another invalid field.
 - **Suggested action:** a later change decides whether to validate log fields in `Settings.validate` and whether the otel modules get a typed error.
@@ -124,8 +125,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** baseline for task 9.4's measured changes (`logHandler.target` caching for group-free handlers, single ServeMux routing in `answerUnmatched`, fiber `accessInfo` copies): rerun with `-count=10` before and after each change and compare with `benchstat`.
 
 ### Task 9.4: measured performance changes
-- **Status:** open (two items deferred by owner decision, 2026-11-18: timings on the development machine were too noisy to judge)
-- **Target:** unassigned (the applied target cache is done in skills-compliance)
+- **Status:** open (deferred items carried, owner decision 2026-11-18)
+- **Target:** triage-debug-buffer (task 8.5; the applied target cache is done in skills-compliance)
 - **Context:** the rule is "apply only when a benchmark shows a gain of 10% or more in ns/op or allocations".
   - *Applied:* `logHandler` target cache. A handler keeps the last target it built (base handler with the trace attributes and every `With` step) keyed by trace id, span id and the truncated flag, and reuses it while the key matches; `with` and `bind` give each copy its own cache. `BenchmarkLogHandler`, `benchstat` over `-count=6`: allocs/op 7 -> 1 (0 steps), 10 -> 1 (1 step), 16 -> 1 (3 steps), 20 -> 14, 23 -> 14, 29 -> 14 (with `slog.Any`), geomean -76%; B/op geomean -82% (400 -> 64 B with 0 steps). ns/op varied +-137% to +-305% between runs on the loaded machine, so time is not claimed. After the slice-9 /simplify pass (the key is a comparable `targetKey` passed by value; a `cachedTarget` is allocated only on a miss), the hit path drops one more allocation: 0 allocs/op with 0, 1 or 3 steps and 13 with `slog.Any` (`go test -run '^$' -bench BenchmarkLogHandler -benchmem ./engine`). Guarded by `TestLogHandler_TargetCache` (in-place trace replacement, truncation toggling, concurrent traces under `-race`).
   - *Deferred, not measured:* single ServeMux routing in `answerUnmatched` (`server.go`), and fiber `accessInfo` copies after the suppression check. Note for the first: calling the handler `mux.Handler(r)` returns instead of `mux.ServeHTTP` would skip ServeMux setting `r.Pattern` and the path values (`r.PathValue`), so a single pass needs another design, for example letting `withRoute` mark the request matched and intercepting only the fallback's response.
@@ -140,8 +141,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none; the line-length check treats struct-tag lines as exempt.
 
 ### Target cache: patterns where it cannot hit (from /simplify on slice 9)
-- **Status:** open (unconfirmed: allocation cost not yet measured)
-- **Target:** unassigned (with the deferred task 9.4 measurements)
+- **Status:** open (unconfirmed: allocation cost not yet measured; carried)
+- **Target:** triage-debug-buffer (tasks 8.1 and 8.5)
 - **Context:** `BenchmarkLogHandler` measures one handler logging many records with one trace, where the cache hits. Two common patterns may never hit: (a) `engine.LoggerFromContext(ctx).Info(...)` called once per line, because `LoggerFromContext` calls `bind` on every call (`engine/log.go` `LoggerFromContext`) and each bound copy starts with an empty cache, so each record pays a `targetCache` and a `cachedTarget` allocation on top of the old cost; (b) unbound handlers (the root logger, `slog.Default()` under `SetDefault`, srvr's access and event records) take the trace from the context, so concurrent requests with different trace ids replace each other's single-entry cache, adding a miss allocation and an atomic store to a shared cache line. (The hit path itself no longer allocates: `cachedTarget` takes its key by value and allocates only on a miss.)
 - **Evidence:** code reading only (simplify review of slice 9); rule 2 applies: write benchmarks for (a) and (b) and compare allocs/op with and without the cache before calling either a regression.
 - **Suggested action:** add `BenchmarkLogHandler` rows for (a) and (b); if either regresses, cache only on handlers with a bound trace or `With` steps, or keep the request logger (or its cache) on `RequestState` so loggers of one request share it.

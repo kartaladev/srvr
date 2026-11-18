@@ -123,6 +123,53 @@
 - [ ] 7.2 Guard ignores `TestMain` files excluded by build constraints: RED - restore `TestGuardRejectsTestMainBehindBuildTag` in `internal/paritytest` and confirm it fails; GREEN - evaluate each file's `//go:build` line with `go/build/constraint` against the default build context and skip excluded files; verify `go test -race -run 'TestEveryTestPackageChecksLeaks|TestGuardRejectsTestMainBehindBuildTag'` passes
 - [ ] 7.3 Verify the slice, run `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...` with `GOWORK=off` in every touched module, run gopls diagnostics, update both entries in `openspec/changes/archive/2026-11-18-goroutine-leak-checks/notes.md` and this change's `notes.md` to `closed: fixed`, run /simplify on the slice and commit `test(engine): name the serve goroutine and honour build tags in the leak guard`
 
+## 8. Slice: performance benchmarking and profiling (carried from skills-compliance)
+
+- [ ] 8.1 Benchmarks for the hot paths still without one (test-quality / Scenario: Benchmarks and profiles, all rows): `BenchmarkPipeline` gains `b.RunParallel` variants on net/http, gin and fiber; `otelsrvr` `BenchmarkObserver`; `BenchmarkLogHandler` gains a one-record `LoggerFromContext` row and a concurrent root-logger row; benchmarks for panic recovery, a body over `MaxRequestBodyBytes` and a 32-link error chain; `BenchmarkDebugBuffer` from 3.6 is kept; verify `go test -run '^$' -bench . -benchmem` runs in every module
+- [ ] 8.2 `make bench` and `make profile` (design D8): per module with `GOWORK=off`, output under an ignored `bench/` directory; verify both run from the root and `go tool pprof -top bench/<module>.cpu` reads each CPU profile
+- [ ] 8.3 `docs/PERFORMANCE.md`: running the benchmarks and profiles, reading them with `go tool pprof`, comparing with `benchstat`, what the CI job gates and why timings do not; link it from `README.md`; verify every command in it runs
+- [ ] 8.4 CI benchmark job (test-quality / Scenario: Benchmark comparison in CI, all rows): `main` and the branch benchmarked in one job, compared with `benchstat`, failing above 10% in `allocs/op` or `B/op`; RED - a script test over recorded `benchstat` inputs, one case per row, failing before the comparison script exists; GREEN - the script and the job; verify the script test passes and `actionlint` reports nothing
+- [ ] 8.5 Measure each deferred item with `benchstat` (`-count=10`, on the CI runner for timings): `answerUnmatched` single routing (keeping `r.Pattern` and path values, see `skills-compliance` notes), fiber `accessInfo` copies after the suppression check, `capAny` formatting (skip fixed-size kinds or a counting writer), a keyword pre-scan in `RedactSecrets`, the target cache on a one-line request logger and on a concurrent root logger, and the debug buffer's cost (design D1); apply each only at the D8 gain, test-first where behaviour could change; record every comparison, applied or not, in `notes.md`; verify `go test -race ./...` passes in every touched module
+- [ ] 8.6 Verify the slice, confirm `make bench`, `make profile` and the CI job work end to end, run `make check`, gopls diagnostics, run /simplify on the slice and commit `perf: benchmark and profile every hot path and gate allocation regressions in CI`
+
+## 9. Slice: access-log controls (carried from skills-compliance)
+
+- [ ] 9.1 Unmatched-record limit (structured-logging / Scenario: Limiting unmatched failed records, all rows; Scenario: Failures while the access log is suppressed, new rows); verify `go test -race -count=10 -run 'TestUnmatchedLimit|TestFailedRecords'` passes on every engine
+  - RED: tables over both Examples blocks on net/http, gin and fiber (fake clock for the window rows, 50 concurrent clients, `Shutdown` rows, the `otelsrvr` metrics row); add `WithUnmatchedRecordLimit` as a no-op first so RED is a wrong count, not a compile error
+  - GREEN: `UnmatchedLimitConfig`, option and validation; a per-server fixed-window limiter in atomics (design D7) consulted by `writeAccess` for unmatched records only; `srvr.unmatched.suppressed` on the next written record and on `server.stopped`; a suppressed record discards the debug buffer
+  - REFACTOR: Extract Class for the limiter; /simplify
+- [ ] 9.2 User-agent omission (structured-logging / Scenario: Omitting the user agent, all rows); verify `go test -race -run TestAccessLog_OmitUserAgent` passes on every engine
+  - RED: table; fails because `user_agent.original` is always written (no-op option first)
+  - GREEN: `AccessLogConfig.OmitUserAgent` and `WithoutAccessLogUserAgent()`
+  - REFACTOR: /simplify
+- [ ] 9.3 Add `srvr.unmatched.suppressed` to the central log-key file, the golden-record test and `LOGGING.md` without bumping `srvr.log.schema`; document both options with their defaults and reasons in godoc and `LOGGING.md`, the limit named as a loosening; `CHANGELOG.md` entries; verify `go test -run 'TestLogSchemaGolden|Example'` passes
+- [ ] 9.4 Verify the slice on all three engines, confirm the limiter's admit, rollover and report branches in `go tool cover -func`, run `make check`, gopls diagnostics, run /simplify on the slice and commit `feat(core): rate limit unmatched failed records and omit the user agent on request`
+
+## 10. Slice: API and robustness (carried from skills-compliance)
+
+- [ ] 10.1 Rename `srvr.LogWriteErrors` to `srvr.LogRecordsLost` with gopls, its engine counterpart included (structured-logging / Scenario: Own handler and Scenario: Broken output; engine-support / Scenario: Consumer faults on every engine); update `LOGGING.md`, godoc and `CHANGELOG.md` (BREAKING, no alias); verify `grep -rn 'LogWriteErrors' --include='*.go' --include='*.md' . --exclude-dir=archive` finds only the CHANGELOG entry and `go test -race ./...` passes in every module
+- [ ] 10.2 One joined construction error (server-lifecycle / Scenario: Valid and invalid configuration, new rejected rows); verify `go test -race -run TestNew_Config` passes
+  - RED: the three joined rows; fails because the log fields are checked after the other fields return
+  - GREEN: validate `LogConfig.Level` and `Format` with the other fields and join every field error
+  - REFACTOR: Move Function for the log-field checks into the settings validation; /simplify
+- [ ] 10.3 Typed configuration errors in `otelsrvr` and `otelsetup` (otel-metrics and telemetry-setup / Scenario: Typed configuration errors, all rows); verify `go test -race -run TestConfigError` passes in both modules
+  - RED: tables with `errors.As` into each module's `*ConfigError` (add the type first so RED is `false`)
+  - GREEN: `ConfigError{Field, Value, Reason}` per module, `Unwrap` returning the module's `ErrConfig`, every `fmt.Errorf("%w: ...", ErrConfig)` replaced; error text unchanged
+  - REFACTOR: /simplify
+- [ ] 10.4 Stuck listener on fiber (server-lifecycle / Scenario: Stuck listener on every engine, all rows); verify `go test -race -run TestShutdown_StuckListener` passes in core, `ginsrvr` and `fibersrvr`
+  - RED: the table on all three engines; if the fiber row passes, record in `notes.md` that the suspected defect is not confirmed (AGENTS.md rule 2) and keep the row as a regression test
+  - GREEN (only if it fails): bound fiber's drain at its deadline as `httpRunner.Drain` does
+  - REFACTOR: /simplify
+- [ ] 10.5 Verify the slice, run `make check` and `make cover`, gopls diagnostics, run /simplify on the slice and commit `refactor!: rename LogWriteErrors to LogRecordsLost, join and type configuration errors`
+
+## 11. Slice: release (carried from skills-compliance)
+
+- [ ] 11.1 Precondition: this change is reviewed and merged to `main`, and `skills-compliance` is archived; verify `git log main --oneline -1` contains the merge and `openspec list` no longer lists `skills-compliance`
+- [ ] 11.2 Prepare: move the `CHANGELOG.md` "Unreleased" entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
+- [ ] 11.3 STOP for the owner: present the proposed version (suggested `v0.1.0`), the changelog section and the dry-run results, and wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [ ] 11.4 Release in `RELEASING.md` order: tag the core module and push the tag; in each released module (`ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`) require that core version, drop the `replace`, run its checks with `GOWORK=off`, commit, tag `<module>/<version>` and push; verify the CI `release` job passes for every tag
+- [ ] 11.5 Verify through the module proxy: `GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m github.com/kartaladev/srvr@<version>` and the same for every module, and build a scratch consumer outside the repository that imports each module at the tagged version; record the result in `notes.md`
+
 ## Workflow follow-up
 
 - Re-read `notes.md` and make sure every open item has a target or is `unassigned`.

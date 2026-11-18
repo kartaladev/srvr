@@ -45,7 +45,22 @@ Consolidation (2026-11-18) checked these against the merged code with gopls; the
    - Scenarios satisfied: Engine parity; Fiber context reuse; Unusual endings.
    - Hot paths: each engine's outcome signal into the shared flush decision.
 
-Each slice ends releasable. After slice 1 the feature works on the default engine with the fixed default per-request caps; the process-wide budget arrives in slice 2, so after slice 1 memory is bounded per request (like the request body limit) but not across requests.
+6. **Carried-over leak-check hardening** (tasks group 7, from `goroutine-leak-checks`).
+7. **Performance benchmarking and profiling** (carried from `skills-compliance`).
+   - What works: benchmarks for every hot path still without one, `make bench` and `make profile`, `docs/PERFORMANCE.md`, a CI job comparing allocations with `main`; each deferred optimisation measured and applied only at a 10% gain (D8).
+   - Scenarios satisfied: Benchmarks and profiles; Benchmark comparison in CI.
+   - Hot paths: none added; the slice measures the existing ones and the debug buffer.
+8. **Access-log controls** (carried from `skills-compliance`).
+   - What works: the opt-in unmatched-record limit with its suppressed count (D7) and the opt-in user-agent omission.
+   - Scenarios satisfied: Limiting unmatched failed records; Omitting the user agent; Failures while the access log is suppressed (new rows).
+   - Hot paths: the limiter's admit decision on every unmatched request; the access-record builder.
+9. **API and robustness** (carried from `skills-compliance`).
+   - What works: `srvr.LogRecordsLost` (D9), one joined construction error naming every invalid field, typed `*ConfigError` in `otelsrvr` and `otelsetup`, the stuck-listener row on fiber.
+   - Scenarios satisfied: Own handler, Broken output and Consumer faults on every engine (renamed counter); Valid and invalid configuration (joined rows); Typed configuration errors (both modules); Stuck listener on every engine.
+   - Hot paths: construction validation; fiber's stop path.
+10. **Release** (carried from `skills-compliance`): a release prepared by the plan and tagged only on owner confirmation (D10). No scenario: it is a process step.
+
+Each slice ends releasable. Slices 7-10 each depend only on a working system, not on one another, except that slice 7's debug-buffer benchmarks need slices 1-5 and the release comes last. After slice 1 the feature works on the default engine with the fixed default per-request caps; the process-wide budget arrives in slice 2, so after slice 1 memory is bounded per request (like the request body limit) but not across requests.
 
 ## Decisions
 
@@ -56,7 +71,7 @@ Buffering is off unless enabled.
 - When it is on, the wrapper's `Enabled` must return true for every level from the buffer level up. So every `DEBUG` call in every request builds a full `slog.Record` with attributes, even on the 99% of requests that succeed.
 - It also adds per-request memory, and it changes what reaches the log stream on failure.
 
-**Alternative considered:** default-on with small limits. That gives more triage value out of the box, but it puts a silent CPU and memory cost on every consumer, and default `DEBUG` content may hold data the consumer never meant to emit. Rejected under the "safe opinionated default" rule. Revisit when per-call cost is measured. The benchmark task records the numbers in `notes.md`.
+**Alternative considered:** default-on with small limits. That gives more triage value out of the box, but it puts a silent CPU and memory cost on every consumer, and default `DEBUG` content may hold data the consumer never meant to emit. Rejected under the "safe opinionated default" rule. Revisit when per-call cost is measured: task 3.6 records the first numbers in `notes.md`, and slice 7 measures them with `benchstat` on the CI runner (D8).
 
 **Failure modes:**
 - A consumer enables it and sees higher latency. Mitigation: benchmark and godoc state the cost, and `Level` can be raised to buffer only `INFO` when the log level is `WARN`.
@@ -143,6 +158,38 @@ The buffer creation (`withState`) and the flush at the outcome point (`writeAcce
 **Failure modes:**
 - An engine that writes the access record from a different code path than the one deciding the outcome. Tests per engine cover this.
 
+### D7. Unmatched failed records: opt-in burst-per-interval limit
+Every unmatched request writes an `http.request.failed` record, so a path scanner controls log volume. The limit follows the common log rate-limiting pattern: journald writes at most `RateLimitBurst` messages per `RateLimitIntervalSec` per service and then a message with the number suppressed; zap's sampler and `samber/slog-sampling`'s threshold strategy keep the first N records per tick and count the rest.
+
+- **Scope:** only records of requests no route matched (`404` and `405` answered by the router, on every engine). Handler errors, panics, `5xx` and `http.request.completed` records are never limited.
+- **Window:** a fixed window per server, its start and count in atomics: the first `Burst` unmatched records per `Interval` are written, later ones are counted. A new window starts at the first unmatched request after the current one ends.
+- **Report:** the count is added as `srvr.unmatched.suppressed` to the next unmatched record written and reset; `server.stopped` carries what is left. No timer goroutine, as the kernel's `printk_ratelimit` reports "N callbacks suppressed" on the next allowed call.
+- **Other consumers of the request:** the observer (`otelsrvr` metrics and spans) still sees every request; a suppressed record discards the request's debug buffer, as a suppressed access record does (D3).
+- **Configuration:** `AccessLogConfig.UnmatchedLimit UnmatchedLimitConfig{Burst int, Interval time.Duration}` with `json`/`yaml`/`env` tags, and `WithUnmatchedRecordLimit(burst, interval)`. `Burst` `0` means no limit (the default); a negative `Burst`, or a positive one with `Interval` at or below zero, fails construction naming the field.
+
+**Why off by default:** failed records are unsuppressible by design (`structured-logging`), so dropping any is a loosening of a triage default the consumer chooses knowingly.
+
+**Alternatives considered:** 1-in-N sampling, whose volume still grows with the attacker's rate; zap's "every Mth thereafter", which keeps more visibility but grows with the rate as well; a per-path key, which a scanner defeats by varying the path. Rejected for now: a single bounded burst is predictable and simplest.
+
+**Failure modes:**
+- *Concurrent requests at the window boundary:* atomics only; exactly `Burst` records per window under `-race` (scenario row with 50 clients).
+- *Clock steps:* the window uses monotonic time (`time.Now` with its monotonic reading).
+- *Count lost on a crash:* accepted; the count is best effort, metrics still count every request.
+
+### D8. Benchmarks, profiles and the CI allocation check
+- **Benchmarks:** added where a hot path has none (Benchmarks and profiles rows), with `b.Loop` and `ReportAllocs`; concurrency with `b.RunParallel`.
+- **Commands:** `make bench` runs `go test -run '^$' -bench . -benchmem -count=6` per module with `GOWORK=off` and writes `bench/<module>.txt`; `make profile` adds `-cpuprofile` and `-memprofile` per module under `bench/`; `bench/` is ignored by git. `docs/PERFORMANCE.md` explains running them, reading profiles with `go tool pprof` and comparing with `benchstat`.
+- **CI:** one job checks out `main` and the branch, runs the benchmarks of both in the same job, compares them with `benchstat`, and fails when `allocs/op` or `B/op` of a benchmark rises more than 10%. Timing differences are reported, never gating: `skills-compliance` task 9.4 saw timings vary by more than 100% between runs on one machine.
+- **Measured items:** `answerUnmatched` single routing, fiber `accessInfo` copies, `capAny` formatting, a keyword pre-scan in `RedactSecrets`, the target-cache patterns (one-line request logger, concurrent root logger) and the debug buffer's cost. Each is applied only when `benchstat` shows a 10% or larger gain in allocations, or in `ns/op` with `p < 0.05` on the CI runner, and the comparison is recorded in `notes.md`.
+
+**Failure modes:** a flaky gate (allocation counts of pooled objects vary): the 10% margin and `-count=6` absorb it; a benchmark that panics fails the job like a test.
+
+### D9. `LogWriteErrors` becomes `LogRecordsLost`, without an alias
+The counter counts records lost to base-handler errors and panics alike, not only write errors. The library is unreleased, so the rename has no deprecated alias, as `ginsrvr.WithEngine` had none. The rename goes through gopls (core function and the engine counter it reads), then `LOGGING.md`, the specs and `CHANGELOG.md`.
+
+### D10. The release is prepared by the plan and tagged on confirmation
+`RELEASING.md` already fixes the order: tag the core, then in each released module require that version and drop the `replace`, then tag the module. The slice does everything up to tagging (merged to `main`, changelog section, `make check`, release-guard dry run), then stops for the owner to confirm the version and the push. Tags are outward-facing and cannot be taken back once the module proxy caches them.
+
 ## Defaults
 
 | Behaviour | Default | Why | Override |
@@ -153,6 +200,8 @@ The buffer creation (`withState`) and the flush at the outcome point (`writeAcce
 | Records per request | 100 | enough for a request's story; bounded | `MaxRecords(n)`, `DebugBufferConfig.MaxRecords` |
 | Bytes per request | 64 KiB | bounded memory with headroom | `MaxBytes(n)`, `DebugBufferConfig.MaxBytes` |
 | Process-wide bytes | 16 MiB | bounds total memory under load spikes | `TotalBytes(n)`, `DebugBufferConfig.TotalBytes` (must be at least `MaxBytes`) |
+| Unmatched-record limit | off (`Burst` `0`) | failed records are unsuppressible by design; dropping any is the consumer's choice (D7) | `WithUnmatchedRecordLimit(burst, interval)`, `AccessLogConfig.UnmatchedLimit` |
+| User agent in access records | logged | identifies bots and client versions in triage | `WithoutAccessLogUserAgent()`, `AccessLogConfig.OmitUserAgent` |
 
 Options and `WithDebugBufferConfig` apply in argument order and the later one wins: `WithDebugBufferConfig` sets every field (zero meaning the default), an option sets one field and `WithDebugBuffer` also sets `Enabled`. `DebugBuffer` stays nested in `LogConfig` so config loaders fill it with the rest of the logging settings; as a consequence a later `WithLogConfig` replaces it too, so `WithDebugBuffer(), WithLogConfig(LogConfig{Format: "json"})` turns buffering off. Godoc on both options states this.
 
@@ -162,6 +211,8 @@ Options and `WithDebugBufferConfig` apply in argument order and the later one wi
 - Append: clone, size estimate, budget reserve, ring eviction.
 - Outcome point: seal, flush decision, replay loop with guard, budget release, summary attributes.
 - Error branches: budget exhausted, oversized record, handler error or panic during replay, invalid configuration.
+- Unmatched-record limiter: admit decision, window rollover, count report on the next record and at `server.stopped`.
+- Construction validation joining every field error; fiber's stop path with a stuck listener.
 
 ## Risks / Trade-offs
 
@@ -171,6 +222,11 @@ Options and `WithDebugBufferConfig` apply in argument order and the later one wi
 - [Consumer handlers that filter inside `Handle`] → documented with a scenario; srvr cannot force them.
 - [Assumptions about the core-server and engines pipeline] → checked by consolidation task 1.3; mismatches are fixed in this change's artifacts before coding.
 
+- [Rate limit hides an attack's shape] → off by default; the count is reported and metrics still count every request.
+- [CI benchmark job flakes or slows CI] → it gates only allocations with a 10% margin; timings are reported only.
+- [Breaking rename] → unreleased; listed in `CHANGELOG.md` with its replacement.
+- [A release tag is permanent] → tags only after owner confirmation (D10).
+
 ## Migration Plan
 
-Additive and opt-in. Release as a minor version of the core module. `srvr.log.schema` keeps its version: the new keys are additive (project policy), and the golden-record test is extended with them. There is nothing to roll back beyond disabling the option.
+The debug buffer and the access-log controls are additive and opt-in; `srvr.LogWriteErrors` is renamed to `srvr.LogRecordsLost` (breaking, pre-v1, in `CHANGELOG.md`). This change ends with the first release (D10). `srvr.log.schema` keeps its version: the new keys are additive (project policy), and the golden-record test is extended with them. Rolling back a feature is disabling its option; a published tag is never moved or deleted, a fix ships as the next version.
