@@ -10,6 +10,27 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `git fetch` then `git log -1 origin/main` = `649b030`; `go list -m -versions` for each module above.
 - **Suggested action:** none.
 
+### Slice 7 notes (2026-11-18)
+- **Status:** closed: applied
+- **Target:** otel-observability
+- **Context:** RED: 8.1 failed to compile (`WithOTLP`, `OTLPConfig` undefined), then the http/protobuf rows failed (`the collector got no metric` / `no span`) because `WithEndpointURL` uses a URL's path as is; 8.5 failed to compile (`WithLogger` undefined). 8.2 (endpoint precedence), 8.3 (flush outcomes) and 8.4 (ordering with the server) passed at first run, as the plan expected, and stay as guards for SDK upgrades. Decisions: `OTLPConfig.Endpoint` is a base URL (scheme decides plaintext or TLS; for http/protobuf `/v1/metrics` or `/v1/traces` is appended, like `OTEL_EXPORTER_OTLP_ENDPOINT`) or a host:port (TLS); there is no `Insecure` field, plaintext needs an explicit `http://`. An empty `Protocol` is `http/protobuf`. `WithLogger` (default `slog.Default()`) is where `otel.export.failed` goes; the record carries `srvr.log.schema` from the new exported `engine.LogSchemaVersion` (so a bump reaches it), `error.type` (Go type, the rate-limit kind) and `exception.message`; LOGGING.md lists it under "Events of companion modules". The OpenTelemetry global getters return delegates that cannot be set back, so otelsetup tests reset the globals to no-op ones (`resetGlobals`). The fake collectors are test-only (`go.opentelemetry.io/proto/otlp`, gRPC). Export interval in tests comes from `OTEL_METRIC_EXPORT_INTERVAL` (no new option).
+- **Evidence:** otelsetup `otlp_test.go`, `precedence_test.go` `TestConfigPrecedence_OTLP`, `ordering_test.go`, `exportfailure_test.go`, `errorhandler_internal_test.go` (`TestExportErrorHandler`, `TestLogSchemaGolden`).
+- **Suggested action:** none.
+
+### A stdout exporter for local development
+- **Status:** open
+- **Target:** unassigned
+- **Context:** design Open Questions: otelsetup offers Prometheus and OTLP; a stdout exporter (`go.opentelemetry.io/otel/exporters/stdout/...`) would help local development without a collector. It changes no other requirement.
+- **Evidence:** unverified: feature request from planning, not a defect.
+- **Suggested action:** decide whether to add `Stdout` to `otelsetup.Config` (and which writer) in a later change.
+
+### Runtime and process metrics
+- **Status:** open
+- **Target:** unassigned
+- **Context:** proposal "Deliberately left out": Go runtime and process metrics are not recorded; consumers can add `go.opentelemetry.io/contrib/instrumentation/runtime` with `setup.MeterProvider()` themselves.
+- **Evidence:** unverified: scope decision, not a defect.
+- **Suggested action:** decide whether otelsetup should offer an opt-in (it would add a contrib dependency).
+
 ### Slice 6 notes (2026-11-18)
 - **Status:** closed: applied
 - **Target:** otel-observability

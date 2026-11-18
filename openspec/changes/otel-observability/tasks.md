@@ -148,29 +148,29 @@
 
 ## 8. Slice: OTLP export and failure isolation
 
-- [ ] 8.1 OTLP providers (telemetry-setup / Scenario: Provider construction, OTLP rows); verify `cd otelsetup && go test -race -run TestNew_OTLP` passes against an in-process fake collector
+- [x] 8.1 OTLP providers (telemetry-setup / Scenario: Provider construction, OTLP rows); verify `cd otelsetup && go test -race -run TestNew_OTLP` passes against an in-process fake collector
   - RED: table for http/protobuf and grpc, metrics and traces, the empty-endpoint row and the OTLP rejected rows (`Protocol`, no signal enabled); fails because OTLP is not wired
   - GREEN: OTLP exporters, batch span processor, periodic reader; exporter endpoint option set only when `Endpoint` is non-empty
   - REFACTOR: /simplify
-- [ ] 8.2 Endpoint precedence (telemetry-setup / Scenario: Configuration precedence, OTLP endpoint rows); verify `go test -race -run TestConfigPrecedence_OTLP` passes (environment set with `t.Setenv`, pointing at fake collectors)
+- [x] 8.2 Endpoint precedence (telemetry-setup / Scenario: Configuration precedence, OTLP endpoint rows); verify `go test -race -run TestConfigPrecedence_OTLP` passes (environment set with `t.Setenv`, pointing at fake collectors)
   - RED: table; fails if `OTEL_EXPORTER_OTLP_ENDPOINT` beats an explicit `Endpoint` or is ignored when `Endpoint` is empty
   - GREEN: no change expected beyond 8.1; keep the test as a guard for SDK upgrades
   - REFACTOR: /simplify
-- [ ] 8.3 Flush outcomes with OTLP (telemetry-setup / Scenario: Flush outcomes, OTLP rows); verify `go test -race -run TestShutdown_OTLP` passes
+- [x] 8.3 Flush outcomes with OTLP (telemetry-setup / Scenario: Flush outcomes, OTLP rows); verify `go test -race -run TestShutdown_OTLP` passes
   - RED: table with accepting, unreachable and hanging fake collectors; fails if shutdown exceeds bounds
   - GREEN: `min(ctx, FlushTimeout)` deadline, joined errors
   - REFACTOR: /simplify
-- [ ] 8.4 Ordering with the server (telemetry-setup / Scenario: Ordering with the server, all rows); verify `go test -race -run TestShutdownOrdering` passes against a fake collector
+- [x] 8.4 Ordering with the server (telemetry-setup / Scenario: Ordering with the server, all rows); verify `go test -race -run TestShutdownOrdering` passes against a fake collector
   - RED: table over `Start` context cancelled, `Shutdown`, and `Shutdown` followed by the consumer's `setup.Shutdown`; fails if the in-flight duration is missing from the final export or the flush runs twice
   - GREEN: no change expected beyond 7.6 and core's hook mechanism; fix only what the test proves
   - REFACTOR: /simplify
-- [ ] 8.5 Export failures never fail requests (telemetry-setup / Scenario: Collector down during traffic, all rows); verify `go test -race -run TestExportFailure` passes
+- [x] 8.5 Export failures never fail requests (telemetry-setup / Scenario: Collector down during traffic, all rows); verify `go test -race -run TestExportFailure` passes
   - RED: table; fails because errors are not logged or flood the log
   - GREEN: global error handler under `SetGlobal`, per-kind rate limiting; an export error whose `Error()` panics is logged with a placeholder
   - REFACTOR: /simplify
-- [ ] 8.6 Add the `otel.export.failed` record to a golden-record test in `otelsetup` (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes in `otelsetup`
-- [ ] 8.7 Document `otelsetup` configuration (Prometheus in Kubernetes with `Addr: ":9464"`, OTLP endpoints, which `OTEL_*` variables apply to empty fields and that explicit fields win) in the module README; write `notes.md` entries for a stdout exporter and runtime metrics (Target: `unassigned`); verify README examples compile via `Example` tests
-- [ ] 8.8 Verify slice end to end with a fake collector and confirm exporter and error-handler branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): add OTLP export with bounded flushing`
+- [x] 8.6 Add the `otel.export.failed` record to a golden-record test in `otelsetup` (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes in `otelsetup`
+- [x] 8.7 Document `otelsetup` configuration (Prometheus in Kubernetes with `Addr: ":9464"`, OTLP endpoints, which `OTEL_*` variables apply to empty fields and that explicit fields win) in the module README; write `notes.md` entries for a stdout exporter and runtime metrics (Target: `unassigned`); verify README examples compile via `Example` tests
+- [x] 8.8 Verify slice end to end with a fake collector and confirm exporter and error-handler branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): add OTLP export with bounded flushing`
 
 ## Workflow follow-up
 

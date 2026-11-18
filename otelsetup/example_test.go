@@ -79,3 +79,35 @@ func Example() {
 	}
 	// Output: true true
 }
+
+// OTLP export of metrics and traces, with the setup's providers installed
+// as the OpenTelemetry globals. Not run: it needs a collector.
+func Example_otlp() {
+	ctx := context.Background()
+
+	setup, err := otelsetup.New(ctx,
+		otelsetup.WithOTLP(otelsetup.OTLPConfig{
+			// Empty: OTEL_EXPORTER_OTLP_ENDPOINT, else localhost:4318.
+			Endpoint: "http://otel-collector:4318",
+			Metrics:  true,
+			Traces:   true,
+		}),
+		otelsetup.WithService(srvr.ServiceConfig{Name: "registration-api"}),
+		otelsetup.WithSetGlobal(),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	obs, err := otelsrvr.New(otelsrvr.WithTracing()) // the globals, set above
+	if err != nil {
+		panic(err)
+	}
+
+	srv, err := srvr.New(srvr.WithObserver(obs), setup.ShutdownHook())
+	if err != nil {
+		panic(err)
+	}
+
+	_ = srv
+}

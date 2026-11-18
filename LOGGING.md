@@ -93,6 +93,14 @@ request that hit the fault, and the service keys. Observers run synchronously on
 (`Begin` before routing, the end function just before the access record): a slow observer delays the
 response, and is neither detected nor logged. Adding this event kept `srvr.log.schema` at 1.
 
+## Events of companion modules
+
+| Event | Level | Keys |
+|-------|-------|------|
+| `otel.export.failed` | WARN, written by `otelsetup` only when `SetGlobal` installed its OpenTelemetry error handler, at most once per minute per error kind; written to the logger given with `otelsetup.WithLogger` (default `slog.Default()`) | `error.type` (the error's Go type), `exception.message` (the error text) |
+
+It carries `srvr.log.schema` 1; adding it kept the version.
+
 ## Sample triage record
 
 ```json

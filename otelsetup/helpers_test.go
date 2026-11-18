@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr/otelsetup"
+	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // local is a Prometheus configuration on an ephemeral loopback port.
@@ -62,4 +66,18 @@ func scrape(t *testing.T, s *otelsetup.Setup) (int, string) {
 	t.Helper()
 
 	return fetch(t, "http://"+s.MetricsAddr()+"/metrics")
+}
+
+// resetGlobals resets the OpenTelemetry globals to no-op ones when the
+// test ends. The originals cannot be restored: the global getters return
+// delegates that refuse to be set as their own targets.
+func resetGlobals(t *testing.T) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
+		otel.SetTracerProvider(tracenoop.NewTracerProvider())
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {}))
+	})
 }

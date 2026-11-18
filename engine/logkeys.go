@@ -1,5 +1,9 @@
 package engine
 
+// LogSchemaVersion is the srvr.log.schema value of every record srvr and
+// its companion modules (such as otelsetup's otel.export.failed) write.
+const LogSchemaVersion = schemaVersion
+
 // The log schema: every event name and attribute key srvr writes. It is a
 // public, versioned commitment (see LOGGING.md): adding a key keeps
 // schemaVersion; renaming or removing one, or changing its meaning or value

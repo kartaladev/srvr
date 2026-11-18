@@ -3,6 +3,7 @@ package otelsetup
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -38,6 +39,8 @@ type Config struct {
 	Service srvr.ServiceConfig `json:"service" yaml:"service" env:"SERVICE_"`
 	// Prometheus serves metrics for scraping.
 	Prometheus PrometheusConfig `json:"prometheus" yaml:"prometheus" env:"PROMETHEUS_"`
+	// OTLP exports metrics and traces to a collector.
+	OTLP OTLPConfig `json:"otlp" yaml:"otlp" env:"OTLP_"`
 	// FlushTimeout bounds Shutdown. Default 5s; it must not be negative.
 	FlushTimeout time.Duration `json:"flush_timeout" yaml:"flush_timeout" env:"FLUSH_TIMEOUT"`
 	// SetGlobal installs the setup's providers and a W3C TraceContext plus
@@ -62,44 +65,100 @@ type PrometheusConfig struct {
 	Listen *bool `json:"listen" yaml:"listen" env:"LISTEN"`
 }
 
+// OTLP protocols.
+const (
+	ProtocolHTTPProtobuf = "http/protobuf"
+	ProtocolGRPC         = "grpc"
+)
+
+// OTLPConfig configures OTLP export. Fields left empty fall back to what
+// the OpenTelemetry SDK reads from the OTEL_EXPORTER_OTLP_* environment
+// (endpoint, headers, TLS, timeout), else its defaults; a set field always
+// wins.
+type OTLPConfig struct {
+	// Endpoint is where the collector listens: a base URL
+	// ("http://collector:4318" for plaintext, "https://..." for TLS; for
+	// http/protobuf the signal path /v1/metrics or /v1/traces is appended,
+	// as for OTEL_EXPORTER_OTLP_ENDPOINT) or a host:port, which uses TLS. Empty: OTEL_EXPORTER_OTLP_ENDPOINT, else
+	// the SDK default (localhost:4318 or :4317). An operator's environment
+	// can therefore redirect export when this is empty.
+	Endpoint string `json:"endpoint" yaml:"endpoint" env:"ENDPOINT"`
+	// Protocol is "http/protobuf" (default) or "grpc".
+	Protocol string `json:"protocol" yaml:"protocol" env:"PROTOCOL"`
+	// Headers are sent with every export, for example an API key.
+	Headers map[string]string `json:"headers" yaml:"headers" env:"HEADERS"`
+	// Metrics exports metrics through a periodic reader (interval
+	// OTEL_METRIC_EXPORT_INTERVAL, default 60s).
+	Metrics bool `json:"metrics" yaml:"metrics" env:"METRICS"`
+	// Traces exports spans through a batch span processor and builds a
+	// TracerProvider.
+	Traces bool `json:"traces" yaml:"traces" env:"TRACES"`
+}
+
+// enabled reports whether OTLP export is configured at all.
+func (o OTLPConfig) enabled() bool {
+	return o.Endpoint != "" || o.Protocol != "" || o.Metrics || o.Traces || len(o.Headers) > 0
+}
+
 // listen reports whether the setup runs its own listener.
 func (p PrometheusConfig) listen() bool { return p.Listen == nil || *p.Listen }
 
 // Option configures a [Setup]. Options apply in argument order, so a later
 // option wins over an earlier one.
-type Option func(*Config)
+type Option func(*settings)
+
+// settings is what the options build: the configuration and the logger.
+type settings struct {
+	Config
+
+	logger *slog.Logger
+}
 
 // WithConfig sets every field from c, a zero field meaning its default,
 // replacing what earlier options set.
 func WithConfig(c Config) Option {
-	return func(cfg *Config) { *cfg = c }
+	return func(s *settings) { s.Config = c }
 }
 
 // WithPrometheus enables Prometheus scraping with the defaults (see
 // [PrometheusConfig]).
 func WithPrometheus() Option {
-	return func(cfg *Config) { cfg.Prometheus.Enabled = true }
+	return func(s *settings) { s.Prometheus.Enabled = true }
 }
 
 // WithPrometheusConfig sets the Prometheus configuration.
 func WithPrometheusConfig(p PrometheusConfig) Option {
-	return func(cfg *Config) { cfg.Prometheus = p }
+	return func(s *settings) { s.Prometheus = p }
+}
+
+// WithOTLP sets the OTLP configuration.
+func WithOTLP(o OTLPConfig) Option {
+	return func(s *settings) { s.OTLP = o }
 }
 
 // WithService sets the service on the resource (see [Config.Service]).
-func WithService(s srvr.ServiceConfig) Option {
-	return func(cfg *Config) { cfg.Service = s }
+func WithService(svc srvr.ServiceConfig) Option {
+	return func(s *settings) { s.Service = svc }
 }
 
 // WithFlushTimeout sets [Config.FlushTimeout].
 func WithFlushTimeout(d time.Duration) Option {
-	return func(cfg *Config) { cfg.FlushTimeout = d }
+	return func(s *settings) { s.FlushTimeout = d }
+}
+
+// WithLogger sets the logger otel.export.failed records are written to
+// when [Config.SetGlobal] installs the error handler. Default
+// slog.Default(), which is srvr's logger with srvr.WithSetDefaultLogger;
+// pass the logger given to srvr.WithLogger otherwise. A nil logger keeps
+// the default.
+func WithLogger(l *slog.Logger) Option {
+	return func(s *settings) { s.logger = l }
 }
 
 // WithSetGlobal installs the setup's providers and propagator as the
 // OpenTelemetry globals (see [Config.SetGlobal]).
 func WithSetGlobal() Option {
-	return func(cfg *Config) { cfg.SetGlobal = true }
+	return func(s *settings) { s.SetGlobal = true }
 }
 
 // resolve fills the defaults.
@@ -116,6 +175,10 @@ func (c Config) resolve() Config {
 		c.Prometheus.Path = DefaultPrometheusPath
 	}
 
+	if c.OTLP.enabled() && c.OTLP.Protocol == "" {
+		c.OTLP.Protocol = ProtocolHTTPProtobuf
+	}
+
 	return c
 }
 
@@ -123,8 +186,18 @@ func (c Config) resolve() Config {
 func (c Config) validate() error {
 	var errs []error
 
-	if !c.Prometheus.Enabled {
-		errs = append(errs, fmt.Errorf("%w: no exporter is enabled (Prometheus.Enabled)", ErrConfig))
+	if !c.Prometheus.Enabled && !c.OTLP.enabled() {
+		errs = append(errs, fmt.Errorf("%w: no exporter is enabled (Prometheus.Enabled, OTLP)", ErrConfig))
+	}
+
+	if c.OTLP.enabled() {
+		if p := c.OTLP.Protocol; p != ProtocolHTTPProtobuf && p != ProtocolGRPC {
+			errs = append(errs, fmt.Errorf("%w: OTLP.Protocol %q must be %q or %q", ErrConfig, p, ProtocolHTTPProtobuf, ProtocolGRPC))
+		}
+
+		if !c.OTLP.Metrics && !c.OTLP.Traces {
+			errs = append(errs, fmt.Errorf("%w: OTLP enables neither Metrics nor Traces", ErrConfig))
+		}
 	}
 
 	if c.FlushTimeout < 0 {

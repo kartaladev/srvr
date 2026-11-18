@@ -12,13 +12,9 @@ import (
 
 // TestSetGlobal covers telemetry-setup "Globals", all rows, plus a failed
 // New that leaves the globals unchanged. It replaces the globals, so it is
-// not parallel and restores them.
+// not parallel and resets them.
 func TestSetGlobal(t *testing.T) {
-	savedMP, savedProp := otel.GetMeterProvider(), otel.GetTextMapPropagator()
-	t.Cleanup(func() {
-		otel.SetMeterProvider(savedMP)
-		otel.SetTextMapPropagator(savedProp)
-	})
+	resetGlobals(t)
 
 	injects := func() bool {
 		sc := trace.NewSpanContext(trace.SpanContextConfig{

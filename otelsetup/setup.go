@@ -1,9 +1,11 @@
 package otelsetup
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -44,14 +46,14 @@ type Setup struct {
 // built shuts them down, and nothing global is changed unless the whole
 // setup succeeded.
 func New(ctx context.Context, opts ...Option) (*Setup, error) {
-	var cfg Config
+	var st settings
 	for _, opt := range opts {
 		if opt != nil {
-			opt(&cfg)
+			opt(&st)
 		}
 	}
 
-	cfg = cfg.resolve()
+	cfg := st.resolve()
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -71,15 +73,17 @@ func New(ctx context.Context, opts ...Option) (*Setup, error) {
 
 	// Process-wide state changes only once everything else succeeded.
 	if cfg.SetGlobal {
-		s.setGlobal()
+		s.setGlobal(cmp.Or(st.logger, slog.Default()))
 	}
 
 	return s, nil
 }
 
-// setGlobal installs the providers and a W3C TraceContext plus Baggage
-// propagator as the OpenTelemetry globals.
-func (s *Setup) setGlobal() {
+// setGlobal installs the providers, a W3C TraceContext plus Baggage
+// propagator and an error handler logging export failures to logger as
+// the OpenTelemetry globals.
+func (s *Setup) setGlobal(logger *slog.Logger) {
+	otel.SetErrorHandler(newExportErrorHandler(logger))
 	otel.SetMeterProvider(s.meterProvider)
 
 	if s.tracerProvider != nil {
@@ -106,7 +110,26 @@ func (s *Setup) build(ctx context.Context, res *resource.Resource) error {
 		s.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{MaxRequestsInFlight: 4, Timeout: 20 * time.Second})
 	}
 
+	otlp := s.cfg.OTLP
+	if otlp.Metrics {
+		exp, err := metricExporter(ctx, otlp)
+		if err != nil {
+			return err
+		}
+
+		mopts = append(mopts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)))
+	}
+
 	s.meterProvider = sdkmetric.NewMeterProvider(mopts...)
+
+	if otlp.Traces {
+		exp, err := spanExporter(ctx, otlp)
+		if err != nil {
+			return err
+		}
+
+		s.tracerProvider = sdktrace.NewTracerProvider(sdktrace.WithResource(res), sdktrace.WithBatcher(exp))
+	}
 
 	if s.cfg.Prometheus.Enabled && s.cfg.Prometheus.listen() {
 		return s.listen(ctx)
