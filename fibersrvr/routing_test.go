@@ -3,6 +3,7 @@ package fibersrvr_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -446,5 +447,91 @@ func TestSubAppRouteListing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// asPanicError is an error whose As method panics.
+type asPanicError struct{}
+
+func (asPanicError) Error() string { return "faulty" }
+
+func (asPanicError) As(any) bool { panic("as") }
+
+// TestRouteCheck_FaultyErrors covers the fiber row of engine-support /
+// Scenario: Route check outcomes for an error whose chain cannot be
+// walked: Start fails with ErrRouteConfig within 1s and no panic escapes.
+func TestRouteCheck_FaultyErrors(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newServer(t, srvr.WithRouteCheck(func(context.Context, engine.Routes) error { return asPanicError{} }))
+	if err := srv.Register(&UserRoutes{declare: func(r fiber.Router) { r.Get("/x", ok) }}); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				done <- fmt.Errorf("Start panicked: %v", v)
+			}
+		}()
+		done <- srv.Start(context.Background())
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, srvr.ErrRouteConfig) {
+			t.Fatalf("Start = %v, want an error wrapping ErrRouteConfig without a panic", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return within 1s")
+	}
+}
+
+// TestShutdown_WhileStarting covers the fiber row of server-lifecycle /
+// Scenario: Shutdown during the configure phase: a Shutdown while a route
+// check waits on its context makes Start return ErrServerClosed, and
+// Shutdown returns nil within 1s.
+func TestShutdown_WhileStarting(t *testing.T) {
+	t.Parallel()
+
+	entered := make(chan struct{})
+	srv, _ := newServer(t, srvr.WithRouteCheck(func(ctx context.Context, _ engine.Routes) error {
+		close(entered)
+		<-ctx.Done()
+
+		return ctx.Err()
+	}))
+	if err := srv.Register(&UserRoutes{declare: func(r fiber.Router) { r.Get("/x", ok) }}); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- srv.Start(context.Background()) }()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the route check did not run")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, srvr.ErrServerClosed) {
+			t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return within 1s")
+	}
+
+	if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+		t.Fatalf("second Start = %v, want an error wrapping ErrServerClosed", err)
 	}
 }

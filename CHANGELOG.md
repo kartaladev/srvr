@@ -24,7 +24,19 @@ once tagged.
 - `error.fingerprint` hashes the method as `_OTHER` when it is outside the semantic-convention set,
   so client-chosen methods cannot create unbounded error groups. `otelsrvr` uses the same set.
 
+- **Breaking (behaviour):** `Shutdown` called while `Start` is still configuring, running route
+  checks or binding now cancels the context route checks receive, and `Start` returns an error
+  wrapping `ErrServerClosed` (it returned `nil` when the interruption landed during configure).
+
 ### Fixed
+
+- A route check returning an error whose chain cycles, or whose `Unwrap` or `As` panics, no longer
+  hangs or crashes `Start`; `Start`'s and `Shutdown`'s errors hide such a chain from `errors.Is`.
+- A route check or shutdown hook calling `runtime.Goexit` (for example `t.FailNow`) is reported as
+  failed instead of hanging `Start` or `Shutdown`.
+- The serve goroutine is named `serveOn` and joined after the stop, for at most 1s.
+- A `WithListener` listener whose `Close` does not unblock `Accept` no longer hangs `Shutdown` on
+  net/http and gin: the drain ends at its deadline.
 
 - The sampled flag of an incoming `traceparent` is read from the flags byte's hex value; flags `0a`,
   `0b`, `0e`, `0f`, `fe` and `ff` were read wrongly.

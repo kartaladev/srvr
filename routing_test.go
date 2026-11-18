@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
@@ -751,4 +752,37 @@ func TestRouteCheck(t *testing.T) {
 			t.Fatalf("second check got %v", got)
 		}
 	})
+}
+
+// TestRouteCheck_FaultyErrors covers the net/http rows of engine-support /
+// Scenario: Route check outcomes for errors whose chain cannot be walked:
+// Start fails with ErrRouteConfig within 1s and no panic escapes it.
+func TestRouteCheck_FaultyErrors(t *testing.T) {
+	t.Parallel()
+
+	var typedNil *MyError
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"Unwrap returns the error itself", selfError{}},
+		{"a typed-nil *MyError", typedNil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := newServer(t, srvr.WithRouteCheck(func(context.Context, engine.Routes) error { return tt.err }))
+			mustNil(t, srv.Register(okRoute("/x")))
+
+			done := make(chan error, 1)
+			go func() { done <- recoverPanic(func() error { return srv.Start(context.Background()) }) }()
+
+			if err := receiveWithin(t, done, time.Second, "Start did not return"); !errors.Is(err, srvr.ErrRouteConfig) || errors.Is(err, errPanicked) {
+				t.Fatalf("Start = %s, want an error wrapping ErrRouteConfig without a panic", safeText(err))
+			}
+		})
+	}
 }

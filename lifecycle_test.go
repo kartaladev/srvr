@@ -3,6 +3,8 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // inFlight sends GET url in the background and returns a channel with the
@@ -163,9 +166,11 @@ func TestStart_ServeFails(t *testing.T) {
 	}
 }
 
-// TestShutdown_WhileStarting: a Shutdown during the configure phase stops
-// the server before it serves; nothing was served, so only AfterDrain runs.
-func TestShutdown_WhileStarting(t *testing.T) {
+// TestShutdown_WhileConfiguring: a Shutdown while a configurer runs (it
+// receives no context) stops the server before it serves: Start returns
+// ErrServerClosed (server-lifecycle "Shutdown interrupts a starting
+// server"); nothing was served, so only AfterDrain runs.
+func TestShutdown_WhileConfiguring(t *testing.T) {
 	t.Parallel()
 
 	var c hookCounts
@@ -194,7 +199,9 @@ func TestShutdown_WhileStarting(t *testing.T) {
 
 	// A second Shutdown waits for the stop too and returns nil.
 	mustNil(t, srv.Shutdown(context.Background()))
-	mustNil(t, <-done)
+	if err := <-done; !errors.Is(err, srvr.ErrServerClosed) {
+		t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
+	}
 	mustNil(t, <-shut)
 
 	select {
@@ -661,4 +668,183 @@ func freeAddr(t *testing.T) string {
 	defer ln.Close()
 
 	return ln.Addr().String()
+}
+
+// TestShutdown_WhileStarting covers the net/http rows of server-lifecycle /
+// Scenario: Shutdown during the configure phase, both tables.
+func TestShutdown_WhileStarting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// check is the route check; it signals entered once running.
+		check func(ctx context.Context, entered chan<- struct{}) error
+		// shutdowns is the number of concurrent Shutdown calls made while
+		// the check runs; 0 calls Shutdown once before Start.
+		shutdowns     int
+		wantShutdown  error
+		startAtLeast  time.Duration // Start returns no earlier
+		shutdownLimit time.Duration // each Shutdown returns within
+	}{
+		{
+			name: "route check waiting on its context",
+			check: func(ctx context.Context, entered chan<- struct{}) error {
+				close(entered)
+				<-ctx.Done()
+
+				return ctx.Err()
+			},
+			shutdowns: 1, shutdownLimit: time.Second,
+		},
+		{
+			name: "route check ignoring its context for 2s",
+			check: func(_ context.Context, entered chan<- struct{}) error {
+				close(entered)
+				time.Sleep(2 * time.Second)
+
+				return nil
+			},
+			shutdowns: 1, wantShutdown: context.DeadlineExceeded, startAtLeast: 2 * time.Second, shutdownLimit: 1500 * time.Millisecond,
+		},
+		// misuse around the interruption
+		{name: "Shutdown before Start", shutdowns: 0, shutdownLimit: time.Second},
+		{
+			name: "route check, two concurrent Shutdowns",
+			check: func(ctx context.Context, entered chan<- struct{}) error {
+				close(entered)
+				<-ctx.Done()
+
+				return ctx.Err()
+			},
+			shutdowns: 2, shutdownLimit: time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var c hookCounts
+			entered := make(chan struct{})
+			opts := c.options()
+			if tt.check != nil {
+				opts = append(opts, srvr.WithRouteCheck(func(ctx context.Context, _ engine.Routes) error { return tt.check(ctx, entered) }))
+			}
+			srv := newServer(t, opts...)
+			mustNil(t, srv.Register(okRoute("/x")))
+
+			// shutdown calls Shutdown with a 1s context and reports whether it
+			// returned within the limit; it never touches t, as it may run on
+			// a goroutine of its own.
+			shutdown := func() error {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+
+				begin := time.Now()
+				err := srv.Shutdown(ctx)
+				if d := time.Since(begin); d > tt.shutdownLimit {
+					return fmt.Errorf("shutdown took %s, want at most %s: %w", d, tt.shutdownLimit, err)
+				}
+
+				return err
+			}
+
+			begin := time.Now()
+			done := make(chan error, 1)
+			if tt.shutdowns == 0 {
+				mustNil(t, shutdown())
+				done <- srv.Start(context.Background())
+			} else {
+				go func() { done <- recoverPanic(func() error { return srv.Start(context.Background()) }) }()
+				receive(t, entered, "the route check did not run")
+
+				results := make(chan error, tt.shutdowns)
+				for range tt.shutdowns {
+					go func() { results <- shutdown() }()
+				}
+				for range tt.shutdowns {
+					if err := receive(t, results, "Shutdown did not return"); !errors.Is(err, tt.wantShutdown) || (tt.wantShutdown == nil && err != nil) {
+						t.Fatalf("Shutdown = %v, want %v", err, tt.wantShutdown)
+					}
+				}
+			}
+
+			err := receive(t, done, "Start did not return")
+			if !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
+			}
+			if d := time.Since(begin); d < tt.startAtLeast {
+				t.Fatalf("Start returned after %s, want at least %s", d, tt.startAtLeast)
+			}
+			if srv.Addr() != "" {
+				t.Fatalf("Addr = %q, want no listener bound", srv.Addr())
+			}
+			if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("second Start = %v, want an error wrapping ErrServerClosed", err)
+			}
+			if b, a := c.before.Load(), c.after.Load(); b != 0 || a != 1 {
+				t.Fatalf("hooks ran before=%d after=%d, want 0 and 1", b, a)
+			}
+		})
+	}
+}
+
+// TestShutdown_WhileStarting_Branches covers the hot-path branches of a
+// starting server's interruption beyond the spec rows: Shutdown between
+// binding and serving, and a route check left unrun once interrupted.
+func TestShutdown_WhileStarting_Branches(t *testing.T) {
+	t.Parallel()
+
+	t.Run("between binding and serving", func(t *testing.T) {
+		t.Parallel()
+
+		// The listener's Addr, which Start reads after binding, calls
+		// Shutdown and returns once the server is stopping.
+		var srv *srvr.Server
+		shut := make(chan error, 1)
+		ln := listen(t)
+		withAddr := addrListener{Listener: ln, addr: func() net.Addr {
+			go func() { shut <- srv.Shutdown(context.Background()) }()
+			eventually(t, func() bool { return errors.Is(srv.Register(okRoute("/y")), srvr.ErrServerClosed) }, "Shutdown did not stop the server")
+
+			return ln.Addr()
+		}}
+		srv, err := srvr.New(srvr.WithListener(withAddr), srvr.WithLogOutput(io.Discard))
+		mustNil(t, err)
+		mustNil(t, srv.Register(okRoute("/x")))
+
+		if err := srv.Start(context.Background()); !errors.Is(err, srvr.ErrServerClosed) {
+			t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
+		}
+		mustNil(t, receive(t, shut, "Shutdown did not return"))
+	})
+
+	t.Run("a later route check does not run", func(t *testing.T) {
+		t.Parallel()
+
+		entered := make(chan struct{})
+		var second atomic.Bool
+		srv := newServer(t,
+			srvr.WithRouteCheck(func(ctx context.Context, _ engine.Routes) error {
+				close(entered)
+				<-ctx.Done()
+
+				return nil // ignores the interruption
+			}),
+			srvr.WithRouteCheck(func(context.Context, engine.Routes) error { second.Store(true); return nil }),
+		)
+		mustNil(t, srv.Register(okRoute("/x")))
+
+		done := make(chan error, 1)
+		go func() { done <- srv.Start(context.Background()) }()
+		receive(t, entered, "the first route check did not run")
+		mustNil(t, srv.Shutdown(context.Background()))
+
+		if err := receive(t, done, "Start did not return"); !errors.Is(err, srvr.ErrServerClosed) {
+			t.Fatalf("Start = %v, want an error wrapping ErrServerClosed", err)
+		}
+		if second.Load() {
+			t.Fatal("the second route check ran after Shutdown")
+		}
+	})
 }

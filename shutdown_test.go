@@ -3,8 +3,10 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // TestShutdown_Drain covers server-lifecycle / Scenario: Drain within and beyond the deadline.
@@ -769,4 +772,93 @@ func TestShutdown_HostileContext(t *testing.T) {
 			assertErr(t, shutdownBounded(t, srv), nil, "")
 		})
 	}
+}
+
+// TestGoexit covers server-lifecycle / Scenario: Goexit in consumer code.
+func TestGoexit(t *testing.T) {
+	t.Parallel()
+
+	goexit := func(context.Context) error { runtime.Goexit(); return nil }
+
+	tests := []struct {
+		name string
+		opts []srvr.Option
+		// run starts or stops the server and returns the call's result.
+		run      func(srv *srvr.Server) error
+		want     error
+		failures int // server.shutdown_hook.failed records
+	}{
+		{
+			name: "route check",
+			opts: []srvr.Option{srvr.WithRouteCheck(func(ctx context.Context, _ engine.Routes) error { return goexit(ctx) })},
+			run:  func(srv *srvr.Server) error { return srv.Start(context.Background()) },
+			want: srvr.ErrRouteConfig,
+		},
+		{
+			name: "BeforeDrain hook",
+			opts: []srvr.Option{srvr.WithShutdownHook(srvr.BeforeDrain, goexit)},
+			run:  startThenShutdown,
+			want: srvr.ErrShutdownHook, failures: 1,
+		},
+		{
+			name: "AfterDrain hook, unbounded budget",
+			opts: []srvr.Option{srvr.WithShutdownHook(srvr.AfterDrain, goexit), srvr.WithShutdownHookTimeout(-1)},
+			run:  startThenShutdown,
+			want: srvr.ErrShutdownHook, failures: 1,
+		},
+		{
+			name: "BeforeDrain hook returning nil",
+			opts: []srvr.Option{srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error { return nil })},
+			run:  startThenShutdown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			out := &logBuffer{}
+			srv := newServer(t, append(tt.opts, srvr.WithLogOutput(out))...)
+			mustNil(t, srv.Register(okRoute("/x")))
+
+			done := make(chan error, 1)
+			go func() { done <- recoverPanic(func() error { return tt.run(srv) }) }()
+
+			err := receiveWithin(t, done, time.Second, "the call did not return")
+
+			if (tt.want == nil && err != nil) || !errors.Is(err, tt.want) {
+				t.Fatalf("result = %v, want %v", err, tt.want)
+			}
+			if n := len(out.find(t, "server.shutdown_hook.failed")); n != tt.failures {
+				t.Fatalf("%d server.shutdown_hook.failed records, want %d:\n%s", n, tt.failures, out)
+			}
+		})
+	}
+}
+
+// startThenShutdown starts srv, waits until it is ready, and returns the
+// result of Shutdown, or an error when Start fails or does not end. It
+// never touches a *testing.T: it runs on a goroutine of its own.
+func startThenShutdown(srv *srvr.Server) error {
+	started := make(chan error, 1)
+	go func() { started <- srv.Start(context.Background()) }()
+
+	select {
+	case <-srv.Ready():
+	case err := <-started:
+		return fmt.Errorf("Start returned before readiness: %w", err)
+	}
+
+	err := srv.Shutdown(context.Background())
+
+	select {
+	case startErr := <-started:
+		if startErr != nil && err == nil {
+			return fmt.Errorf("start: %w", startErr)
+		}
+	case <-time.After(waitLimit):
+		return errors.New("Start did not return after Shutdown")
+	}
+
+	return err
 }

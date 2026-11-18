@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 )
@@ -52,8 +51,21 @@ type RouteCheck func(ctx context.Context, routes Routes) error
 // as an error wrapping ErrRouteConfig, or ctx's error when ctx ends first,
 // abandoning a check that ignores it.
 func (c *Core) CheckRoutes(ctx context.Context, routes Routes) error {
+	return c.checkRoutes(ctx, ctx, routes)
+}
+
+// checkRoutes is CheckRoutes with each check receiving checkCtx while the
+// wait for it ends only with waitCtx: Start's interruption by Shutdown
+// cancels checkCtx, and a check that ignores it keeps Start waiting until
+// it returns or Start's own context ends. No further check runs once
+// checkCtx is done.
+func (c *Core) checkRoutes(waitCtx, checkCtx context.Context, routes Routes) error {
 	for i, check := range c.settings.RouteChecks {
-		if err := runCheck(ctx, i, check, slices.Clone(routes)); err != nil {
+		if err := checkCtx.Err(); err != nil {
+			return err
+		}
+
+		if err := runCheck(waitCtx, checkCtx, i, check, slices.Clone(routes)); err != nil {
 			return err
 		}
 	}
@@ -61,19 +73,23 @@ func (c *Core) CheckRoutes(ctx context.Context, routes Routes) error {
 	return nil
 }
 
-// runCheck runs one check with runGuarded.
-func runCheck(ctx context.Context, i int, check RouteCheck, routes Routes) error {
-	err, abandoned := runGuarded(ctx, func(ctx context.Context) error { return check(ctx, routes) })
+// runCheck runs check i under runGuarded with checkCtx, waiting for it
+// until waitCtx ends.
+func runCheck(waitCtx, checkCtx context.Context, i int, check RouteCheck, routes Routes) error {
+	err, abandoned := runGuarded(waitCtx, func(context.Context) error { return check(checkCtx, routes) })
 
-	var pe *panicError
+	// runGuarded returns its own *panicError unwrapped, so a type
+	// assertion finds it without walking the check's error chain, which
+	// may cycle or panic in Unwrap or As.
+	pe, panicked := err.(*panicError) //nolint:errorlint // runGuarded's own error, never wrapped: a chain walk is what must be avoided.
 
 	switch {
 	case abandoned:
-		return ctx.Err()
-	case errors.As(err, &pe):
+		return waitCtx.Err()
+	case panicked:
 		return RouteError("route check %d panicked: %s", i, pe.value)
 	case err != nil:
-		return fmt.Errorf("%w: route check %d: %w", ErrRouteConfig, i, &guardedError{err})
+		return fmt.Errorf("%w: route check %d: %w", ErrRouteConfig, i, guard(err))
 	default:
 		return nil
 	}
