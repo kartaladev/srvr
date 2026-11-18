@@ -38,9 +38,11 @@ Each traced request SHALL produce one span of kind `SERVER` named `<method> <rou
 | fiber | `GET /users/42` | writes `200` | `GET /users/:id` | `Unset` |
 | fiber | `GET /users/42` | returns `errors.New("boom")` | `GET /users/:id` | `Error` |
 | fiber | `GET /nope` | (not called) | `GET` | `Unset` |
+| gin | `GET /users/42` | panics with `"boom"` | `GET /users/:id` | `Error` with an `exception` event whose `exception.type` is `string` |
+| fiber | `GET /users/42` | panics with `"boom"` | `GET /users/:id` | `Error` with an `exception` event whose `exception.type` is `string` |
 | net/http | `GET /users/42` | returns `prblm.ErrNotFound` | `GET /users/{id}` | `Unset` |
 | net/http | `GET /users/42` | returns `errors.New("boom")` | `GET /users/{id}` | `Error` |
-| net/http | `GET /users/42` | panics with `"boom"` | `GET /users/{id}` | `Error` with an `exception` event |
+| net/http | `GET /users/42` | panics with `"boom"` | `GET /users/{id}` | `Error` with an `exception` event whose `exception.type` is `string` |
 | net/http | `GET /users/42` | panics with `http.ErrAbortHandler` | `GET /users/{id}` | `Error` with an `exception` event and no `http.response.status_code` |
 | net/http | `GET /nope` | (not called) | `GET` | `Unset` |
 | net/http | `XYZZY /users/42` | (not called) | `HTTP` | `Unset` |

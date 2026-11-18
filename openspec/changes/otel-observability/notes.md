@@ -2,6 +2,20 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
+### Verification 2026-11-18 folded into the plan (task group 9)
+- **Status:** open: planned as task group 9
+- **Target:** otel-observability
+- **Context:** `/opsx:verify` after task group 8 found: C1 an unparsable OTLP `Endpoint` is silently replaced by the SDK default (`otlp.go` passes it to `WithEndpointURL`, which ignores a `url.Parse` error); W1 a `Prometheus.Path` that `ServeMux` rejects panics in `mux.Handle` after the listener is bound, leaking the port; W2 design D11 contradicted the code and spec (a later `Shutdown` returns `nil`, panicking SDK `Shutdown`/`ForceFlush` are not guarded, `sync.Once` makes concurrent callers wait); W3 the export error handler calls the consumer's logger without `recover`, from the SDK's export goroutines; W4 a core test-harness race (shared `http.DefaultClient`, every `startServer` cleanup calls `CloseIdleConnections`), seen as `TestPanicRecovery/string ... http: CloseIdleConnections called`; S1 `otelsrvr`'s `go.mod` requires the SDK (tests only); S2 missing observer and span parity rows (aborts, a streamed fiber body with a late error, panics); S3 spec rows used `collector:4318` where the examples use `http://collector:4318`; S4 the metrics listener limits were undocumented; S5 the `https` branch of `httpRequestInfo` was untested. Owner decisions 2026-11-18: replace `PrometheusConfig.Listen *bool` with `DisableListener bool` (zero value listens; no shim before v0.1.0); S1 is documented now and its fix is a carry-over (below); the unmatched-404 parity defect stays an unassigned carry-over. Refreshed: specs telemetry-setup, request-observer and otel-tracing, design (slice 8 and the decisions it names), tasks (group 9; task 7.6's GREEN text corrected). `openspec validate otel-observability --strict` passes.
+- **Evidence:** scratch reproductions `otelsetup_config_repro_test.go.txt` (C1, W1), `otelsetup_logger_repro_test.go.txt` (W3), `flake_repro_test.go.txt` (W4); each becomes the RED step of its task in group 9.
+- **Suggested action:** apply task group 9.
+
+### otelsrvr's go.mod requires the OpenTelemetry SDK for its tests
+- **Status:** open
+- **Target:** unassigned
+- **Context:** `otelsrvr`'s non-test packages import only the OpenTelemetry API (`TestNoSDKDependency` checks `go list -deps .`), but its tests record through the SDK (`sdk/metric` `ManualReader`, `sdk/trace/tracetest`), so its `go.mod` requires `go.opentelemetry.io/otel/sdk` and `go.opentelemetry.io/otel/sdk/metric` v1.47.0. Under module graph pruning those requirements are part of every consumer's module graph, so a consumer of `otelsrvr` gains SDK v1.47.0 as a minimum version (an upgrade of any SDK they already use, and SDK entries in their `go.sum`), although no SDK package is compiled into their binary. No test looks at `otelsrvr`'s `go.mod` (design Context states what `TestNoSDKDependency` and `TestCoreHasNoOTel` enforce). Owner decision 2026-11-18: document now (design Context and Risks, `otelsrvr` godoc), fix later.
+- **Evidence:** `otelsrvr/go.mod` `require go.opentelemetry.io/otel/sdk v1.47.0` and `go.opentelemetry.io/otel/sdk/metric v1.47.0`; `cd otelsrvr && GOWORK=off go mod graph | grep 'otelsrvr go.opentelemetry.io/otel/sdk'` lists both edges.
+- **Suggested action:** move the SDK-based tests into a separate test module (for example `otelsrvr/internal/sdktest` with its own `go.mod`, or the existing `internal/paritytest`), drop the SDK from `otelsrvr/go.mod`, and add a guard that `otelsrvr`'s `go.mod` requires no `go.opentelemetry.io/otel/sdk` module.
+
 ### Consolidation 2026-11-18 (task group 1)
 - **Status:** closed: consolidation done; one open decision recorded below ("A blocking end function cannot let the client have its response first")
 - **Target:** otel-observability

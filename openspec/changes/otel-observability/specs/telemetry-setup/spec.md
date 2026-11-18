@@ -18,18 +18,28 @@ Defines the opt-in `otelsetup` module that wires the OpenTelemetry SDK and expor
 | config | result |
 |--------|--------|
 | `Prometheus: {Enabled: true}` | a meter provider with a Prometheus reader and no tracer provider |
-| `OTLP: {Endpoint: "collector:4318", Protocol: "http/protobuf", Metrics: true, Traces: true}` | meter and tracer providers with OTLP exporters |
+| `OTLP: {Endpoint: "http://collector:4318", Protocol: "http/protobuf", Metrics: true, Traces: true}` | meter and tracer providers with OTLP exporters |
 | `Service: {Name: "registration-api", Version: "1.4.2"}`, `Prometheus: {Enabled: true}` | a resource with `service.name` `registration-api` and `service.version` `1.4.2` |
 | `OTLP: {Endpoint: "", Protocol: "http/protobuf", Traces: true}` | a tracer provider whose exporter endpoint comes from the OpenTelemetry SDK (environment, else the SDK default) |
+| `OTLP: {Endpoint: "collector:4318", Metrics: true}` | a meter provider with an OTLP exporter (a `host:port` without a scheme uses TLS) |
 
 ##### Examples: rejected
 | config | result |
 |--------|--------|
 | (empty) | an error wrapping `otelsetup.ErrConfig` stating no exporter is enabled |
-| `OTLP: {Endpoint: "collector:4318", Protocol: "thrift"}` | an error wrapping `otelsetup.ErrConfig` naming `Protocol` |
-| `OTLP: {Endpoint: "collector:4318", Protocol: "http/protobuf"}` | an error wrapping `otelsetup.ErrConfig` stating neither `Metrics` nor `Traces` is enabled |
+| `OTLP: {Endpoint: "http://collector:4318", Protocol: "thrift"}` | an error wrapping `otelsetup.ErrConfig` naming `Protocol` |
+| `OTLP: {Endpoint: "http://collector:4318", Protocol: "http/protobuf"}` | an error wrapping `otelsetup.ErrConfig` stating neither `Metrics` nor `Traces` is enabled |
 | `Prometheus: {Enabled: true, Addr: "nope"}` | an error wrapping `otelsetup.ErrConfig` naming `Addr` |
 | `FlushTimeout: -1s` | an error wrapping `otelsetup.ErrConfig` naming `FlushTimeout` |
+| `OTLP: {Endpoint: "http://collector:4318 ", Metrics: true}` (trailing space) | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: "http://[::1", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: "ftp://collector:4318", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: "http://", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: "collector", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: ":4318", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `OTLP: {Endpoint: "collector:otlp", Metrics: true}` | an error wrapping `otelsetup.ErrConfig` naming `OTLP.Endpoint` |
+| `Prometheus: {Enabled: true, Path: "/metrics/{"}` | an error wrapping `otelsetup.ErrConfig` naming `Prometheus.Path`, without panicking and with no listener left bound |
+| `Prometheus: {Enabled: true, Path: "/metrics x"}` | an error wrapping `otelsetup.ErrConfig` naming `Prometheus.Path`, without panicking and with no listener left bound |
 
 ### Requirement: Setup is configurable by options, by config struct and by the SDK environment
 `otelsetup.WithConfig(Config)` SHALL set every field (zero meaning default) and individual options one field each, applied in argument order. srvr SHALL NOT read environment variables itself; fields left empty SHALL fall back to what the OpenTelemetry SDK reads from its standard `OTEL_*` variables, and an explicit value SHALL always beat the environment.
@@ -42,7 +52,7 @@ Defines the opt-in `otelsetup` module that wires the OpenTelemetry SDK and expor
 ##### Examples:
 | options | env | setting | effective |
 |---------|-----|---------|-----------|
-| `WithConfig(Config{OTLP: {Endpoint: "collector:4318", Metrics: true}})` | `OTEL_EXPORTER_OTLP_ENDPOINT=http://other:4318` | OTLP endpoint | `collector:4318` |
+| `WithConfig(Config{OTLP: {Endpoint: "http://collector:4318", Metrics: true}})` | `OTEL_EXPORTER_OTLP_ENDPOINT=http://other:4318` | OTLP endpoint | `http://collector:4318` |
 | `WithConfig(Config{OTLP: {Protocol: "http/protobuf", Metrics: true}})` | `OTEL_EXPORTER_OTLP_ENDPOINT=http://other:4318` | OTLP endpoint | `http://other:4318` |
 | `WithConfig(Config{Service: {Name: "registration-api"}, Prometheus: {Enabled: true}})` | `OTEL_SERVICE_NAME=from-env` | `service.name` | `registration-api` |
 | `WithPrometheus()` | `OTEL_SERVICE_NAME=from-env` | `service.name` | `from-env` |
@@ -50,7 +60,7 @@ Defines the opt-in `otelsetup` module that wires the OpenTelemetry SDK and expor
 | `WithFlushTimeout(time.Second)`, `WithConfig(Config{Prometheus: {Enabled: true}})` | (none) | flush timeout | `5s` |
 
 ### Requirement: Prometheus metrics are served on a separate private listener
-With Prometheus enabled, setup SHALL serve the exposition format on its own listener (default `127.0.0.1:9464`, path `/metrics`) from a dedicated registry, never the global default registry, and never on the application's public listener unless the consumer mounts the handler explicitly.
+With Prometheus enabled, setup SHALL serve the exposition format on its own listener (default `127.0.0.1:9464`, path `/metrics`) from a dedicated registry, never the global default registry, and never on the application's public listener unless the consumer mounts the handler explicitly. The listener runs unless `DisableListener` is true (zero value: listen).
 
 #### Scenario: Scraping
 - **Given** Prometheus enabled with `<config>` and a srvr server using `otelsrvr.WithMeterProvider(setup.MeterProvider())`
@@ -64,7 +74,7 @@ With Prometheus enabled, setup SHALL serve the exposition format on its own list
 | `Addr: "127.0.0.1:0"` | `/metrics` on `setup.MetricsAddr()` | `200` | `http_server_request_duration_seconds_bucket` |
 | `Path: "/internal/metrics"` | `/internal/metrics` | `200` | `http_server_request_duration_seconds_count` |
 | (defaults) | the application listener `/metrics` | `404` | a problem body |
-| `Listen: false` and the consumer mounts `setup.MetricsHandler()` on a group | the mounted path | `200` | `http_server_request_duration_seconds_count` |
+| `DisableListener: true` and the consumer mounts `setup.MetricsHandler()` on a group | the mounted path | `200` | `http_server_request_duration_seconds_count` |
 
 #### Scenario: Registry isolation
 - **Given** `<setup>`
@@ -151,7 +161,7 @@ Setup SHALL NOT change global OpenTelemetry state by default; with `SetGlobal: t
 | `Start` after `Shutdown` returned `srvr.ErrServerClosed` | nothing else | shut down by the earlier `Shutdown` | once, from the earlier `Shutdown` |
 
 ### Requirement: Export failures never fail requests
-A failing or slow exporter SHALL NOT block or fail request handling. Export errors SHALL go to the global OpenTelemetry error handler; with `SetGlobal: true` setup SHALL install a handler logging them as `otel.export.failed` at `WARN`, at most once per minute per error kind.
+A failing or slow exporter SHALL NOT block or fail request handling. Export errors SHALL go to the global OpenTelemetry error handler; with `SetGlobal: true` setup SHALL install a handler logging them as `otel.export.failed` at `WARN`, at most once per minute per error kind. A logger whose handler panics SHALL NOT crash the process or stop later export errors from being logged: the panic is recovered and that record is dropped.
 
 #### Scenario: Collector down during traffic
 - **Given** setup with OTLP to an unreachable collector, `<config>`, and 100 requests handled
@@ -164,3 +174,14 @@ A failing or slow exporter SHALL NOT block or fail request handling. Export erro
 |--------|--------|---------|
 | `SetGlobal: true` | `200` | `1` |
 | `SetGlobal: false` | `200` | `0` (errors reach the OpenTelemetry default handler) |
+
+#### Scenario: Faulty logger
+- **Given** setup with `SetGlobal: true` and `WithLogger` whose handler `<fault>`
+- **When** `otel.Handle` is called with an export error and then with an export error of another kind
+- **Then** the outcome is `<outcome>`
+
+##### Examples:
+| fault | outcome |
+|-------|---------|
+| panics with `"log handler boom"` | no panic escapes `otel.Handle` and the second error reaches the handler too |
+| calls `otel.Handle` again from inside `Handle` | no deadlock: the nested error is handled and both calls return |

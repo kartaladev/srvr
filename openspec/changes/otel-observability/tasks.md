@@ -141,7 +141,7 @@
   - REFACTOR: /simplify
 - [x] 7.6 Shutdown, misuse and servers that never served (telemetry-setup / Scenario: Flush outcomes, Prometheus row; Scenario: Lifecycle misuse; Scenario: Server that never served, all rows); verify `go test -race -run 'TestShutdown|TestShutdownHook_NeverServed'` passes
   - RED: tables; fails because shutdown is not idempotent, the hook does not run when the server never started or `Start` failed after leaving its initial state, or it runs for `Start(nil)`, `ErrServerStarted` or `ErrServerClosed`
-  - GREEN: idempotent bounded `Shutdown` (no mutex held across provider calls; a panicking or blocking provider `Shutdown` is bounded and reported, errors joined); `ShutdownHook()` returning `srvr.WithShutdownHook(srvr.AfterDrain, setup.Shutdown)` (core's mechanism; no hook mechanism is added here)
+  - GREEN: idempotent bounded `Shutdown` (no mutex of otelsetup's own held across provider calls; a blocking provider `Shutdown` is bounded, errors joined; a panicking one is not guarded - superseded by design D11 as corrected in task group 9); `ShutdownHook()` returning `srvr.WithShutdownHook(srvr.AfterDrain, setup.Shutdown)` (core's mechanism; no hook mechanism is added here)
   - REFACTOR: /simplify
 - [x] 7.7 Godoc and an `Example` serving Prometheus metrics for a srvr server with `setup.ShutdownHook()`, documenting which `OTEL_*` variables the SDK reads when fields are empty; verify `go test -run Example` passes
 - [x] 7.8 Verify slice end to end (srvr server + otelsrvr + otelsetup -> scrape shows the route) and confirm construction rollback and shutdown branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): wire SDK and Prometheus scraping`
@@ -171,6 +171,36 @@
 - [x] 8.6 Add the `otel.export.failed` record to a golden-record test in `otelsetup` (additive key, `srvr.log.schema` unchanged); verify `go test -run TestLogSchemaGolden` passes in `otelsetup`
 - [x] 8.7 Document `otelsetup` configuration (Prometheus in Kubernetes with `Addr: ":9464"`, OTLP endpoints, which `OTEL_*` variables apply to empty fields and that explicit fields win) in the module README; write `notes.md` entries for a stdout exporter and runtime metrics (Target: `unassigned`); verify README examples compile via `Example` tests
 - [x] 8.8 Verify slice end to end with a fake collector and confirm exporter and error-handler branches are covered in `go tool cover -func`; in `otelsetup`, run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`; run gopls diagnostics on changed files, run /simplify on the slice and commit `feat(otelsetup): add OTLP export with bounded flushing`
+
+## 9. Slice: verification fixes
+
+- [ ] 9.1 OTLP endpoint validation (telemetry-setup / Scenario: Provider construction, the `OTLP.Endpoint` rejected rows; the `http://collector:4318` rows); verify `cd otelsetup && go test -race -run 'TestNew_OTLP|TestNew$'` passes
+  - RED: the scratch reproduction `TestScratchInvalidEndpoint` as the spec's rejected `OTLP.Endpoint` rows; fails because `New` returns `nil` for them (the SDK's `WithEndpointURL` ignores unparsable URLs); existing rows use `http://collector:4318`
+  - GREEN: validation per design D9, through one endpoint-parsing function shared with `exporterOptions`
+  - REFACTOR: /simplify
+- [ ] 9.2 Prometheus path validation (telemetry-setup / Scenario: Provider construction, the `Prometheus.Path` rejected rows); verify `go test -race -run TestNew` passes
+  - RED: the scratch reproductions `TestScratchInvalidPath` and `TestScratchPanicLeaksListener` as rows: `/metrics/{` and `/metrics x` must fail `New` with `ErrConfig` naming `Prometheus.Path`, without panicking, and the address given in `Addr` must be free afterwards; fails with a panic from `mux.Handle` after the listener was bound, and the port stays bound
+  - GREEN: validation registers the path on a throwaway `http.ServeMux` under `recover`, before anything is built
+  - REFACTOR: /simplify
+- [ ] 9.3 Faulty logger (telemetry-setup / Scenario: Faulty logger, all rows); verify `go test -race -run 'TestExportErrorHandler|TestFaultyLogger'` passes
+  - RED: the scratch reproduction `TestScratchPanickingLoggerContained` as the panic row (fails: `panic escaped otel.Handle: log handler boom`), plus the re-entrant row (a handler that calls `otel.Handle` again; must not deadlock)
+  - GREEN: `recover` around the `LogAttrs` call; the rate-limit lock stays released while the logger runs
+  - REFACTOR: /simplify
+- [ ] 9.4 Replace `PrometheusConfig.Listen *bool` with `DisableListener bool` (`json:"disable_listener" yaml:"disable_listener" env:"DISABLE_LISTENER"`; zero value listens) (telemetry-setup / Scenario: Scraping, the `DisableListener` row); verify `go test -race -run TestScrape` passes
+  - RED: the Scraping row with `DisableListener: true`; fails to compile until the field exists (a public API shape change before v0.1.0, no compatibility shim), then must serve no listener and a working `MetricsHandler()`
+  - GREEN: the field, godoc, README and examples
+  - REFACTOR: /simplify
+- [ ] 9.5 Documentation: the metrics listener limits (design Defaults) in the `PrometheusConfig` and `MetricsHandler` godoc and the README; in the `otelsrvr` godoc, that its `go.mod` requires the SDK only for its tests, its non-test packages import only the API, and what `TestNoSDKDependency` and core `TestCoreHasNoOTel` enforce; verify `go vet` and `go test -run Example` pass in both modules
+- [ ] 9.6 Test harness: every started test server gets its own `http.Client` and `http.Transport`, and its cleanup closes only that client's idle connections, in core `helpers_test.go` and the equivalent helpers of `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup` and `internal/paritytest`; verify the reproduction passes and the full core suite passes 10 times in a row (`GOWORK=off go test -race -count=1 ./...`, foreground)
+  - REFACTOR first (green): route the helpers' client and cleanup through two seams that still use `http.DefaultClient`
+  - RED: the scratch reproduction `flake_repro_test.go.txt` adapted to the seams (requests to a started server through its client while another server's cleanup runs repeatedly); fails with `http: CloseIdleConnections called`, as `TestPanicRecovery/string` did
+  - GREEN: a client per started server, looked up by host by the request helpers; direct `http.DefaultClient.Do` calls against started servers move to that client too; other modules follow the same pattern
+- [ ] 9.7 Observer and span parity (request-observer / Scenario: Aborts and late failures per engine, all rows; otel-tracing / Scenario: Span shape per engine, the panic rows); verify `cd internal/paritytest && go test -race -run 'TestObserverParity|TestObserverAborts|TestSpanShape'` passes
+  - RED: rows for `http.ErrAbortHandler` (net/http and gin `Aborted: true`, `Status: 0`; fiber the documented exception `Status: 500`, `Aborted: false`), a streamed fiber body with a late error (`Committed: true`, the access record's size) and a `"boom"` panic span (`exception.type` `string` on every engine); expected to pass at first run as guards, since no engine code changes; a failure is a defect to record in notes.md
+  - GREEN: none expected
+- [ ] 9.8 The `https` scheme of `RequestInfo` (engine `httpRequestInfo`); verify `go test -race -run TestObserver_RequestInfo` passes in the core
+  - RED: a row over a TLS listener (`srvr.WithListener(tls.NewListener(...))`) expecting `Scheme` `https`; the branch is uncovered today, so the row is expected to pass at first run as a guard (check the coverage of the branch before and after)
+- [ ] 9.9 Update notes.md (outcome of this group, the cause of the unreproduced core failures, the `otelsrvr` SDK carry-over); in every touched module run `GOWORK=off go vet ./...`, `GOWORK=off golangci-lint run ./...` and `GOWORK=off go test -race ./...`, check coverage of the changed branches, run /simplify, and commit as `fix(otelsetup)!: ...` and `test(core): ...`
 
 ## Workflow follow-up
 
