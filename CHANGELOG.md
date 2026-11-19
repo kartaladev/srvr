@@ -23,7 +23,8 @@ once tagged.
 - `otelsrvr.ConfigError` and `otelsetup.ConfigError` (`Field`, `Value`, `Reason`): every
   configuration error of their `New` is one, joined per invalid field, so `errors.As` reads the
   field; they still match `errors.Is(err, ErrConfig)` and their text is unchanged. The cause of an
-  `OTLP.Endpoint`, `Prometheus.Addr` or instrument-creation failure is kept as text only.
+  `OTLP.Endpoint`, `Prometheus.Addr` or instrument-creation failure is kept in `Cause` and stays
+  reachable with `errors.Is`/`errors.As` (for example `*url.Error` or `*net.AddrError`).
 - `srvr.RouteCheck`, `srvr.Routes` and `srvr.Route` aliases: a route check needs no `engine` import.
   `WithRouteCheck` takes `srvr.RouteCheck` (the same type).
 - `engine.Core.AccessSuppressed`, for an engine to skip copying what only a suppressed access

@@ -32,8 +32,9 @@ const ScopeName = "github.com/kartaladev/srvr/otelsrvr"
 var ErrConfig = errors.New("otelsrvr: invalid configuration")
 
 // ConfigError is the error New returns for one invalid field: errors.As
-// reads Field, Value and Reason, and errors.Is matches [ErrConfig]. When
-// several fields are invalid, New joins one ConfigError per field.
+// reads Field, Value and Reason, and errors.Is matches [ErrConfig] and,
+// through Cause, the underlying error when there is one. When several
+// fields are invalid, New joins one ConfigError per field.
 type ConfigError struct {
 	// Field names the setting, such as "DurationBuckets".
 	Field string
@@ -41,6 +42,9 @@ type ConfigError struct {
 	Value string
 	// Reason says what is wrong with it.
 	Reason string
+	// Cause is the underlying error, such as a parse error, whose text
+	// Reason already holds; nil when there is none.
+	Cause error
 
 	// text is the message after the prefix when it is not Field, Value
 	// and Reason joined by spaces.
@@ -62,8 +66,15 @@ func (e *ConfigError) Error() string {
 	return ErrConfig.Error() + ": " + strings.Join(parts, " ")
 }
 
-// Unwrap returns [ErrConfig].
-func (e *ConfigError) Unwrap() error { return ErrConfig }
+// Unwrap returns [ErrConfig] and, when it is not nil, Cause, so errors.Is
+// and errors.As reach both.
+func (e *ConfigError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrConfig}
+	}
+
+	return []error{ErrConfig, e.Cause}
+}
 
 // configError returns a *ConfigError whose message is field, value and
 // reason joined by spaces.
@@ -388,7 +399,7 @@ func newObserver(mp metric.MeterProvider, cfg Config) (o *Observer, err error) {
 // naming MeterProvider.
 func instrumentError(name string, err error) error {
 	return &ConfigError{
-		Field: "MeterProvider", Value: name, Reason: "creating the instrument: " + err.Error(),
+		Field: "MeterProvider", Value: name, Reason: "creating the instrument: " + err.Error(), Cause: err,
 		text: "creating " + name + ": " + err.Error(),
 	}
 }

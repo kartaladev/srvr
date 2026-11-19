@@ -408,21 +408,40 @@ func TestNew_NilOption(t *testing.T) {
 func TestConfigError(t *testing.T) {
 	t.Parallel()
 
+	errMeter := errors.New("meter refused")
+	failing := func(instrument string) otelsrvr.Option {
+		return otelsrvr.WithMeterProvider(meterProvider{meter: faultyMeter{fail: instrument, err: errMeter}})
+	}
+
 	tests := []struct {
 		name   string
 		opts   []otelsrvr.Option
 		fields []string
+		cause  error // nil: every *ConfigError has a nil Cause
 	}{
-		{"nil", []otelsrvr.Option{nil}, []string{"Option"}},
-		{"WithMeterProvider(nil)", []otelsrvr.Option{otelsrvr.WithMeterProvider(nil)}, []string{"MeterProvider"}},
-		{"WithTracerProvider(nil)", []otelsrvr.Option{otelsrvr.WithTracerProvider(nil)}, []string{"TracerProvider"}},
-		{"WithPropagator(nil)", []otelsrvr.Option{otelsrvr.WithPropagator(nil)}, []string{"Propagator"}},
-		{"WithDurationBuckets()", []otelsrvr.Option{otelsrvr.WithDurationBuckets()}, []string{"DurationBuckets"}},
-		{"WithDurationBuckets(1, 0.5)", []otelsrvr.Option{otelsrvr.WithDurationBuckets(1, 0.5)}, []string{"DurationBuckets"}},
+		{"nil", []otelsrvr.Option{nil}, []string{"Option"}, nil},
+		{"WithMeterProvider(nil)", []otelsrvr.Option{otelsrvr.WithMeterProvider(nil)}, []string{"MeterProvider"}, nil},
+		{"WithTracerProvider(nil)", []otelsrvr.Option{otelsrvr.WithTracerProvider(nil)}, []string{"TracerProvider"}, nil},
+		{"WithPropagator(nil)", []otelsrvr.Option{otelsrvr.WithPropagator(nil)}, []string{"Propagator"}, nil},
+		{"WithDurationBuckets()", []otelsrvr.Option{otelsrvr.WithDurationBuckets()}, []string{"DurationBuckets"}, nil},
+		{"WithDurationBuckets(1, 0.5)", []otelsrvr.Option{otelsrvr.WithDurationBuckets(1, 0.5)}, []string{"DurationBuckets"}, nil},
 		{
 			"WithMeterProvider(nil) and WithTracerProvider(nil)",
 			[]otelsrvr.Option{otelsrvr.WithMeterProvider(nil), otelsrvr.WithTracerProvider(nil)},
 			[]string{"MeterProvider", "TracerProvider"},
+			nil,
+		},
+		{
+			"meter failing to create http.server.request.duration",
+			[]otelsrvr.Option{failing("http.server.request.duration")},
+			[]string{"MeterProvider"},
+			errMeter,
+		},
+		{
+			"meter failing to create http.server.response.body.size, WithBodySizes()",
+			[]otelsrvr.Option{failing("http.server.response.body.size"), otelsrvr.WithBodySizes()},
+			[]string{"MeterProvider"},
+			errMeter,
 		},
 	}
 
@@ -441,25 +460,63 @@ func TestConfigError(t *testing.T) {
 					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
 				}
 			}
+
+			if tt.cause == nil {
+				if causes := configCauses(err); len(causes) > 0 {
+					t.Errorf("New error has *ConfigError causes %v, want none; error: %v", causes, err)
+				}
+			} else if !errors.Is(err, tt.cause) {
+				t.Errorf("errors.Is(New error, %v) = false, want true; error: %v", tt.cause, err)
+			}
 		})
 	}
+}
+
+// configCauses returns the non-nil Cause of every *otelsrvr.ConfigError a
+// joined error holds, in order.
+func configCauses(err error) []error {
+	var causes []error
+	for _, ce := range configErrors(err) {
+		if ce.Cause != nil {
+			causes = append(causes, ce.Cause)
+		}
+	}
+
+	return causes
 }
 
 // configFields returns the Field of every *otelsrvr.ConfigError a joined
 // error holds, in order.
 func configFields(err error) []string {
+	ces := configErrors(err)
+	fields := make([]string, 0, len(ces))
+	for _, ce := range ces {
+		fields = append(fields, ce.Field)
+	}
+
+	return fields
+}
+
+// configErrors returns every *otelsrvr.ConfigError a joined error holds, in
+// order.
+func configErrors(err error) []*otelsrvr.ConfigError {
+	// A *ConfigError also has Unwrap() []error (ErrConfig and its cause), so
+	// it is matched before the join it may sit in.
+	if ce, ok := err.(*otelsrvr.ConfigError); ok { //nolint:errorlint // only this error, not one it wraps
+		return []*otelsrvr.ConfigError{ce}
+	}
+
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		errs := joined.Unwrap()
-		fields := make([]string, 0, len(errs))
-		for _, e := range errs {
-			fields = append(fields, configFields(e)...)
+		var all []*otelsrvr.ConfigError
+		for _, e := range joined.Unwrap() {
+			all = append(all, configErrors(e)...)
 		}
 
-		return fields
+		return all
 	}
 
 	if ce, ok := errors.AsType[*otelsrvr.ConfigError](err); ok {
-		return []string{ce.Field}
+		return []*otelsrvr.ConfigError{ce}
 	}
 
 	return nil

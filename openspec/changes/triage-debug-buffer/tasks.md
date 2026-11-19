@@ -162,6 +162,10 @@
   - GREEN (only if it fails): bound fiber's drain at its deadline as `httpRunner.Drain` does
   - REFACTOR: /simplify
 - [x] 10.5 Verify the slice, run `make check` and `make cover`, gopls diagnostics, run /simplify on the slice and commit `refactor!: rename LogWriteErrors to LogRecordsLost, join and type configuration errors`
+- [x] 10.6 Owner decision 2026-11-19: `ConfigError` keeps its cause (design D13; otel-metrics and telemetry-setup / Scenario: Typed configuration errors, `cause` column, all rows); verify `go test -race -run TestConfigError` passes in `otelsrvr` and `otelsetup`, and the messages of every invalid case are byte-identical before and after
+  - RED: rows asserting `errors.Is`/`errors.As` reach the cause (`*url.Error`, `*net.AddrError`, the meter's error) and that rules without one leave `Cause` nil
+  - GREEN: `Cause error` per module, `Unwrap() []error` returning `ErrConfig` and the non-nil cause, the cause set where an underlying error is reported
+  - REFACTOR: /simplify; `make check`, gopls diagnostics
 
 ## 12. Slice: keep the consumer's prblm OnError hook (owner request 2026-11-19)
 

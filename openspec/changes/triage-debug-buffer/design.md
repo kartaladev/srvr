@@ -55,7 +55,7 @@ Consolidation (2026-11-18) checked these against the merged code with gopls; the
    - Scenarios satisfied: Limiting unmatched failed records; Omitting the user agent; Failures while the access log is suppressed (new rows).
    - Hot paths: the limiter's admit decision on every unmatched request; the access-record builder.
 9. **API and robustness** (carried from `skills-compliance`).
-   - What works: `srvr.LogRecordsLost` (D9), one joined construction error naming every invalid field, typed `*ConfigError` in `otelsrvr` and `otelsetup`, the stuck-listener row on fiber.
+   - What works: `srvr.LogRecordsLost` (D9), one joined construction error naming every invalid field, typed `*ConfigError` in `otelsrvr` and `otelsetup` keeping the underlying cause (D13), the stuck-listener row on fiber.
    - Scenarios satisfied: Own handler, Broken output and Consumer faults on every engine (renamed counter); Valid and invalid configuration (joined rows); Typed configuration errors (both modules); Stuck listener on every engine.
    - Hot paths: construction validation; fiber's stop path.
 10. **Release** (carried from `skills-compliance`): a release prepared by the plan and tagged only on owner confirmation (D10). No scenario: it is a process step.
@@ -207,6 +207,14 @@ Decided 2026-11-19 (owner request). prblm v0.2.0 keeps `prblm.OnError` as the on
 - *Order and faults:* the consumer's `OnError` runs before srvr's hook, then any consumer `AddErrorHook` passed through `WithProblemOptions` (added before srvr's, since srvr's options come last), then srvr's hook, which records the failure and calls the `WithErrorHook` hook. A panicking consumer hook is contained by prblm and srvr still records; a consumer hook that blocks delays srvr's hook and the response, the same as a blocking `WithErrorHook` (not guarded; consumer code runs on the request goroutine).
 - *`WithErrorHook` stays:* it is public API, typed as `srvr.ErrorHook`, validated (nil fails construction), contained by srvr's own `recover`, and guaranteed to run after srvr recorded the failure, so a hook reading srvr state sees it. It is now one of two equivalent ways to observe answered errors rather than the only one; removing it pre-v1 would break consumers for no gain. Godoc on both options states the relation.
 - *Alternatives considered:* keep `prblm.OnError` and document the limitation (rejected: owner request; prblm now offers the composable hook). Drop `WithErrorHook` (rejected: breaking with no gain).
+
+### D13. `otelsrvr` and `otelsetup` `ConfigError` keep their cause
+Decided 2026-11-19 (owner decision). Slice 9's typed `ConfigError{Field, Value, Reason}` unwrapped only to the module's `ErrConfig`, so an `OTLP.Endpoint` parse error (`*url.Error`, `*net.AddrError`), a `Prometheus.Addr` error or the meter's instrument-creation error was reachable only as text. Each module's `ConfigError` gains a `Cause error` field, and `Unwrap() []error` returns `ErrConfig` followed by `Cause` when it is non-nil, so `errors.Is(err, ErrConfig)` and `errors.Is`/`errors.As` on the cause both work.
+
+- *Text unchanged:* the cause's text is already part of `Reason` (or the unexported message), so `Error()` does not change; the messages of every invalid case are diffed before and after.
+- *Nil cause:* rules with no underlying error (nil values, ranges, a recovered panic value) leave `Cause` nil and `Unwrap` returns `ErrConfig` alone, never a nil element.
+- *Core stays as is:* `engine.ConfigError` has no wrapped cause today (its rules produce no underlying error), so the field is not added there ahead of need (Gall's Law); the name `Cause` is the one to use if it ever does.
+- *Alternatives considered:* `fmt.Errorf("%w")` wrapping inside `Reason` (rejected: `Reason` is a string; it would change the type). Unwrapping to the cause only (rejected: `errors.Is(err, ErrConfig)` must keep working).
 
 ## Defaults
 

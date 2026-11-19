@@ -2,7 +2,6 @@ package otelsetup
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -21,8 +20,9 @@ import (
 var ErrConfig = errors.New("otelsetup: invalid configuration")
 
 // ConfigError is the error New returns for one invalid field: errors.As
-// reads Field, Value and Reason, and errors.Is matches [ErrConfig]. When
-// several fields are invalid, New joins one ConfigError per field.
+// reads Field, Value and Reason, and errors.Is matches [ErrConfig] and,
+// through Cause, the underlying error when there is one. When several
+// fields are invalid, New joins one ConfigError per field.
 type ConfigError struct {
 	// Field names the setting, such as "Prometheus.Path".
 	Field string
@@ -30,6 +30,9 @@ type ConfigError struct {
 	Value string
 	// Reason says what is wrong with it.
 	Reason string
+	// Cause is the underlying error, such as a parse error, whose text
+	// Reason already holds; nil when there is none.
+	Cause error
 
 	// text is the message after the prefix when it is not Field, Value
 	// and Reason joined by spaces.
@@ -51,8 +54,15 @@ func (e *ConfigError) Error() string {
 	return ErrConfig.Error() + ": " + strings.Join(parts, " ")
 }
 
-// Unwrap returns [ErrConfig].
-func (e *ConfigError) Unwrap() error { return ErrConfig }
+// Unwrap returns [ErrConfig] and, when it is not nil, Cause, so errors.Is
+// and errors.As reach both.
+func (e *ConfigError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrConfig}
+	}
+
+	return []error{ErrConfig, e.Cause}
+}
 
 // configError returns a *ConfigError whose message is field, value and
 // reason joined by spaces.
@@ -62,8 +72,17 @@ func configError(field, value, reason string) error {
 
 // configErrorColon returns a *ConfigError whose message is "field value:
 // reason".
-func configErrorColon(field, value, reason string) error {
+func configErrorColon(field, value, reason string) *ConfigError {
 	return &ConfigError{Field: field, Value: value, Reason: reason, text: field + " " + value + ": " + reason}
+}
+
+// causeError returns a *ConfigError caused by cause, whose message is
+// "field value: cause".
+func causeError(field, value string, cause error) error {
+	e := configErrorColon(field, value, cause.Error())
+	e.Cause = cause
+
+	return e
 }
 
 // Default values of the configuration.
@@ -270,7 +289,7 @@ func (c Config) validate() error {
 
 		if ep := c.OTLP.Endpoint; ep != "" {
 			if err := checkEndpoint(ep); err != nil {
-				errs = append(errs, configErrorColon("OTLP.Endpoint", strconv.Quote(ep), err.Error()))
+				errs = append(errs, causeError("OTLP.Endpoint", strconv.Quote(ep), err))
 			}
 		}
 	}
@@ -296,7 +315,7 @@ func (c Config) validate() error {
 // may be empty (all interfaces).
 func validateAddr(addr string) error {
 	if _, err := splitHostPort(addr); err != nil {
-		return configErrorColon("Prometheus.Addr", strconv.Quote(addr), err.Error())
+		return causeError("Prometheus.Addr", strconv.Quote(addr), err)
 	}
 
 	return nil
@@ -311,11 +330,24 @@ func splitHostPort(addr string) (string, error) {
 	}
 
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return "", fmt.Errorf("port %q is not a number in 0-65535", port)
+		return "", &portError{port: port, err: err}
 	}
 
 	return host, nil
 }
+
+// portError reports a port that is not a number in 0-65535; it unwraps to
+// the *strconv.NumError, which its text leaves out.
+type portError struct {
+	port string
+	err  error
+}
+
+func (e *portError) Error() string {
+	return "port " + strconv.Quote(e.port) + " is not a number in 0-65535"
+}
+
+func (e *portError) Unwrap() error { return e.err }
 
 // validatePath checks that path starts with / and is a pattern
 // http.ServeMux accepts. ServeMux panics on a pattern it rejects, so the

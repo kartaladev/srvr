@@ -355,6 +355,20 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** `make check` passes (vet, golangci-lint 0 issues, `go test -race`, tidy, verify, govulncheck: no vulnerabilities; every module, `GOWORK=off`); `make cover`: engine 99.8%, `validateLog`, `baseHandler`, `checkOwnHandler`, `joinServe`, both otel `ConfigError` methods and helpers 100%; `gopls check` on every changed Go file reports only pre-existing deliberate nil-context/nil-panic test diagnostics.
 - **Suggested action:** none.
 
+### Task 10.6: `ConfigError` keeps its cause (owner decision 2026-11-19)
+- **Status:** closed: recorded
+- **Target:** triage-debug-buffer
+- **Context:** `otelsrvr.ConfigError` and `otelsetup.ConfigError` gain `Cause error`; `Unwrap() []error` returns the module's `ErrConfig`, then `Cause` when non-nil (design D13). Set by `instrumentError` (otelsrvr) and `causeError` (otelsetup: `OTLP.Endpoint`, `Prometheus.Addr`). `engine.ConfigError` is unchanged (no underlying error to keep). Spec deltas gain a `cause` column (`none` rows assert every `Cause` is nil). RED (`TestConfigError`, `otelsrvr/config_test.go`, `otelsetup/setup_test.go`): `errors.Is(New error, meter refused) = false, want true; error: otelsrvr: invalid configuration: creating http.server.request.duration: meter refused` (both meter rows); `New error does not reach the expected cause; error: otelsetup: invalid configuration: OTLP.Endpoint "http://[::1": parse "http://[::1": missing ']' in host` (also the `Prometheus.Addr`/`OTLP.Endpoint` `"localhost"` `*net.AddrError` rows and `Prometheus.Addr` `"localhost:99999"`). The test walkers match a `*ConfigError` before a join, since it now also has `Unwrap() []error`. /simplify (4 reviewers): applied: `causeError` reuses `configErrorColon` (now returning `*ConfigError`), so the colon text is built once; `splitHostPort` returns an unexported `portError` that unwraps to the `*strconv.NumError` with unchanged text, so the `"localhost:99999"` row asserts `*strconv.NumError` instead of matching text (RED: `New error does not reach the expected cause`); one `configCauses` helper in both test files. Skipped: a shared `ConfigError` in `engine` (widens `engine` API, as in 10.5); dropping the walkers' `errors.AsType` fallback (keeps them robust to a wrapped error); making `checkEndpoint`'s own messages (`host is empty`, `scheme ... is not http or https`) cause-less (the cause is still the error the check reported); efficiency: none (construction path only).
+- **Evidence:** messages of 14 `otelsrvr` and 16 `otelsetup` invalid cases diffed before and after: `SAME`; `go test -race -run TestConfigError` passes in both modules; `make check` passes (every module, `GOWORK=off`); `gopls check` on the changed Go files: no diagnostics.
+- **Suggested action:** none.
+
+### Recovered panic values that are errors are not kept as `Cause`
+- **Status:** open
+- **Target:** unassigned (owner decision)
+- **Context:** `otelsetup.validatePath` recovers `http.ServeMux` panics, whose value is an `error`, and `otelsrvr` recovers panicking Propagator/TracerProvider/MeterProvider calls; all flatten the value with `engine.ValueText`, so `Cause` stays nil (design D13 states this). A consumer's sentinel is reachable with `errors.Is` when a provider returns it but not when it panics with it.
+- **Evidence:** altitude reviewer's code reading during the 10.6 /simplify (`otelsetup/config.go` `validatePath`, `otelsrvr/otelsrvr.go` recover sites); not a defect, no test.
+- **Suggested action:** if wanted, set `Cause` when the recovered value is an `error` (text unchanged), with spec rows for a panicking provider.
+
 ### Problem-option errors are not joined with the other field errors
 - **Status:** open
 - **Target:** unassigned
