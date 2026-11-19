@@ -7,7 +7,7 @@ Defines how a srvr server is constructed, started, observed as ready and shut do
 ## Requirements
 
 ### Requirement: Construction validates configuration
-Constructing a server SHALL validate every option and config field and SHALL return an error naming the offending field and value instead of a server when any is invalid. Construction SHALL NOT open a listener. A `*slog.Logger` passed with `WithLogger` whose `Handler()` is nil or a typed nil SHALL fail construction naming `Logger`: srvr could not write a single record through it, and silently dropping every record is not a safe default.
+Constructing a server SHALL validate every option and config field and SHALL return one error naming every offending field and its value instead of a server when any is invalid, the log fields (`LogConfig.Level`, `Format`) included. Construction SHALL NOT open a listener. A `*slog.Logger` passed with `WithLogger` whose `Handler()` is nil or a typed nil SHALL fail construction naming `Logger`: srvr could not write a single record through it, and silently dropping every record is not a safe default.
 
 #### Scenario: Valid and invalid configuration
 - **Given** a server configured with `<field>` set to `<value>`
@@ -40,6 +40,9 @@ Constructing a server SHALL validate every option and config field and SHALL ret
 | `WithShutdownHook` | phase `srvr.ShutdownPhase(9)` | an error wrapping `srvr.ErrConfig` | `ShutdownPhase` |
 | `WithLogger` | a zero `&slog.Logger{}`, whose `Handler()` is nil | an error wrapping `srvr.ErrConfig` | `Logger` |
 | `WithLogger` | `slog.New(h)` where `h` is a typed-nil `slog.Handler` | an error wrapping `srvr.ErrConfig` | `Logger` |
+| `LogConfig.Level` and `MaxHeaderBytes` | `loud`, and `-1` via `WithMaxHeaderBytes(-1)` | one error wrapping `srvr.ErrConfig`, matching `errors.As` for each field | `Level` and `MaxHeaderBytes` |
+| `LogConfig.Format` and `ShutdownTimeout` | `xml` and `-1s` | one error wrapping `srvr.ErrConfig`, matching `errors.As` for each field | `Format` and `ShutdownTimeout` |
+| `LogConfig.Level` and `LogConfig.Format` | `loud` and `xml` | one error wrapping `srvr.ErrConfig` | `Level` and `Format` |
 
 ### Requirement: Safe default server limits
 With no configuration the server SHALL listen on `:8080` and apply the default timeouts, header limit, request body limit and drain time. A zero config value SHALL mean the default; a negative timeout or body limit SHALL disable that limit.
@@ -498,3 +501,19 @@ When `Start` or `Shutdown` reports the server closed, srvr's goroutine serving t
 | its own `:0` listener | has returned (goleak reports no `serveOn` goroutine) |
 | a `WithListener` listener | has returned |
 | a `WithListener` listener whose `Close` does not unblock `Accept` | is still blocked, and `Shutdown` returned within `1s` plus the drain time |
+
+### Requirement: A passed listener whose Close does not unblock Accept never blocks the stop
+On every engine, when the listener passed with `WithListener` returns from `Close` without unblocking a pending `Accept`, `Shutdown` SHALL still return once its drain deadline passes, and a later `Shutdown` SHALL return `nil`.
+
+#### Scenario: Stuck listener on every engine
+- **Given** engine `<engine>` serving on a passed listener whose `Close` returns `nil` but leaves `Accept` blocked, and `ShutdownTimeout` `200ms`
+- **When** `Shutdown` is called with a context without deadline
+- **Then** `Shutdown` returns within `1s`
+- **And** a later `Shutdown` returns `nil`
+
+##### Examples:
+| engine |
+|--------|
+| `net/http` |
+| `gin` |
+| `fiber` |

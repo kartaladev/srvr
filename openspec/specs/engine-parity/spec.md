@@ -75,6 +75,7 @@ Where an engine cannot match, the difference SHALL be listed here, documented in
 | `net/http` | a client disconnects before the error is rendered | the problem write is attempted and dropped |
 | `gin` | a client disconnects before the error is rendered | nothing is written |
 | `fiber` | a client disconnects mid-request | the handler is not notified (fasthttp does not detect it) |
+| `fiber` | a client disconnects and the handler then returns `fmt.Errorf("query: %w", context.Canceled)` | a `500` problem and an `ERROR` record, where net/http and gin answer `499` at `WARN`: the request context is not cancelled by the disconnect, so srvr cannot tell it from a server-side cancellation |
 | `gin` | `HEAD /users` where only `GET /users` is registered | a `405` problem with `Allow` `GET` (gin does not route `HEAD` to `GET` handlers) |
 | `gin` | wrong method where `GET` and `POST` are registered | `Allow` is `GET, POST` without `HEAD`, because gin does not route `HEAD` to `GET` handlers; net/http and fiber send `GET, HEAD, POST` |
 | `fiber` | a `4194305`-byte body is sent to a handler that never reads it | a `413` problem before the handler runs (fasthttp reads the whole body before routing); the record has no `http.route`, while net/http and gin record the route because their limit trips when the handler reads |
