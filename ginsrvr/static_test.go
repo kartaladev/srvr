@@ -1003,8 +1003,10 @@ func TestStatic_Hostile(t *testing.T) {
 // TestStatic_Methods covers static-files / Scenario: Other methods on gin,
 // with its gin rows for GET and HEAD to a path only another method's route
 // serves (owner decision 2026-11-19): they fall through to the mount as on
-// net/http, every other method keeps gin's 405, and so does a path no
-// mount contains or a server without a mount.
+// net/http; every other method gets gin's 405, whose Allow inside a mount
+// also lists GET and HEAD, sorted as on net/http (owner decision
+// 2026-11-19, item 4); a path no mount contains and a server without a
+// mount keep gin's 405 and Allow unchanged.
 func TestStatic_Methods(t *testing.T) {
 	t.Parallel()
 
@@ -1012,6 +1014,13 @@ func TestStatic_Methods(t *testing.T) {
 		g.POST("/api/users", func(c *gin.Context) { c.Status(http.StatusCreated) })
 		g.POST("/login", func(c *gin.Context) { c.Status(http.StatusCreated) })
 		g.POST("/app.js", func(c *gin.Context) { c.Status(http.StatusCreated) })
+		g.GET("/items", func(c *gin.Context) { c.String(http.StatusOK, "items") })
+		g.POST("/items", func(c *gin.Context) { c.Status(http.StatusCreated) })
+		g.POST("/orders", func(c *gin.Context) { c.Status(http.StatusCreated) })
+		g.DELETE("/orders", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+		g.GET("/pages", func(c *gin.Context) { c.String(http.StatusOK, "pages") })
+		g.HEAD("/pages", func(c *gin.Context) { c.Status(http.StatusOK) })
+		g.POST("/assets/upload", func(c *gin.Context) { c.Status(http.StatusCreated) })
 	})
 	// gate answers 418 if consumer middleware ever runs for a request gin
 	// answers itself; registered only without a mount, whose server keeps
@@ -1038,7 +1047,14 @@ func TestStatic_Methods(t *testing.T) {
 		{name: "DELETE to a missing path", method: "DELETE", path: "/nope", status: 405, allow: "GET, HEAD"},
 		{name: "OPTIONS to the root", method: "OPTIONS", path: "/", status: 405, allow: "GET, HEAD"},
 		{name: "a route's own method", method: "POST", path: "/api/users", route: true, status: 201},
-		{name: "another method of a route (documented exception)", method: "PUT", path: "/api/users", route: true, status: 405, allow: "POST"},
+		{name: "another method of a route", method: "PUT", path: "/api/users", route: true, status: 405, allow: "GET, HEAD, POST"},
+		{name: "another method of two routes", method: "PATCH", path: "/orders", route: true, status: 405, allow: "DELETE, GET, HEAD, POST"},
+		{name: "another method beside a GET route", method: "PUT", path: "/items", route: true, status: 405, allow: "GET, HEAD, POST"},
+		{name: "another method beside GET and HEAD routes", method: "PUT", path: "/pages", route: true, status: 405, allow: "GET, HEAD"},
+		{name: "another method of a route in a nested mount", prefix: "/assets", method: "PUT", path: "/assets/upload", route: true, status: 405, allow: "GET, HEAD, POST"},
+		{name: "another method of a route outside every mount", prefix: "/assets", method: "PUT", path: "/api/users", route: true, status: 405, allow: "POST"},
+		{name: "another method of a route without a mount", prefix: "-", method: "PUT", path: "/api/users", route: true, status: 405, allow: "POST"},
+		{name: "another method beside a GET route without a mount", prefix: "-", method: "PUT", path: "/items", route: true, status: 405, allow: "GET, POST"},
 		{
 			name: "GET navigation to a POST-only path falls back", method: "GET", path: "/api/users", accept: "text/html", route: true,
 			status: 200, body: "<html>app</html>",

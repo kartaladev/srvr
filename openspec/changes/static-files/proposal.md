@@ -28,7 +28,7 @@ Services built on srvr often ship a web front end with the API: a React or Vite 
 - `static-files`: serving an `fs.FS` under a prefix on every engine. It covers configuration and its validation, file resolution and path safety, missing files and file system errors as problems, the SPA fallback, caching headers, methods, precedence of other routes, logging, observation and limiting of static requests, and the route listing.
 
 ### Modified Capabilities
-- `engine-parity`: "Parity exceptions are explicit" gains the static rows: gin keeps its own `405` for a path another method registers, and net/http answers a path with dot segments with ServeMux's redirect to the cleaned path.
+- `engine-parity`: "Parity exceptions are explicit" gains the static rows: fiber refuses a consumer catch-all beside a mount and has an opt-in file cache, and net/http answers a path with dot segments with ServeMux's redirect to the cleaned path.
 
 ## Scope by Gall's Law
 

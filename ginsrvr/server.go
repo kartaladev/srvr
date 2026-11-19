@@ -160,6 +160,8 @@ func assertSettings(e *gin.Engine) {
 // trees were created), so the problem rendered inside carries it like
 // net/http.
 func (s *Server) requestStage(c *gin.Context) {
+	allowReadOnly := false
+
 	state, ok := engine.StateFrom(c.Request.Context())
 	if ok {
 		if route := c.FullPath(); route != "" {
@@ -170,7 +172,7 @@ func (s *Server) requestStage(c *gin.Context) {
 			// static dispatcher after the root group's consumer
 			// middleware: begin decides whether a mount answers, and only
 			// the dispatcher, if it runs, can tell a miss (design D5).
-			s.statics.begin(c, state)
+			allowReadOnly = s.statics.begin(c, state)
 		} else {
 			// Without a static mount only srvr's stages run in gin's
 			// no-route and no-method chains, so the router answers this
@@ -181,8 +183,12 @@ func (s *Server) requestStage(c *gin.Context) {
 
 	if allow := c.Writer.Header().Get("Allow"); allow != "" {
 		methods := strings.Split(allow, ", ")
+		if allowReadOnly {
+			methods = append(methods, http.MethodGet, http.MethodHead)
+		}
+
 		slices.Sort(methods)
-		c.Writer.Header().Set("Allow", strings.Join(methods, ", "))
+		c.Writer.Header().Set("Allow", strings.Join(slices.Compact(methods), ", "))
 	}
 
 	c.Next()

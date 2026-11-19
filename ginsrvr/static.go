@@ -40,9 +40,11 @@ import (
 //     path no mount contains gets gin's 404 problem.
 //   - A GET or HEAD to a path only another method's route serves is the
 //     mount's, as on net/http: beside a POST /login route, a browser's
-//     GET /login gets the SPA fallback. Any other method keeps gin's 405:
-//     beside a POST /api/users route, PUT /api/users gets Allow: POST,
-//     where net/http and fiber send Allow: GET, HEAD, POST.
+//     GET /login gets the SPA fallback. Any other method gets gin's 405,
+//     whose Allow inside a mount also lists GET and HEAD, sorted as on
+//     net/http and fiber: beside a POST /api/users route, PUT /api/users
+//     gets Allow: GET, HEAD, POST. A path no mount contains keeps gin's
+//     Allow (POST).
 //   - Root-group middleware (RouterGroup.Use) runs around the mounts even
 //     when a configurer registered after Static adds it, and, once a
 //     server has a mount, also for requests gin answers with its own 404
@@ -173,20 +175,25 @@ func below(prefix, path string) (rest string, ok bool) {
 // would also take as the status of an error without its own, and no
 // Allow header from gin's 405. Other requests keep gin's answer: the
 // dispatcher marks it as the router's when it runs, and a failure
-// consumer middleware reports first is the middleware's.
-func (ms *staticMounts) begin(c *gin.Context, state *engine.RequestState) {
-	if c.Writer.Status() == http.StatusMethodNotAllowed && !readOnly(c.Request.Method) {
-		return
-	}
-
+// consumer middleware reports first is the middleware's. begin reports
+// whether the request is gin's 405 inside a mount, whose Allow must also
+// list GET and HEAD, which the mount serves there (owner decision
+// 2026-11-19, item 4).
+func (ms *staticMounts) begin(c *gin.Context, state *engine.RequestState) (allowReadOnly bool) {
 	m, _ := ms.find(c.Request.URL.Path)
 	if m == nil {
-		return
+		return false
+	}
+
+	if c.Writer.Status() == http.StatusMethodNotAllowed && !readOnly(c.Request.Method) {
+		return true
 	}
 
 	state.SetRoute(pattern(m.Prefix(), c.Request.URL.Path))
 	c.Status(http.StatusOK)
 	c.Writer.Header().Del("Allow")
+
+	return false
 }
 
 // readOnly reports whether method is one a static mount serves.

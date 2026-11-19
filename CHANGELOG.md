@@ -30,7 +30,8 @@ once tagged.
   serves gets the file or the SPA fallback as on net/http, and root-group middleware runs around the
   mounts even when added after `Static`; once a server has a mount, that middleware also runs for
   the requests gin answers with its own `404` or `405`. Any other method that another method's route
-  matches keeps gin's `405` (`Allow: POST` where net/http and fiber send `Allow: GET, HEAD, POST`). A mount replaces a `NoRoute` handler set by a
+  matches gets gin's `405`, whose `Allow` inside a mount also lists `GET` and `HEAD`, as net/http and
+  fiber send it (`Allow: GET, HEAD, POST`). A mount replaces a `NoRoute` handler set by a
   `ginsrvr.WithGinEngine` hook.
 - `fibersrvr.Static(prefix, fsys, opts...)` serves static files and single-page apps on the fiber
   engine with the same `srvr.StaticOption` values, defaults and answers as `srvr.Static`. Files are

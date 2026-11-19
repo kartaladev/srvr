@@ -77,8 +77,9 @@ A gin catch-all route cannot sit beside other routes at the same level, so the s
 mounts from gin's no-route chain instead of registering routes: every registered route wins, in
 either registration order, and the longest mount prefix containing the path answers. A `GET` or
 `HEAD` to a path only another method's route serves is the mount's, so a browser's `GET /login`
-beside `POST /login` gets the SPA fallback; any other method keeps gin's `405` (`PUT /api/users`
-beside `POST /api/users` gets `Allow: POST`; net/http and fiber add `GET, HEAD`). Root-group
+beside `POST /login` gets the SPA fallback; any other method gets gin's `405`, whose `Allow` inside
+a mount also lists `GET` and `HEAD` as on net/http and fiber (`PUT /api/users` beside
+`POST /api/users` gets `Allow: GET, HEAD, POST`). Root-group
 middleware (`RouterGroup.Use`) runs around the mounts even when a configurer adds it after `Static`,
 and, once a mount exists, also around requests gin answers with its own `404` or `405`. Register `ginsrvr.Static` with `Server.Register`; a
 configurer calling its `Configure` fails `Start`. A mount replaces any `NoRoute` handler a

@@ -48,11 +48,7 @@
 //     An error with a cyclic chain that reaches c.Errors in any other way
 //     is still answered with the safe 500 problem.
 //   - [Static] mounts are served from gin's no-route and no-method chains,
-//     so a method other than GET and HEAD that another method's route
-//     matches keeps gin's 405: with a POST /api/users route and
-//     Static("/", site), PUT /api/users gets Allow: POST, where net/http and
-//     fiber send Allow: GET, HEAD, POST (a GET or HEAD there is the
-//     mount's, as on net/http). Root-group middleware runs around the
-//     mounts even when added after Static, and, once a server has a mount,
-//     also for requests gin answers with its own 404 or 405.
+//     so root-group middleware runs around the mounts even when added
+//     after Static, and, once a server has a mount, also for requests gin
+//     answers with its own 404 or 405.
 package ginsrvr

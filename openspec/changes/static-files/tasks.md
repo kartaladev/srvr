@@ -76,7 +76,7 @@
   - GREEN: design D4 (gin): `ginsrvr.Static` returns a configurer holding the `engine` mount and its error; `configure` recognises it (unexported interface), returns its error, and after the loop installs one dispatcher with `e.NoRoute`; `Configure` panics with the guidance message
   - REFACTOR: none expected beyond `/simplify`
 - [x] 4.2 gin serves, misses and refuses like net/http (static-files / Scenarios: Serving a file, Conditional and range requests, Not found, Hostile paths, Faulty file system, Symbolic links, Other methods, Fallback decision, Fallback under a prefix, Cache headers, Configuration sources; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
-  - RED: the gin rows with `httptest`; the `PUT /api/users` row pins gin's `Allow: POST` (documented exception)
+  - RED: the gin rows with `httptest`; the `PUT /api/users` row pins gin's `Allow: POST` (documented exception; superseded by task 5.10)
   - GREEN: the dispatcher: longest prefix, `rest` from `c.Request.URL.Path`, the resolver, `ServeContent` on `c.Writer` with the stripped clone, `c.Error(prblm.ErrNotFound)` and abort for a miss, the `405` problem, `SetRoute` on a hit
   - REFACTOR: compare the request-clone and header-setting code with the root module's and move the shared part to `engine` if it is engine-independent (Move Function); then `/simplify`
 - [x] 4.3 Precedence, conflicts, records, the limit, observers, middleware and listing on gin (static-files / Scenarios: Precedence, Conflicts with other routes, Static access records, Static misses and the unmatched-record limit, Observers see static requests, Consumer middleware around static files, Static route listing, Partial failure while serving; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
@@ -114,6 +114,10 @@
 - [x] 5.7 Documentation: `fibersrvr` godoc (`Static`, `SendFile` with `CacheDuration: -1`, no compression), README engine table, `CHANGELOG.md` entry; verify `go test -run Example ./...` in `fibersrvr` passes
 - [x] 5.8 Verify the slice end to end: `make check MODULES=fibersrvr` passes; `make cover` shows the fiber handler, the deferred installation and `requestStage`'s new branch covered; `gopls` diagnostics clean
 - [x] 5.9 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): serve static files and single-page apps`; verify with `git log -1 --stat`
+- [x] 5.10 gin lists `GET, HEAD` in `Allow` of its `405` inside a static mount (owner decision 2026-11-19, item 4; static-files / Scenario: Other methods, gin rows; removes the gin static row of engine-parity's documented differences); verify `go test -race -run TestStatic_Methods ./...` in `ginsrvr` passes and `make check MODULES="ginsrvr ."` passes
+  - RED: `TestStatic_Methods` rows `PUT /api/users` beside `POST` (`GET, HEAD, POST`), `PATCH /orders` beside `POST` and `DELETE` (`DELETE, GET, HEAD, POST`), `PUT /items` beside `GET` and `POST` (`GET, HEAD, POST`), `PUT /pages` beside `GET` and `HEAD` (`GET, HEAD`), `PUT /assets/upload` in a nested `Static("/assets")` mount (`GET, HEAD, POST`), and unchanged rows outside every mount and without a mount
+  - GREEN: `begin` reports a method other than `GET` and `HEAD` inside a mount, and `requestStage` adds `GET` and `HEAD` to gin's preset `Allow` there (split on `", "`, add, sort, deduplicate, join with `", "` as net/http)
+  - REFACTOR: review cleanups: one Allow block in `requestStage` instead of a second sort in `withReadOnly` (removed, with `isListSeparator` and the internal `TestWithReadOnly`, whose empty and missing-`Allow` rows cannot happen); godoc of `Static` and the package, README, `CHANGELOG.md`, spec, design D4 updated
 
 ## 6. Slice: static parity and documented exceptions
 
@@ -121,9 +125,9 @@
   - RED: `TestStaticParity` (`internal/paritytest/static_test.go`) builds the fixture once and runs every row on the three engines from one table, comparing status, the headers named by the spec, the body, and the access record's key set against net/http's; any difference is a defect claim (rule 2): record the failing output in `notes.md` and fix it under that row
   - GREEN: fixes only where a row fails
   - REFACTOR: reuse `engines` and the harness helpers (no new helpers unless three call sites repeat)
-- [ ] 6.2 The four new documented differences (engine-parity / Scenario: Documented differences, the static rows; the `FiberSendFileCache` row is pinned by task 5.6.1's tests); verify `go test -race -run TestParityExceptions .` (the existing test of this scenario, extended; name it in the task note) passes
-  - RED: the three rows pin each engine's actual behaviour
-  - GREEN: godoc of `ginsrvr.Static` and `srvr.Static` names its exception
+- [ ] 6.2 The three new documented differences (engine-parity / Scenario: Documented differences, the static rows, plus the encoded-slash-at-the-prefix row (owner decision 2026-11-20, notes.md "An encoded slash that joins the prefix to a name"): gin and fiber with `UnescapePath` serve `GET /assets%2Fapp.js`, net/http and fiber by default answer `404`; the `FiberSendFileCache` row is pinned by task 5.6.1's tests; gin's static `Allow` row was removed by task 5.10); verify `go test -race -run TestParityExceptions .` (the existing test of this scenario, extended; name it in the task note) passes
+  - RED: the two remaining rows pin each engine's actual behaviour
+  - GREEN: godoc of `fibersrvr.Static` and `srvr.Static` names its exception
   - REFACTOR: none
 - [ ] 6.3 `LOGGING.md`: static hits carry `http.route`, misses are unmatched and counted by the limit, no new key (`srvr.log.schema` stays `1`); README section finished with all three engines and the `os.OpenRoot` advice; verify `go test -run 'TestLogSchemaDocumented|Example' .` passes and the golden-record test is unchanged
 - [ ] 6.4 Verify the change end to end: `make check` passes in every module; `make cover` shows `engine/static.go` covered from the engine modules' tests too; `openspec validate static-files --strict` passes; `gopls` diagnostics clean
