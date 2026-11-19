@@ -375,3 +375,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `engine.ResolveConfig` returns a `newProblems` error after `newSettings` validated every other field, the same shape 10.2 fixed for the log fields: an invalid prblm option together with an invalid field reports only the field.
 - **Evidence:** unverified: altitude reviewer's code reading during the slice 10 /simplify (`engine/core.go` `ResolveConfig`); no test reproduces it.
 - **Suggested action:** write a `TestNew_Config` row combining a rejected `WithProblemOptions` option with `ShutdownTimeout -1s`; if it reports one field, validate the prblm options in `Settings.validate`.
+
+### Release decision (task 11.3, 2026-11-19)
+- **Status:** closed: owner confirmed
+- **Target:** triage-debug-buffer
+- **Context:** the owner confirmed version `v0.1.0`, pushing the five tags in RELEASING.md order (`v0.1.0`, `ginsrvr/v0.1.0`, `fibersrvr/v0.1.0`, `otelsrvr/v0.1.0`, `otelsetup/v0.1.0`) with each module's release commit on `main`, and landing the changelog version section through a pull request from `release/prepare`.
+- **Evidence:** 11.2 dry run: `make check` and `make cover` pass on `main` at `469c231`; the release guard passes for all five tags after the simulated release edits; no tag existed before.
+- **Suggested action:** none.
