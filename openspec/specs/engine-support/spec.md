@@ -142,9 +142,9 @@ Every engine SHALL contain faulty consumer code exactly as the net/http engine d
 | `fiber` | a handler returning an error whose `Unwrap()` returns itself | a `500` problem within `1s`; the record has an `error.chain` of at most 32 entries and `srvr.error.truncated` `true` |
 | `gin` | a handler that panics with a value whose `Error()` panics with itself | a `500` problem; the record has `error.kind` `panic` and `exception.message` `<panic in Error(): main.selfPanic>` |
 | `fiber` | a handler that panics with a value whose `Error()` panics with itself | a `500` problem; the record has `error.kind` `panic` and `exception.message` `<panic in Error(): main.selfPanic>` |
-| `gin` | `WithLogHandler(h)` where `h.Enabled` panics | status `200`, the record is skipped and `srvr.LogWriteErrors()` increases |
-| `fiber` | `WithLogHandler(h)` where `h.WithAttrs` panics | status `200`, the record is skipped and `srvr.LogWriteErrors()` increases |
-| `gin` | gin in debug mode and `WithLogHandler(h)` where `h.Handle` panics | construction succeeds; the `gin_debug_mode` warning is skipped and `srvr.LogWriteErrors()` increases |
+| `gin` | `WithLogHandler(h)` where `h.Enabled` panics | status `200`, the record is skipped and `srvr.LogRecordsLost()` increases |
+| `fiber` | `WithLogHandler(h)` where `h.WithAttrs` panics | status `200`, the record is skipped and `srvr.LogRecordsLost()` increases |
+| `gin` | gin in debug mode and `WithLogHandler(h)` where `h.Handle` panics | construction succeeds; the `gin_debug_mode` warning is skipped and `srvr.LogRecordsLost()` increases |
 | `gin` | `WithErrorRedactor(fn)` where `fn` panics and a handler calls `c.Error(errors.New("boom"))` | a `500` problem; the record has `exception.message` `[redaction failed]` |
 | `fiber` | `WithListener(ln)` where `ln.Accept` panics | `Start` returns an error wrapping `srvr.ErrConfig` naming `Listener` and the process keeps running |
 | `gin` | `WithListener(ln)` where `ln.Close` panics | `Shutdown` returns `nil`, `server.stopped` has no `srvr.drain.forced`, and a later `Shutdown` returns `nil` |

@@ -32,7 +32,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** If core-server is archived, move them to a MODIFIED delta of triage-error-records.
 
 ### Buffer must plug into srvr/engine
-- **Status:** adopted by triage-debug-buffer (planning audit 2026-11-17: design D3/D6 and task 6.1 put buffer creation and the flush in the `srvr/engine` access stage, reading `engine.RequestState`)
+- **Status:** closed: done by triage-debug-buffer (released v0.1.0, 2026-11-19); adopted (planning audit 2026-11-17: design D3/D6 and task 6.1 put buffer creation and the flush in the `srvr/engine` access stage, reading `engine.RequestState`)
 - **Target:** triage-debug-buffer
 - **Context:** Engine parity slice assumed core options; gin-and-fiber-engines introduces public srvr/engine.
 - **Evidence:** unverified: planning-time inconsistency found when the five changes were drafted in parallel
@@ -53,21 +53,21 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** Consolidation task 1.3 checks the merged correlation handler with a `WithGroup` test; if it nests, write a fix entry for core-server's engine pipeline and use the same "attrs before groups" chain as D2.
 
 ### Flush when the access record is suppressed
-- **Status:** adopted by triage-debug-buffer (owner decision D24, 2026-11-17: discard; Scenario: Suppressed access record, task 4.3)
+- **Status:** closed: done by triage-debug-buffer (released v0.1.0, 2026-11-19); adopted (owner decision D24, 2026-11-17: discard; Scenario: Suppressed access record, task 4.3)
 - **Target:** triage-debug-buffer
 - **Context:** `AccessLogConfig` skip paths and `Disabled` suppress access records below `500`. With `FlushAtStatus(400)`, a `404` on a skipped path would flush records that precede no access record.
 - **Evidence:** unverified: specification gap; no scenario defines it.
 - **Suggested action:** Owner decides: flush anyway, or discard when the access record is suppressed (suggested: discard, add a row to Flush threshold).
 
 ### Panic with http.ErrAbortHandler
-- **Status:** adopted by triage-debug-buffer (owner decision D24, 2026-11-17: flush; Unusual endings row, task 6.3)
+- **Status:** closed: done by triage-debug-buffer (released v0.1.0, 2026-11-19); adopted (owner decision D24, 2026-11-17: flush; Unusual endings row, task 6.3)
 - **Target:** triage-debug-buffer
 - **Context:** core-server re-raises `http.ErrAbortHandler` to abort the connection; `httputil.ReverseProxy` uses it on upstream copy failures. The flush rule "recovered panic" does not say whether this counts.
 - **Evidence:** unverified: specification gap.
 - **Suggested action:** Owner decides; suggested: flush (it is an aborted, failed request) and add an Unusual endings row.
 
 ### Programmatic options for buffer level and limits
-- **Status:** adopted by triage-debug-buffer (owner decision D13, 2026-11-17: `WithDebugBuffer(opts ...DebugBufferOption)` with `BufferLevel`, `FlushAtStatus`, `MaxRecords`, `MaxBytes`, `TotalBytes`, plus `WithDebugBufferConfig`; Configuration sources rows, task 4.1)
+- **Status:** closed: done by triage-debug-buffer (released v0.1.0, 2026-11-19); adopted (owner decision D13, 2026-11-17: `WithDebugBuffer(opts ...DebugBufferOption)` with `BufferLevel`, `FlushAtStatus`, `MaxRecords`, `MaxBytes`, `TotalBytes`, plus `WithDebugBufferConfig`; Configuration sources rows, task 4.1)
 - **Target:** triage-debug-buffer
 - **Context:** Only `WithDebugBuffer()` and `FlushAtStatus(n)` are named; `Level`, `MaxRecords`, `MaxBytes`, `TotalBytes` are set only through `DebugBufferConfig`. AGENTS.md rule 7 asks for both functional options and config structs.
 - **Evidence:** unverified: API-shape gap in proposal/design Defaults table.
@@ -109,7 +109,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none; consolidation 1.3 checks core-server's merged truncation function covers error values and `msg`.
 
 ### Items carried from skills-compliance (owner decision, 2026-11-18)
-- **Status:** open
+- **Status:** closed: done by triage-debug-buffer slices 8-11 (released v0.1.0, 2026-11-19)
 - **Target:** triage-debug-buffer (slices 8-11)
 - **Context:** the owner added the items `skills-compliance` left out or deferred: performance benchmarking and profiling, with the deferred optimisations measured (slice 8; design D8); an opt-in unmatched-record limit and user-agent omission (slice 9; D7); `srvr.LogWriteErrors` renamed to `srvr.LogRecordsLost`, one joined construction error, typed otel configuration errors and the fiber stuck-listener row (slice 10; D9); the first release, tagged only after owner confirmation (slice 11; D10). The unmatched-limit mechanism was chosen after comparing journald's burst-per-interval limit, zap's sampler and `samber/slog-sampling` (D7). Each source entry in `openspec/changes/skills-compliance/notes.md` now targets its task here.
 - **Evidence:** the source entries in `skills-compliance/notes.md`: "Unmatched-request failed records cannot be sampled", "The user agent is logged by default without an opt-out", "Slice 2 /simplify: efficiency items deferred to the benchmarks", "Configuration errors: ...", "Task 9.4: measured performance changes", "Target cache: patterns where it cannot hit", "Kept as is after the audit" (update) and "Slice 3: defects found beyond the audit" (fiber row).
@@ -122,6 +122,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** `openspec validate --specs --strict` fails `engine-support`: three requirement texts exceed 500 characters - "Engines share one per-request state" (579, already in main before `skills-compliance` was archived), and "srvr re-exports the shared types" (522) and "Registered routes are listed with their configurer" (581), both as `skills-compliance` modified them. Found while archiving `skills-compliance` on 2026-11-18; the sync copied the delta text faithfully.
 - **Evidence:** `openspec validate engine-support --type spec --strict`: `[WARNING] requirements[7]`, `[9]`, `[10]`: "Requirement text is very long (>500 characters)"; 14 of 15 main specs pass.
 - **Suggested action:** a planning change (or this change's next consolidation) moves the examples out of each requirement text into its scenarios, or splits each into requirements stating one behaviour, without changing behaviour.
+- **Update (archive sync, 2026-11-19):** after syncing this change, `openspec validate --specs --strict` reports 12 passed, 4 failed, all on "Requirement text is very long (>500 characters)": `engine-support` (as before) and, new, `error-responses` ("Consumers extend error rendering"), `server-lifecycle` ("Construction validates configuration") and `structured-logging` ("Failed-request records are never suppressed"), whose MODIFIED descriptions were copied verbatim from this change's deltas. Suggested action unchanged: shorten those requirement descriptions (moving detail into scenarios) in one docs change.
 
 ### Slice 2 (tasks 2.1-2.7): outcome
 - **Status:** closed: recorded
