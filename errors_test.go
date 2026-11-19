@@ -13,6 +13,7 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // TestHandlerResult covers route-registration / Scenario: Handler result.
@@ -199,13 +200,17 @@ func TestErrorExtension(t *testing.T) {
 }
 
 // reportHook returns an error hook adding name to log, marked when the
-// report is not prblm.ErrNotFound with a 404 problem, and then panicking
-// when panics is set.
+// report is not prblm.ErrNotFound with a 404 problem and when srvr's own
+// hook has already recorded the failure, and then panicking when panics is
+// set.
 func reportHook(log *callLog, name string, panics bool) func(context.Context, error, *prblm.Problem) {
-	return func(_ context.Context, err error, p *prblm.Problem) {
+	return func(ctx context.Context, err error, p *prblm.Problem) {
 		call := name
 		if !errors.Is(err, prblm.ErrNotFound) || p == nil || p.Status != http.StatusNotFound {
 			call += " (unexpected report)"
+		}
+		if state, ok := engine.StateFrom(ctx); ok && state.Failed() {
+			call += " after srvr"
 		}
 		log.add(call)
 
@@ -217,14 +222,17 @@ func reportHook(log *callLog, name string, panics bool) func(context.Context, er
 
 // TestConsumerPrblmHooks covers error-responses / Scenario: Consumer prblm
 // error hooks: srvr adds its hook with prblm.AddErrorHook, so a consumer's
-// prblm hooks run and srvr still records the failure.
+// prblm hooks run and srvr still records the failure. The order step is
+// checked where a row has two hooks (fn before gn) and through srvr's
+// record: consumer prblm hooks run before srvr's hook, the WithErrorHook
+// hook after it.
 func TestConsumerPrblmHooks(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name  string
 		opts  func(log *callLog) []srvr.Option
-		calls []string // consumer hooks called, in order
+		calls []string // consumer hooks called, in order, "after srvr" when srvr's hook ran first
 	}{
 		{
 			name: "no option",
@@ -252,7 +260,7 @@ func TestConsumerPrblmHooks(t *testing.T) {
 					srvr.WithErrorHook(reportHook(log, "gn", false)),
 				}
 			},
-			calls: []string{"fn", "gn"},
+			calls: []string{"fn", "gn after srvr"},
 		},
 		{
 			name: "prblm.AddErrorHook",
@@ -372,8 +380,10 @@ func TestPanicRecovery(t *testing.T) {
 	}
 }
 
-// TestLateError covers error-responses / Scenario: Late error, the client
-// response and the access record.
+// TestLateError covers error-responses / Scenario: Late error and
+// structured-logging / Scenario: Level of a failure after the response
+// started, all four rows of each: the client response and the access
+// record's level.
 func TestLateError(t *testing.T) {
 	t.Parallel()
 
