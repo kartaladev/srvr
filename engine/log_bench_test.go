@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -13,19 +15,23 @@ import (
 // write with.
 var benchTrace = Trace{TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7"}
 
-// benchRequestContext returns a request context carrying benchTrace, as a
-// request handled by the server has.
-func benchRequestContext(b *testing.B) context.Context {
+// benchRequestContext returns a request context carrying req (nil: a
+// request with benchTrace), as a request handled by the server has.
+func benchRequestContext(b *testing.B, req *RequestState) context.Context {
 	b.Helper()
 
-	return context.WithValue(b.Context(), stateKey{}, &RequestState{trace: benchTrace})
+	if req == nil {
+		req = &RequestState{trace: benchTrace}
+	}
+
+	return context.WithValue(b.Context(), stateKey{}, req)
 }
 
 // BenchmarkCorrelation compares ungrouped and grouped request records: a
 // grouped logger replays its WithGroup and WithAttrs steps per record.
 func BenchmarkCorrelation(b *testing.B) {
 	base := &logHandler{base: slog.NewJSONHandler(io.Discard, nil)} //nolint:sloglint // the benchmark measures encoding records: slog.DiscardHandler is disabled and would skip that work
-	ctx := benchRequestContext(b)
+	ctx := benchRequestContext(b, nil)
 
 	cases := []struct {
 		name   string
@@ -49,14 +55,17 @@ func BenchmarkCorrelation(b *testing.B) {
 // BenchmarkLogHandler measures srvr's logging handler as the server builds
 // it by default (JSON, default attribute cap) writing a request record to
 // io.Discard, after 0, 1 and 3 With steps, with and without a slog.Any
-// attribute, which the attribute cap formats to measure.
+// attribute, which the attribute cap formats to measure. Two more rows
+// measure the patterns where the handler's target cache cannot hit: a
+// request logger taken from LoggerFromContext for each record, and the
+// root logger shared by concurrent requests, each with its own trace.
 func BenchmarkLogHandler(b *testing.B) {
 	h, err := newLogHandler(&LogSettings{Output: io.Discard})
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	ctx := benchRequestContext(b)
+	ctx := benchRequestContext(b, nil)
 	header := http.Header{"Accept": {"application/json"}, "User-Agent": {"bench/1.0"}}
 
 	cases := []struct {
@@ -91,6 +100,36 @@ func BenchmarkLogHandler(b *testing.B) {
 			}
 		})
 	}
+
+	attr := slog.String("table", "users")
+
+	b.Run("LoggerFromContext one record", func(b *testing.B) {
+		ctx := benchRequestContext(b, &RequestState{core: &Core{log: h}, trace: benchTrace})
+
+		b.ReportAllocs()
+
+		for b.Loop() {
+			LoggerFromContext(ctx).LogAttrs(ctx, slog.LevelInfo, "query", attr)
+		}
+	})
+
+	b.Run("root logger concurrent requests", func(b *testing.B) {
+		l := slog.New(h)
+
+		var requests atomic.Uint64
+
+		b.ReportAllocs()
+
+		b.RunParallel(func(pb *testing.PB) {
+			tr := benchTrace
+			tr.SpanID = fmt.Sprintf("%016x", requests.Add(1)) // a request of its own per goroutine
+			ctx := benchRequestContext(b, &RequestState{trace: tr})
+
+			for pb.Next() {
+				l.LogAttrs(ctx, slog.LevelInfo, "query", attr)
+			}
+		})
+	})
 }
 
 // BenchmarkRedactSecrets measures the default redactor over representative

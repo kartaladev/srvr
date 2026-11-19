@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/tracectx"
@@ -68,6 +70,9 @@ type RequestState struct {
 	// ends are the non-nil end functions of the request's observers, in
 	// Begin order.
 	ends []endFunc
+	// logger is the request logger LoggerFromContext returns, built by
+	// its first call.
+	logger atomic.Pointer[slog.Logger]
 }
 
 // Route returns the route pattern the router matched, in the engine's own

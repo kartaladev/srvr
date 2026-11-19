@@ -90,6 +90,7 @@ engine does not compile.
 ## More
 
 - [LOGGING.md](LOGGING.md): the log schema, redaction and triage records.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): running the benchmarks and profiles, comparing results, and the CI allocation gate.
 - [CHANGELOG.md](CHANGELOG.md): changes per release.
 - [RELEASING.md](RELEASING.md): how the modules are tagged.
 

@@ -22,8 +22,20 @@ once tagged.
   `errors.Is(err, srvr.ErrConfig)` and its text is unchanged.
 - `srvr.RouteCheck`, `srvr.Routes` and `srvr.Route` aliases: a route check needs no `engine` import.
   `WithRouteCheck` takes `srvr.RouteCheck` (the same type).
+- `engine.Core.AccessSuppressed`, for an engine to skip copying what only a suppressed access
+  record reports.
+- Benchmarks for every hot path, `make bench` and `make profile` (results under the ignored
+  `bench/`), `docs/PERFORMANCE.md`, and a CI job that fails a pull request whose benchmarks
+  allocate more than 10% more (`allocs/op` or `B/op`) than `main`; timings are reported only.
 
 ### Changed
+
+- Faster, measured with `benchstat` (`docs/PERFORMANCE.md`): `engine.RedactSecrets` skips its
+  secret-pair pattern when no key word can occur (a 32 KiB stack 4.2 ms -> 0.13 ms, so a recovered
+  panic costs about 99 µs instead of 555 µs); every `LoggerFromContext` call for one request
+  returns the same logger (0 allocations after the first, was 11 per call); a `slog.Any` value
+  under the attribute cap is measured without building its text (-15% B/op); fiber copies nothing
+  out of its buffers for a suppressed access record (-6 allocations). Output is unchanged.
 
 - Requires `github.com/kartaladev/prblm` v0.2.0 (was v0.1.0) in every module. `ginsrvr` and
   `fibersrvr` now import prblm's adapters from their new module paths,

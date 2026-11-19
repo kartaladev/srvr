@@ -708,7 +708,7 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 		}
 	}
 
-	s.core.WriteAccess(ctx, s.accessInfo(c, time.Since(begin)))
+	s.core.WriteAccess(ctx, s.accessInfo(ctx, c, time.Since(begin)))
 
 	return nil
 }
@@ -725,20 +725,32 @@ func bodySize(res *fasthttp.Response) int64 {
 	return int64(len(res.Body()))
 }
 
-// accessInfo copies what the access record reports out of c.
-func (s *Server) accessInfo(c fiber.Ctx, d time.Duration) engine.AccessInfo {
-	return engine.AccessInfo{
-		Method:     c.Method(), // a stable string in fiber v3, never a pooled buffer
-		Path:       strings.Clone(c.Path()),
-		RawQuery:   string(c.Request().URI().QueryString()),
-		RemoteAddr: c.RequestCtx().RemoteAddr().String(),
-		UserAgent:  string(c.Request().Header.UserAgent()),
-		Status:     c.Response().StatusCode(),
-		BodySize:   bodySize(c.Response()),
+// accessInfo copies what the access record reports out of c. When the
+// record is suppressed, it copies nothing: the observers' result needs
+// only the numbers, and WriteAccess reads the path, a view of fiber's
+// buffer, before it returns, without keeping it (task 8.5: 6 fewer
+// allocations per suppressed request, such as a health check).
+func (s *Server) accessInfo(ctx context.Context, c fiber.Ctx, d time.Duration) engine.AccessInfo {
+	info := engine.AccessInfo{
+		Method:   c.Method(), // a stable string in fiber v3, never a pooled buffer
+		Path:     c.Path(),
+		Status:   c.Response().StatusCode(),
+		BodySize: bodySize(c.Response()),
 		// A negative Content-Length is unknown (-1) or chunked (-2).
 		RequestBodySize: int64(max(c.Request().Header.ContentLength(), 0)),
 		Duration:        d,
 	}
+
+	if s.core.AccessSuppressed(ctx, info.Path, info.Status) {
+		return info
+	}
+
+	info.Path = strings.Clone(info.Path)
+	info.RawQuery = string(c.Request().URI().QueryString())
+	info.RemoteAddr = c.RequestCtx().RemoteAddr().String()
+	info.UserAgent = string(c.Request().Header.UserAgent())
+
+	return info
 }
 
 // requestInfo copies what observers learn before routing out of c.

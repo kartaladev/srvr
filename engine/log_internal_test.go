@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -111,4 +113,88 @@ func (b *syncBuffer) records(t *testing.T) []map[string]any {
 	}
 
 	return recs
+}
+
+// TestLoggerFromContext_Shared: every LoggerFromContext call for one
+// request after the first returns the logger the first call built, so a
+// handler that takes the logger for each record allocates nothing for it
+// and reuses its target. Not parallel: AllocsPerRun panics while a
+// parallel test runs.
+func TestLoggerFromContext_Shared(t *testing.T) { //nolint:paralleltest // AllocsPerRun cannot run beside parallel tests.
+	ctx := context.WithValue(t.Context(), stateKey{}, &RequestState{core: bufferedCore(t, func(*Settings) {}), trace: Trace{TraceID: "a1", SpanID: "s1"}})
+	first := LoggerFromContext(ctx)
+
+	if got := LoggerFromContext(ctx); got != first {
+		t.Fatalf("second call = %p, want the first call's logger %p", got, first)
+	}
+
+	if allocs := testing.AllocsPerRun(100, func() { _ = LoggerFromContext(ctx) }); allocs != 0 {
+		t.Fatalf("LoggerFromContext allocates %v times per call after the first, want 0", allocs)
+	}
+}
+
+// TestLoggerFromContext_ConcurrentFirstCalls: concurrent first calls for
+// one request agree on one logger.
+func TestLoggerFromContext_ConcurrentFirstCalls(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.WithValue(t.Context(), stateKey{}, &RequestState{core: bufferedCore(t, func(*Settings) {}), trace: Trace{TraceID: "b2", SpanID: "s2"}})
+	loggers := make([]*slog.Logger, 8)
+
+	var wg sync.WaitGroup
+	for i := range loggers {
+		wg.Go(func() { loggers[i] = LoggerFromContext(ctx) })
+	}
+	wg.Wait()
+
+	for i, l := range loggers {
+		if l != loggers[0] {
+			t.Fatalf("goroutine %d got logger %p, goroutine 0 got %p", i, l, loggers[0])
+		}
+	}
+}
+
+// panickyString is a panic value whose own String panics, so fmt, which
+// recovers a panicking Format and prints the panic value, panics again.
+type panickyString struct{}
+
+func (panickyString) String() string { panic("String") }
+
+// panickyFormat is a plain value (no String, no Error) whose Format panics
+// with a panickyString.
+type panickyFormat struct{}
+
+func (panickyFormat) Format(fmt.State, rune) { panic(panickyString{}) }
+
+// TestCapAny_FormattingPanics: a plain value whose formatting panics past
+// fmt's own recovery is measured as unknown and logged as the guarded
+// placeholder, never crashing the record.
+func TestCapAny_FormattingPanics(t *testing.T) {
+	t.Parallel()
+
+	if n, ok := formattedLen(panickyFormat{}); ok {
+		t.Fatalf("formattedLen = %d, true; want false for a value whose formatting panics", n)
+	}
+
+	tr := truncator{maxBytes: 1024}
+	if got := tr.capAny("v", slog.AnyValue(panickyFormat{})); got.Value.String() != panicFormatting {
+		t.Fatalf("capAny = %v, want %q", got.Value, panicFormatting)
+	}
+}
+
+// TestCapAny_Stringer: a fmt.Stringer is measured by its String, and one
+// that fits is kept as the value itself, for the base handler to render.
+func TestCapAny_Stringer(t *testing.T) {
+	t.Parallel()
+
+	addr := netip.MustParseAddr("192.0.2.1")
+	tr := truncator{maxBytes: 9}
+
+	if got := tr.capAny("a", slog.AnyValue(addr)); got.Value.Any() != addr || tr.cut {
+		t.Fatalf("capAny = %v (cut %v), want the address itself", got.Value, tr.cut)
+	}
+
+	if got := tr.capAny("a", slog.AnyValue(netip.MustParseAddr("192.0.2.10"))); got.Value.String() != "192.0.2.1…[truncated]" || !tr.cut {
+		t.Fatalf("capAny = %v (cut %v), want the text cut", got.Value, tr.cut)
+	}
 }

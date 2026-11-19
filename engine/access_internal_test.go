@@ -159,3 +159,51 @@ func TestResponseRecorder_ReadFrom(t *testing.T) {
 		})
 	}
 }
+
+// TestAccessSuppressed: an engine asks whether a request's access record
+// is suppressed before copying the values only the record reports; the
+// answer is the access stage's own decision: completed requests on a skip
+// path or with the access log disabled, never a failure or a 5xx.
+func TestAccessSuppressed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		access AccessLogConfig
+		path   string
+		status int
+		state  *RequestState // nil: a context without a request
+		want   bool
+	}{
+		{"not skipped", AccessLogConfig{SkipPaths: []string{"/health"}}, "/users", 200, &RequestState{}, false},
+		{"skip path", AccessLogConfig{SkipPaths: []string{"/health"}}, "/health", 200, &RequestState{}, true},
+		{"skip path, 404", AccessLogConfig{SkipPaths: []string{"/health"}}, "/health", 404, &RequestState{}, true},
+		{"skip path, 503", AccessLogConfig{SkipPaths: []string{"/health"}}, "/health", 503, &RequestState{}, false},
+		{"access log disabled", AccessLogConfig{Disabled: true}, "/users", 200, &RequestState{}, true},
+		{
+			"failed request on a skip path",
+			AccessLogConfig{SkipPaths: []string{"/health"}},
+			"/health", 200,
+			&RequestState{failure: &failure{err: errors.New("boom")}}, false,
+		},
+		{"aborted request, disabled", AccessLogConfig{Disabled: true}, "/users", 200, &RequestState{aborted: true}, false},
+		{"no request in the context", AccessLogConfig{Disabled: true}, "/users", 200, nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			c := bufferedCore(t, func(s *Settings) { s.Access = tt.access })
+
+			ctx := t.Context()
+			if tt.state != nil {
+				ctx = context.WithValue(ctx, stateKey{}, tt.state)
+			}
+
+			if got := c.AccessSuppressed(ctx, tt.path, tt.status); got != tt.want {
+				t.Fatalf("AccessSuppressed(%s, %d) = %v, want %v", tt.path, tt.status, got, tt.want)
+			}
+		})
+	}
+}

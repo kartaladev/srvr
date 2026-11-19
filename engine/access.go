@@ -131,7 +131,9 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 
 // AccessInfo is what the access record of a request reports about it,
 // besides the request state. An engine copies every value out of buffers
-// it reuses before passing it.
+// it reuses before passing it, except for a record AccessSuppressed
+// reports suppressed: WriteAccess then reads Path only to decide and keeps
+// no string of info past its return.
 type AccessInfo struct {
 	// Method is the request method.
 	Method string
@@ -172,6 +174,28 @@ func (c *Core) WriteAccess(ctx context.Context, info AccessInfo) {
 	}
 }
 
+// AccessSuppressed reports whether the access record of the request of
+// ctx, ending now with status on path, is suppressed (Disabled,
+// SkipPaths), so an engine can skip copying the values only the record
+// reports. It is false outside a request.
+func (c *Core) AccessSuppressed(ctx context.Context, path string, status int) bool {
+	req := requestFrom(ctx)
+	if req == nil {
+		return false
+	}
+
+	msg, _ := outcome(status, req.aborted, req.failure)
+
+	return c.accessSuppressed(msg, path, status)
+}
+
+// accessSuppressed reports whether an access record with event msg is
+// suppressed. Failed records are the triage record: suppression never
+// applies.
+func (c *Core) accessSuppressed(msg, path string, status int) bool {
+	return msg == eventRequestCompleted && c.settings.Access.suppressed(path, status)
+}
+
 // writeAccess runs the request's observer end functions, then writes its
 // access record; a zero info.Status, an aborted request whose response
 // never started, omits the status.
@@ -183,10 +207,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 	fail := req.failure
 
 	msg, level := outcome(status, aborted, fail)
-
-	// Failed records are the triage record: suppression never applies.
-	suppressed := msg == eventRequestCompleted && c.settings.Access.suppressed(info.Path, status)
-	written := !suppressed && c.log.baseEnabled(ctx, level)
+	written := !c.accessSuppressed(msg, info.Path, status) && c.log.baseEnabled(ctx, level)
 	summary := c.flushBuffer(req, status, written)
 
 	if !written {

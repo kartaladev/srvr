@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/kartaladev/prblm"
 )
@@ -221,6 +224,13 @@ func TestRedactSecrets(t *testing.T) {
 		{"compact JSON pair", `body {"token":"abc","n":1}`, `body {"token":"***","n":1}`},
 		{"spaced equals", "password = hunter2", "password = ***"},
 		{"basic auth", "authorization: Basic dXNlcjpwYXNz", "authorization: ***"},
+		// (?i) folds Unicode: the Kelvin sign matches k and the long s
+		// matches s, so these keys are masked too.
+		{"key with a Kelvin sign", "\u212Aey=hunter2", "\u212Aey=***"},
+		{"session with a long s", "\u017Fession_id=7f3a", "\u017Fession_id=***"},
+		{"upper case key", "API_TOKEN=abc", "API_TOKEN=***"},
+		{"keyword ends the text", "no secret here but a token", "no secret here but a token"},
+		{"no keyword", "store: find user 42: connection refused", "store: find user 42: connection refused"},
 	}
 
 	for _, tt := range tests {
@@ -298,5 +308,22 @@ func TestRequestState_RouteAccessors(t *testing.T) {
 
 	if !req.Matched() || req.Route() != "/users/{id}" || req.Location() != loc {
 		t.Fatalf("state = %q, %+v, matched %v; want /users/{id}, %+v, true", req.Route(), req.Location(), req.Matched(), loc)
+	}
+}
+
+// TestFoldedLetters: foldedLetters holds every non-ASCII rune that (?i)
+// folds onto a letter of secretWords, so the pre-scan in RedactSecrets
+// never skips text secretPair would match.
+func TestFoldedLetters(t *testing.T) {
+	t.Parallel()
+
+	for _, w := range secretWords {
+		for _, c := range w {
+			for r := unicode.SimpleFold(c); r != c; r = unicode.SimpleFold(r) {
+				if r >= utf8.RuneSelf && !slices.Contains(foldedLetters, string(r)) {
+					t.Errorf("%U folds onto %q of %q but is not in foldedLetters", r, c, w)
+				}
+			}
+		}
 	}
 }
