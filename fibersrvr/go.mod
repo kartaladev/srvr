@@ -2,15 +2,11 @@ module github.com/kartaladev/srvr/fibersrvr
 
 go 1.27
 
-// Until the core release that adds package engine is tagged, the module
-// builds against the core in this repository.
-replace github.com/kartaladev/srvr => ../
-
 require (
 	github.com/gofiber/fiber/v3 v3.7.0
 	github.com/kartaladev/prblm v0.2.0
 	github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0
-	github.com/kartaladev/srvr v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/srvr v0.1.0
 	github.com/valyala/fasthttp v1.78.0
 	go.uber.org/goleak v1.3.0
 )
