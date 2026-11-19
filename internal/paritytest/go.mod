@@ -15,7 +15,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gofiber/fiber/v3 v3.7.0
 	github.com/kartaladev/prblm v0.2.0
-	github.com/kartaladev/srvr v0.0.0-00010101000000-000000000000
+	github.com/kartaladev/srvr v0.1.0
 	github.com/kartaladev/srvr/fibersrvr v0.0.0-00010101000000-000000000000
 	github.com/kartaladev/srvr/ginsrvr v0.0.0-00010101000000-000000000000
 	github.com/kartaladev/srvr/otelsrvr v0.0.0-00010101000000-000000000000

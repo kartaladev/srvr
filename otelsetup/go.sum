@@ -19,10 +19,6 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePC
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0/go.mod h1:zOBXOsUaBSjKgmH4OGzV1esUpR3oUSCPYVd2cUBjKYY=
 github.com/kartaladev/prblm v0.2.0 h1:fp99osWVOZqHG+6jun4dRWd3fOn2gTWqUWYLXVqVQ9Q=
 github.com/kartaladev/prblm v0.2.0/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
-github.com/kartaladev/srvr v0.1.0 h1:dWIPxLiSgMoNlWmoao50RMgQFS6YX++ukHPT2YgBsYg=
-github.com/kartaladev/srvr v0.1.0/go.mod h1:w29lDoJLtfdKcgM+SsO/hjaTp+ME7d/ZMQ7owTeP/ZE=
-github.com/kartaladev/srvr/otelsrvr v0.1.0 h1:xK7bYlTAznAy8Xa05tG6IVgZQeEVBn1MpXc3/+DmkeM=
-github.com/kartaladev/srvr/otelsrvr v0.1.0/go.mod h1:HnRP4IVfsC0hJqHf+49i9xUGxuDT1ZWMKhj+L6gmmi4=
 github.com/klauspost/compress v1.20.1 h1:T7kKElXUMXrUJ2E9QhQhxFtcK5rPyLdsGZvdbLMPdiQ=
 github.com/klauspost/compress v1.20.1/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/kylelemons/godebug v1.1.0 h1:RPNrshWIDI6G2gRW9EHilWtl7Z6Sb1BR0xunSBf0SNc=
