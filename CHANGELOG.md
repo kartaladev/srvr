@@ -20,6 +20,10 @@ once tagged.
 - `srvr.ConfigError` (alias of the new type `*engine.ConfigError{Field, Value, Reason}`): every
   construction error is one, so `errors.As` reads the offending field; it still matches
   `errors.Is(err, srvr.ErrConfig)` and its text is unchanged.
+- `otelsrvr.ConfigError` and `otelsetup.ConfigError` (`Field`, `Value`, `Reason`): every
+  configuration error of their `New` is one, joined per invalid field, so `errors.As` reads the
+  field; they still match `errors.Is(err, ErrConfig)` and their text is unchanged. The cause of an
+  `OTLP.Endpoint`, `Prometheus.Addr` or instrument-creation failure is kept as text only.
 - `srvr.RouteCheck`, `srvr.Routes` and `srvr.Route` aliases: a route check needs no `engine` import.
   `WithRouteCheck` takes `srvr.RouteCheck` (the same type).
 - `engine.Core.AccessSuppressed`, for an engine to skip copying what only a suppressed access
@@ -51,6 +55,10 @@ once tagged.
   `github.com/kartaladev/prblm/adapters/ginprblm` and `.../adapters/fiberprblm` (v0.2.0); the old
   `prblm/ginprblm` and `prblm/fiberprblm` modules are no longer required. No srvr API or response
   change.
+- **Breaking (API, pre-v1):** `srvr.LogWriteErrors()` is renamed `srvr.LogRecordsLost()`, and
+  `engine.LogWriteErrors()` `engine.LogRecordsLost()`, without an alias: the counter counts every
+  record lost to an output or consumer-handler error or panic, not only failed writes. Its meaning
+  and value are unchanged.
 - **Breaking (API, pre-v1):** `ginsrvr.WithEngine` is renamed `ginsrvr.WithGinEngine`; construction
   errors about the hook name `WithGinEngine`.
 - **Breaking (API, `engine`, unstable before v1):** `engine.ConfigError(field, value, reason)` is
@@ -59,7 +67,10 @@ once tagged.
   replaced by `Core.MaxHeaderBytesSet()`, the only value an engine read; `RequestState.Route` and
   `RequestState.Location` are read with `Route()` and `Location()` and set with `SetRoute` and
   `SetLocation`.
-- An invalid `LogConfig.Level` and `Format` are both reported, `Level` first; only the first was.
+- Construction returns one error joining every invalid field, `LogConfig.Level` and `Format`
+  included: an invalid log field was reported only once every other field was valid, and only the
+  first of `Level` and `Format` was; with `WithLogHandler` or `WithLogger`, every conflicting log
+  setting is named, not only the first. Each part is a `*srvr.ConfigError`.
 - A handler error matching `context.Canceled` returned after the client went away (the request
   context is cancelled) is answered with a `499` "Client Closed Request" problem instead of `500`,
   by a prblm mapper srvr adds after the consumer's, so its access record is `http.request.failed`
@@ -93,9 +104,11 @@ once tagged.
   hangs or crashes `Start`; `Start`'s and `Shutdown`'s errors hide such a chain from `errors.Is`.
 - A route check or shutdown hook calling `runtime.Goexit` (for example `t.FailNow`) is reported as
   failed instead of hanging `Start` or `Shutdown`.
-- The serve goroutine is named `serveOn` and joined after the stop, for at most 1s.
+- The serve goroutine is named `serveOn` and joined after the stop, at most until the drain
+  deadline plus 100ms.
 - A `WithListener` listener whose `Close` does not unblock `Accept` no longer hangs `Shutdown` on
-  net/http and gin: the drain ends at its deadline.
+  any engine (net/http, gin, fiber): it returns once the drain deadline passes, instead of a
+  further second later.
 - `otelsrvr.New(nil)` and `otelsetup.New(ctx, nil)` fail with their module's `ErrConfig` naming the
   option's position, instead of panicking (`otelsrvr`) or skipping it silently (`otelsetup`).
 - A zero `otelsrvr.Observer` (not built by `New`) records nothing and writes no

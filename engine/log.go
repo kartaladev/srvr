@@ -70,18 +70,15 @@ type LogSettings struct {
 // newLogHandler resolves the base handler (the consumer's, or JSON or text
 // to the output) and the debug buffer policy, and wraps the base handler
 // in srvr's handler.
-func newLogHandler(ls *LogSettings) (*logHandler, error) {
-	base, err := ls.baseHandler()
-	if err != nil {
-		return nil, err
-	}
+func newLogHandler(ls *LogSettings) *logHandler {
+	base := ls.baseHandler()
 
 	var buffering *bufferPolicy // nil: buffering is off
 	if ls.DebugBuffer.Enabled {
 		buffering = newBufferPolicy(ls.DebugBuffer)
 	}
 
-	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: buffering, cache: &targetCache{}}, nil
+	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: buffering, cache: &targetCache{}}
 }
 
 // parseLevel parses a log/slog level name, such as "debug" or "info-4",
@@ -112,26 +109,45 @@ func (ls *LogSettings) staticLevel() (slog.Level, bool) {
 	return l, err == nil
 }
 
-// baseHandler returns the consumer's handler, or srvr's JSON or text
-// handler to the output.
-func (ls *LogSettings) baseHandler() (slog.Handler, error) {
+// validateLog reports every invalid log field: Level and Format, or the
+// fields a consumer's handler replaces.
+func validateLog(s *Settings) error {
+	ls := &s.Log
 	if ls.Handler != nil {
-		return ls.Handler, ls.checkOwnHandler()
+		return ls.checkOwnHandler()
 	}
 
-	// Every invalid field is reported, Level first.
 	var errs []error
 
-	var leveler slog.Leveler = slog.LevelInfo
-	if ls.LevelVar != nil {
-		leveler = ls.LevelVar
-	} else if ls.Level != "" {
-		l, err := parseLevel("Level", ls.Level)
-		if err != nil {
+	if ls.LevelVar == nil && ls.Level != "" {
+		if _, err := parseLevel("Level", ls.Level); err != nil {
 			errs = append(errs, err)
 		}
+	}
 
-		leveler = l
+	if ls.Format != "" && !strings.EqualFold(ls.Format, "json") && !isText(ls.Format) {
+		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+	}
+
+	return errors.Join(errs...)
+}
+
+// isText reports whether format names the text format; anything else
+// validateLog accepts is JSON.
+func isText(format string) bool { return strings.EqualFold(format, "text") }
+
+// baseHandler returns the consumer's handler, or srvr's JSON or text
+// handler to the output. The settings were validated (validateLog).
+func (ls *LogSettings) baseHandler() slog.Handler {
+	if ls.Handler != nil {
+		return ls.Handler
+	}
+
+	var leveler slog.Leveler
+	if ls.LevelVar != nil {
+		leveler = ls.LevelVar
+	} else {
+		leveler, _ = ls.staticLevel() // validated: Level is empty (INFO) or valid
 	}
 
 	out := io.Writer(os.Stdout)
@@ -142,22 +158,18 @@ func (ls *LogSettings) baseHandler() (slog.Handler, error) {
 	out = &guardedWriter{w: out}
 	opts := &slog.HandlerOptions{Level: leveler, AddSource: ls.AddSource}
 
-	var base slog.Handler
-
-	switch strings.ToLower(ls.Format) {
-	case "", "json":
-		base = slog.NewJSONHandler(out, opts)
-	case "text":
-		base = slog.NewTextHandler(out, opts)
-	default:
-		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+	if isText(ls.Format) {
+		return slog.NewTextHandler(out, opts)
 	}
 
-	return base, errors.Join(errs...)
+	return slog.NewJSONHandler(out, opts)
 }
 
-// checkOwnHandler rejects settings that belong to a consumer's handler.
+// checkOwnHandler rejects every setting that belongs to a consumer's
+// handler, one error per field.
 func (ls *LogSettings) checkOwnHandler() error {
+	var errs []error
+
 	for _, c := range []struct {
 		field string
 		set   bool
@@ -168,11 +180,11 @@ func (ls *LogSettings) checkOwnHandler() error {
 		{"Output", ls.Output != nil},
 	} {
 		if c.set {
-			return NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler")
+			errs = append(errs, NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler"))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // maxAttrBytes returns the effective string attribute cap; negative
@@ -295,7 +307,7 @@ func (h *logHandler) requestOf(ctx context.Context) *RequestState {
 func (h *logHandler) baseEnabled(ctx context.Context, l slog.Level) (enabled bool) {
 	defer func() {
 		if recover() != nil {
-			logWriteErrors.Add(1)
+			logRecordsLost.Add(1)
 
 			enabled = false
 		}
@@ -395,7 +407,7 @@ func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
 func (h *logHandler) write(ctx context.Context, r slog.Record, cut, buffered bool) {
 	defer func() {
 		if recover() != nil {
-			logWriteErrors.Add(1)
+			logRecordsLost.Add(1)
 		}
 	}()
 
@@ -406,7 +418,7 @@ func (h *logHandler) write(ctx context.Context, r slog.Record, cut, buffered boo
 	}
 
 	if err := h.cachedTarget(key).Handle(ctx, r); err != nil {
-		logWriteErrors.Add(1)
+		logRecordsLost.Add(1)
 	}
 }
 
@@ -559,18 +571,13 @@ const (
 	WarnFiberHeaderLimitCapped WarningCode = "fiber_header_limit_capped"
 )
 
-// logWriteErrors counts records srvr could not write.
-var logWriteErrors atomic.Uint64
+// logRecordsLost counts records srvr could not write.
+var logRecordsLost atomic.Uint64
 
-// LogWriteErrors returns how many log records srvr's handlers failed to
-// write: the output or a consumer handler returned an error, wrote short, or
-// panicked (in Enabled, WithAttrs, WithGroup or Handle; the record is then
-// skipped). The count is process-wide: one counter, shared by every server
-// in the process and never reset, because loggers derived from
-// slog.Default() do not know which server they belong to. srvr counts these failures instead of
-// logging them, because the log is what failed, and a request never fails
-// because its log record could not be written.
-func LogWriteErrors() uint64 { return logWriteErrors.Load() }
+// LogRecordsLost returns how many log records srvr's handlers skipped
+// because the output or a consumer handler failed or panicked; the count is
+// process-wide and never reset. See srvr.LogRecordsLost.
+func LogRecordsLost() uint64 { return logRecordsLost.Load() }
 
 // guardedWriter reports a short write without an error as
 // io.ErrShortWrite, so it is counted like any other write failure.

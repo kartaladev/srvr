@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -544,4 +545,77 @@ func TestNew_NilOption(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfigError covers telemetry-setup / Scenario: Typed configuration
+// errors.
+func TestConfigError(t *testing.T) {
+	t.Parallel()
+
+	with := func(c otelsetup.Config) []otelsetup.Option { return []otelsetup.Option{otelsetup.WithConfig(c)} }
+	prometheus := func(addr, path string) otelsetup.PrometheusConfig {
+		return otelsetup.PrometheusConfig{Enabled: true, Addr: addr, Path: path}
+	}
+
+	tests := []struct {
+		name   string
+		opts   []otelsetup.Option
+		fields []string
+	}{
+		{"a nil Option", []otelsetup.Option{nil}, []string{"Option"}},
+		{"no exporter enabled", with(otelsetup.Config{}), []string{"Exporters"}},
+		{"OTLP.Protocol udp", with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Protocol: "udp", Metrics: true}}), []string{"OTLP.Protocol"}},
+		{"OTLP enabling neither metrics nor traces", with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Protocol: otelsetup.ProtocolGRPC}}), []string{"OTLP"}},
+		{"OTLP.Endpoint http://[::1", with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Endpoint: "http://[::1", Metrics: true}}), []string{"OTLP.Endpoint"}},
+		{"FlushTimeout -1s", with(otelsetup.Config{FlushTimeout: -time.Second, Prometheus: local}), []string{"FlushTimeout"}},
+		{"Prometheus.Addr localhost:99999", with(otelsetup.Config{Prometheus: prometheus("localhost:99999", "")}), []string{"Prometheus.Addr"}},
+		{"Prometheus.Path metrics", with(otelsetup.Config{Prometheus: prometheus("127.0.0.1:0", "metrics")}), []string{"Prometheus.Path"}},
+		{
+			"FlushTimeout -1s and Prometheus.Path metrics",
+			with(otelsetup.Config{FlushTimeout: -time.Second, Prometheus: prometheus("127.0.0.1:0", "metrics")}),
+			[]string{"FlushTimeout", "Prometheus.Path"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, err := otelsetup.New(t.Context(), tt.opts...)
+			if s != nil {
+				shutdown(t, s)
+			}
+
+			if !errors.Is(err, otelsetup.ErrConfig) {
+				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig", s, err)
+			}
+
+			got := configFields(err)
+			for _, field := range tt.fields {
+				if !slices.Contains(got, field) {
+					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
+				}
+			}
+		})
+	}
+}
+
+// configFields returns the Field of every *otelsetup.ConfigError a joined
+// error holds, in order.
+func configFields(err error) []string {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := joined.Unwrap()
+		fields := make([]string, 0, len(errs))
+		for _, e := range errs {
+			fields = append(fields, configFields(e)...)
+		}
+
+		return fields
+	}
+
+	if ce, ok := errors.AsType[*otelsetup.ConfigError](err); ok {
+		return []string{ce.Field}
+	}
+
+	return nil
 }

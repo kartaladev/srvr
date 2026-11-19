@@ -202,6 +202,7 @@ func (s *Settings) validate() []error {
 		validateShutdownTimeout,
 		validateMaxHeaderBytes,
 		validateObservers,
+		validateLog,
 		validateDebugBuffer,
 		validateUnmatchedLimit,
 	} {

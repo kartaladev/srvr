@@ -16,8 +16,55 @@ import (
 )
 
 // ErrConfig is wrapped by every error New returns for invalid
-// configuration; the message names the offending field and value.
+// configuration, through one [ConfigError] per invalid field naming the
+// field and value.
 var ErrConfig = errors.New("otelsetup: invalid configuration")
+
+// ConfigError is the error New returns for one invalid field: errors.As
+// reads Field, Value and Reason, and errors.Is matches [ErrConfig]. When
+// several fields are invalid, New joins one ConfigError per field.
+type ConfigError struct {
+	// Field names the setting, such as "Prometheus.Path".
+	Field string
+	// Value is the offending value's text; empty when the field is unset.
+	Value string
+	// Reason says what is wrong with it.
+	Reason string
+
+	// text is the message after the prefix when it is not Field, Value
+	// and Reason joined by spaces.
+	text string
+}
+
+func (e *ConfigError) Error() string {
+	if e.text != "" {
+		return ErrConfig.Error() + ": " + e.text
+	}
+
+	parts := make([]string, 0, 3)
+	for _, p := range []string{e.Field, e.Value, e.Reason} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+
+	return ErrConfig.Error() + ": " + strings.Join(parts, " ")
+}
+
+// Unwrap returns [ErrConfig].
+func (e *ConfigError) Unwrap() error { return ErrConfig }
+
+// configError returns a *ConfigError whose message is field, value and
+// reason joined by spaces.
+func configError(field, value, reason string) error {
+	return &ConfigError{Field: field, Value: value, Reason: reason}
+}
+
+// configErrorColon returns a *ConfigError whose message is "field value:
+// reason".
+func configErrorColon(field, value, reason string) error {
+	return &ConfigError{Field: field, Value: value, Reason: reason, text: field + " " + value + ": " + reason}
+}
 
 // Default values of the configuration.
 const (
@@ -208,28 +255,28 @@ func (c Config) validate() error {
 	var errs []error
 
 	if !c.Prometheus.Enabled && !c.OTLP.enabled() {
-		errs = append(errs, fmt.Errorf("%w: no exporter is enabled (Prometheus.Enabled, OTLP)", ErrConfig))
+		errs = append(errs, &ConfigError{Field: "Exporters", Reason: "none is enabled", text: "no exporter is enabled (Prometheus.Enabled, OTLP)"})
 	}
 
 	if c.OTLP.enabled() {
 		if p := c.OTLP.Protocol; p != ProtocolHTTPProtobuf && p != ProtocolGRPC {
-			errs = append(errs, fmt.Errorf("%w: OTLP.Protocol %q must be %q or %q",
-				ErrConfig, p, ProtocolHTTPProtobuf, ProtocolGRPC))
+			errs = append(errs, configError("OTLP.Protocol", strconv.Quote(p),
+				"must be "+strconv.Quote(ProtocolHTTPProtobuf)+" or "+strconv.Quote(ProtocolGRPC)))
 		}
 
 		if !c.OTLP.Metrics && !c.OTLP.Traces {
-			errs = append(errs, fmt.Errorf("%w: OTLP enables neither Metrics nor Traces", ErrConfig))
+			errs = append(errs, configError("OTLP", "", "enables neither Metrics nor Traces"))
 		}
 
 		if ep := c.OTLP.Endpoint; ep != "" {
 			if err := checkEndpoint(ep); err != nil {
-				errs = append(errs, fmt.Errorf("%w: OTLP.Endpoint %q: %w", ErrConfig, ep, err))
+				errs = append(errs, configErrorColon("OTLP.Endpoint", strconv.Quote(ep), err.Error()))
 			}
 		}
 	}
 
 	if c.FlushTimeout < 0 {
-		errs = append(errs, fmt.Errorf("%w: FlushTimeout %v must not be negative", ErrConfig, c.FlushTimeout))
+		errs = append(errs, configError("FlushTimeout", c.FlushTimeout.String(), "must not be negative"))
 	}
 
 	if c.Prometheus.Enabled {
@@ -249,7 +296,7 @@ func (c Config) validate() error {
 // may be empty (all interfaces).
 func validateAddr(addr string) error {
 	if _, err := splitHostPort(addr); err != nil {
-		return fmt.Errorf("%w: Prometheus.Addr %q: %w", ErrConfig, addr, err)
+		return configErrorColon("Prometheus.Addr", strconv.Quote(addr), err.Error())
 	}
 
 	return nil
@@ -276,12 +323,12 @@ func splitHostPort(addr string) (string, error) {
 // built or bound.
 func validatePath(path string) (err error) {
 	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("%w: Prometheus.Path %q must start with /", ErrConfig, path)
+		return configError("Prometheus.Path", strconv.Quote(path), "must start with /")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("%w: Prometheus.Path %q: %s", ErrConfig, path, engine.ValueText(v))
+			err = configErrorColon("Prometheus.Path", strconv.Quote(path), engine.ValueText(v))
 		}
 	}()
 

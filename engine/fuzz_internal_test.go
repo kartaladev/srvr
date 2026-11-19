@@ -71,10 +71,7 @@ func FuzzLogLine(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		var buf bytes.Buffer
 
-		h, err := newLogHandler(&LogSettings{Output: &buf})
-		if err != nil {
-			t.Fatal(err)
-		}
+		h := newLogHandler(&LogSettings{Output: &buf})
 
 		slog.New(h).Info(s, "value", s)
 

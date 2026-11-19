@@ -21,10 +21,7 @@ func TestLogHandler_TargetCache(t *testing.T) {
 
 	var buf syncBuffer
 
-	h, err := newLogHandler(&LogSettings{Output: &buf, MaxAttrBytes: 8})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := newLogHandler(&LogSettings{Output: &buf, MaxAttrBytes: 8})
 
 	req := &RequestState{trace: Trace{TraceID: "a1", SpanID: "s1"}}
 	logger := slog.New(h.bind(req).WithAttrs([]slog.Attr{slog.String("step", "x")}))
@@ -58,10 +55,7 @@ func TestLogHandler_TargetCache(t *testing.T) {
 
 		var out syncBuffer
 
-		h, err := newLogHandler(&LogSettings{Output: &out})
-		if err != nil {
-			t.Fatal(err)
-		}
+		h := newLogHandler(&LogSettings{Output: &out})
 
 		shared := slog.New(h.WithAttrs([]slog.Attr{slog.String("step", "x")}))
 

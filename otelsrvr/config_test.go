@@ -402,3 +402,65 @@ func TestNew_NilOption(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigError covers otel-metrics / Scenario: Typed configuration
+// errors.
+func TestConfigError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		opts   []otelsrvr.Option
+		fields []string
+	}{
+		{"nil", []otelsrvr.Option{nil}, []string{"Option"}},
+		{"WithMeterProvider(nil)", []otelsrvr.Option{otelsrvr.WithMeterProvider(nil)}, []string{"MeterProvider"}},
+		{"WithTracerProvider(nil)", []otelsrvr.Option{otelsrvr.WithTracerProvider(nil)}, []string{"TracerProvider"}},
+		{"WithPropagator(nil)", []otelsrvr.Option{otelsrvr.WithPropagator(nil)}, []string{"Propagator"}},
+		{"WithDurationBuckets()", []otelsrvr.Option{otelsrvr.WithDurationBuckets()}, []string{"DurationBuckets"}},
+		{"WithDurationBuckets(1, 0.5)", []otelsrvr.Option{otelsrvr.WithDurationBuckets(1, 0.5)}, []string{"DurationBuckets"}},
+		{
+			"WithMeterProvider(nil) and WithTracerProvider(nil)",
+			[]otelsrvr.Option{otelsrvr.WithMeterProvider(nil), otelsrvr.WithTracerProvider(nil)},
+			[]string{"MeterProvider", "TracerProvider"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := otelsrvr.New(tt.opts...)
+			if !errors.Is(err, otelsrvr.ErrConfig) {
+				t.Fatalf("New = %v, want an error wrapping ErrConfig", err)
+			}
+
+			got := configFields(err)
+			for _, field := range tt.fields {
+				if !slices.Contains(got, field) {
+					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
+				}
+			}
+		})
+	}
+}
+
+// configFields returns the Field of every *otelsrvr.ConfigError a joined
+// error holds, in order.
+func configFields(err error) []string {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := joined.Unwrap()
+		fields := make([]string, 0, len(errs))
+		for _, e := range errs {
+			fields = append(fields, configFields(e)...)
+		}
+
+		return fields
+	}
+
+	if ce, ok := errors.AsType[*otelsrvr.ConfigError](err); ok {
+		return []string{ce.Field}
+	}
+
+	return nil
+}

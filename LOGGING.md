@@ -181,6 +181,14 @@ response, and is neither detected nor logged. Adding this event kept `srvr.log.s
 
 It carries `srvr.log.schema` 1; adding it kept the version.
 
+## Lost records
+
+A record the output or a consumer `slog.Handler` fails to take (an error, a short write, or a panic
+in `Enabled`, `WithAttrs`, `WithGroup` or `Handle`) is skipped and counted in
+`srvr.LogRecordsLost()`, never logged and never allowed to affect the response. The counter is
+process-wide (every server of every engine) and never reset; export it as a metric or check it in
+a health probe to notice a broken log output.
+
 ## What reaches the log by default
 
 - `user_agent.original` is on every access record of a request that sent `User-Agent`. It is how

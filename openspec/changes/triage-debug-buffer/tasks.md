@@ -148,20 +148,20 @@
 
 ## 10. Slice: API and robustness (carried from skills-compliance)
 
-- [ ] 10.1 Rename `srvr.LogWriteErrors` to `srvr.LogRecordsLost` with gopls, its engine counterpart included (structured-logging / Scenario: Own handler and Scenario: Broken output; engine-support / Scenario: Consumer faults on every engine); update `LOGGING.md`, godoc and `CHANGELOG.md` (BREAKING, no alias); verify `grep -rn 'LogWriteErrors' --include='*.go' --include='*.md' . --exclude-dir=archive` finds only the CHANGELOG entry and `go test -race ./...` passes in every module
-- [ ] 10.2 One joined construction error (server-lifecycle / Scenario: Valid and invalid configuration, new rejected rows); verify `go test -race -run TestNew_Config` passes
+- [x] 10.1 Rename `srvr.LogWriteErrors` to `srvr.LogRecordsLost` with gopls, its engine counterpart included (structured-logging / Scenario: Own handler and Scenario: Broken output; engine-support / Scenario: Consumer faults on every engine); update `LOGGING.md`, godoc and `CHANGELOG.md` (BREAKING, no alias); verify `grep -rn 'LogWriteErrors' --include='*.go' --include='*.md' . --exclude-dir=archive` finds only the CHANGELOG entry and `go test -race ./...` passes in every module
+- [x] 10.2 One joined construction error (server-lifecycle / Scenario: Valid and invalid configuration, new rejected rows); verify `go test -race -run TestNew_Config` passes
   - RED: the three joined rows; fails because the log fields are checked after the other fields return
   - GREEN: validate `LogConfig.Level` and `Format` with the other fields and join every field error
   - REFACTOR: Move Function for the log-field checks into the settings validation; /simplify
-- [ ] 10.3 Typed configuration errors in `otelsrvr` and `otelsetup` (otel-metrics and telemetry-setup / Scenario: Typed configuration errors, all rows); verify `go test -race -run TestConfigError` passes in both modules
+- [x] 10.3 Typed configuration errors in `otelsrvr` and `otelsetup` (otel-metrics and telemetry-setup / Scenario: Typed configuration errors, all rows); verify `go test -race -run TestConfigError` passes in both modules
   - RED: tables with `errors.As` into each module's `*ConfigError` (add the type first so RED is `false`)
   - GREEN: `ConfigError{Field, Value, Reason}` per module, `Unwrap` returning the module's `ErrConfig`, every `fmt.Errorf("%w: ...", ErrConfig)` replaced; error text unchanged
   - REFACTOR: /simplify
-- [ ] 10.4 Stuck listener on fiber (server-lifecycle / Scenario: Stuck listener on every engine, all rows); verify `go test -race -run TestShutdown_StuckListener` passes in core, `ginsrvr` and `fibersrvr`
+- [x] 10.4 Stuck listener on fiber (server-lifecycle / Scenario: Stuck listener on every engine, all rows); verify `go test -race -run TestShutdown_StuckListener` passes in core, `ginsrvr` and `fibersrvr`
   - RED: the table on all three engines; if the fiber row passes, record in `notes.md` that the suspected defect is not confirmed (AGENTS.md rule 2) and keep the row as a regression test
   - GREEN (only if it fails): bound fiber's drain at its deadline as `httpRunner.Drain` does
   - REFACTOR: /simplify
-- [ ] 10.5 Verify the slice, run `make check` and `make cover`, gopls diagnostics, run /simplify on the slice and commit `refactor!: rename LogWriteErrors to LogRecordsLost, join and type configuration errors`
+- [x] 10.5 Verify the slice, run `make check` and `make cover`, gopls diagnostics, run /simplify on the slice and commit `refactor!: rename LogWriteErrors to LogRecordsLost, join and type configuration errors`
 
 ## 12. Slice: keep the consumer's prblm OnError hook (owner request 2026-11-19)
 

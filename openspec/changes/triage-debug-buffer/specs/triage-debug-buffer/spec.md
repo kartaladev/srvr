@@ -275,13 +275,13 @@ Once a request's outcome is decided, its buffer SHALL be sealed and released. Re
 | `INFO` | `errors.New("boom")` | written once, without `srvr.buffered` |
 
 ### Requirement: Flushing is fault tolerant
-A flushed record that fails to write, or whose handler panics, SHALL be counted in `srvr.LogWriteErrors()` and skipped; the remaining records and the `http.request.failed` record SHALL still be written, and the response SHALL be unaffected.
+A flushed record that fails to write, or whose handler panics, SHALL be counted in `srvr.LogRecordsLost()` and skipped; the remaining records and the `http.request.failed` record SHALL still be written, and the response SHALL be unaffected.
 
 #### Scenario: Faulty handler during flush
 - **Given** buffering enabled with a consumer `slog.Handler` that `<fault>` on the record `step two`, and a handler that logs `DEBUG` `step one`, `step two`, `step three` then returns `errors.New("boom")`
 - **When** the request fails
 - **Then** the response status is `500`
-- **And** the written records are `<written>` and `srvr.LogWriteErrors()` increases by `<errors>`
+- **And** the written records are `<written>` and `srvr.LogRecordsLost()` increases by `<errors>`
 
 ##### Examples:
 | fault | written | errors |

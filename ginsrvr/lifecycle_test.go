@@ -3,6 +3,7 @@ package ginsrvr_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"slices"
 	"sync"
@@ -226,21 +227,125 @@ func TestGinDebugWarning(t *testing.T) { //nolint:paralleltest // gin's mode is 
 
 // TestGinDebugWarning_PanickingHandler covers the engine-support consumer
 // fault row: in debug mode, a log handler whose Handle panics loses the
-// gin_debug_mode warning, counted in LogWriteErrors, and construction
+// gin_debug_mode warning, counted in LogRecordsLost, and construction
 // still succeeds.
 func TestGinDebugWarning_PanickingHandler(t *testing.T) { //nolint:paralleltest // gin's mode is process-global.
 	checkGoroutines(t)
 	gin.SetMode(gin.DebugMode)
 	t.Cleanup(func() { gin.SetMode(gin.TestMode) })
 
-	before := srvr.LogWriteErrors()
+	before := srvr.LogRecordsLost()
 
 	srv, err := ginsrvr.New(srvr.WithLogHandler(panicHandler{}))
 	if err != nil || srv == nil {
 		t.Fatalf("New = %v, %v", srv, err)
 	}
 
-	if srvr.LogWriteErrors() <= before {
-		t.Fatal("LogWriteErrors did not increase")
+	if srvr.LogRecordsLost() <= before {
+		t.Fatal("LogRecordsLost did not increase")
 	}
+}
+
+// TestShutdown_StuckListener covers server-lifecycle / Scenario: Stuck
+// listener on every engine, the gin row.
+func TestShutdown_StuckListener(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ engine string }{{"gin"}}
+
+	for _, tt := range tests {
+		t.Run(tt.engine, func(t *testing.T) {
+			t.Parallel()
+
+			stuck := &stuckListener{Listener: listen(t), accepting: make(chan struct{}), release: make(chan struct{})}
+			release := sync.OnceFunc(func() { close(stuck.release) })
+			t.Cleanup(release)
+
+			srv, err := ginsrvr.New(srvr.WithListener(stuck), srvr.WithShutdownTimeout(200*time.Millisecond), srvr.WithLogOutput(io.Discard))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.Register(routes(func(g *gin.RouterGroup) { g.GET("/ok", ok) })); err != nil {
+				t.Fatal(err)
+			}
+
+			started := make(chan error, 1)
+			go func() { started <- srv.Start(context.Background()) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
+
+			select {
+			case <-stuck.accepting:
+			case err := <-started:
+				t.Fatalf("Start returned before Accept: %v", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("Serve never called Accept")
+			}
+
+			stopped := make(chan error, 1)
+			go func() { stopped <- srv.Shutdown(context.Background()) }() //nolint:usetesting // the scenario's context has no deadline
+
+			select {
+			case err := <-stopped:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("Shutdown = %v, want the forced drain's context.DeadlineExceeded", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Shutdown did not return within 1s")
+			}
+
+			later := make(chan error, 1)
+			go func() { later <- srv.Shutdown(context.Background()) }() //nolint:usetesting // as above
+
+			select {
+			case err := <-later:
+				if err != nil {
+					t.Fatalf("later Shutdown = %v, want nil", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("later Shutdown did not return within 1s")
+			}
+
+			release()
+
+			select {
+			case err := <-started:
+				if err != nil {
+					t.Fatalf("Start = %v after the stop, want nil", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Start did not return after Accept was released")
+			}
+		})
+	}
+}
+
+// stuckListener is a listener whose Close does not unblock Accept: Accept
+// signals accepting once, then blocks until release is closed.
+type stuckListener struct {
+	net.Listener
+	once      sync.Once
+	accepting chan struct{}
+	release   chan struct{}
+}
+
+func (l *stuckListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.accepting) })
+	<-l.release
+
+	return nil, net.ErrClosed
+}
+
+func (l *stuckListener) Close() error { return nil }
+
+// listen opens a loopback listener on an ephemeral port, closed when the
+// test ends.
+func listen(t *testing.T) net.Listener {
+	t.Helper()
+
+	ln, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	return ln
 }

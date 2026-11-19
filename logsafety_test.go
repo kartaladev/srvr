@@ -31,7 +31,7 @@ func (w failingWriter) Write(p []byte) (int, error) {
 // reads the process-wide counter, so it does not run in parallel with
 // other tests that break their output.
 //
-//nolint:paralleltest // srvr.LogWriteErrors is process-wide.
+//nolint:paralleltest // srvr.LogRecordsLost is process-wide.
 func TestBrokenOutput(t *testing.T) {
 	tests := []struct {
 		fault string
@@ -49,13 +49,13 @@ func TestBrokenOutput(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/ping")))
 			base := startServer(t, srv)
 
-			before := srvr.LogWriteErrors()
+			before := srvr.LogRecordsLost()
 			if got := get(t, base+"/ping").status; got != http.StatusOK {
 				t.Fatalf("status = %d, want 200", got)
 			}
-			eventually(t, func() bool { return srvr.LogWriteErrors()-before >= tt.count }, "write errors not counted")
-			if got := srvr.LogWriteErrors() - before; got != tt.count {
-				t.Fatalf("LogWriteErrors increased by %d, want %d", got, tt.count)
+			eventually(t, func() bool { return srvr.LogRecordsLost()-before >= tt.count }, "write errors not counted")
+			if got := srvr.LogRecordsLost() - before; got != tt.count {
+				t.Fatalf("LogRecordsLost increased by %d, want %d", got, tt.count)
 			}
 		})
 	}

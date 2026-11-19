@@ -60,10 +60,7 @@ func BenchmarkCorrelation(b *testing.B) {
 // request logger taken from LoggerFromContext for each record, and the
 // root logger shared by concurrent requests, each with its own trace.
 func BenchmarkLogHandler(b *testing.B) {
-	h, err := newLogHandler(&LogSettings{Output: io.Discard})
-	if err != nil {
-		b.Fatal(err)
-	}
+	h := newLogHandler(&LogSettings{Output: io.Discard})
 
 	ctx := benchRequestContext(b, nil)
 	header := http.Header{"Accept": {"application/json"}, "User-Agent": {"bench/1.0"}}

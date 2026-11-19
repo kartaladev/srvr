@@ -310,7 +310,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 	t.Run("log handler WithAttrs panics", func(t *testing.T) {
 		t.Parallel()
 
-		before := srvr.LogWriteErrors()
+		before := srvr.LogRecordsLost()
 
 		srv, err := fibersrvr.New(srvr.WithLogHandler(withAttrsPanicHandler{}))
 		if err != nil {
@@ -319,8 +319,8 @@ func TestFiberConsumerFaults(t *testing.T) {
 		if res := serve(t, srv, routes(func(r fiber.Router) { r.Get("/f", ok) }), http.MethodGet, "/f", nil, nil); res.status != 200 {
 			t.Fatalf("status %d", res.status)
 		}
-		if srvr.LogWriteErrors() <= before {
-			t.Fatal("LogWriteErrors did not increase")
+		if srvr.LogRecordsLost() <= before {
+			t.Fatal("LogRecordsLost did not increase")
 		}
 	})
 

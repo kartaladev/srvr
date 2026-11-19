@@ -922,10 +922,10 @@ func TestDebugBuffer_Late(t *testing.T) {
 
 // TestDebugBuffer_Faults covers triage-debug-buffer / Scenario: Faulty
 // handler during flush: a consumer handler fails on the record "step two".
-// srvr.LogWriteErrors is process-wide, so the test does not run in
+// srvr.LogRecordsLost is process-wide, so the test does not run in
 // parallel with the package's other tests.
 //
-//nolint:paralleltest // srvr.LogWriteErrors is process-wide.
+//nolint:paralleltest // srvr.LogRecordsLost is process-wide.
 func TestDebugBuffer_Faults(t *testing.T) {
 	for _, tt := range []struct {
 		fault   string
@@ -952,7 +952,7 @@ func TestDebugBuffer_Faults(t *testing.T) {
 			}
 			base, out := consumerServer(t, faulty, logDebug(returning(errors.New("boom")), "step one", "step two", "step three"))
 
-			before := srvr.LogWriteErrors()
+			before := srvr.LogRecordsLost()
 			if got := get(t, base+"/x").status; got != http.StatusInternalServerError {
 				t.Fatalf("status %d, want 500", got)
 			}
@@ -961,8 +961,8 @@ func TestDebugBuffer_Faults(t *testing.T) {
 				t.Fatalf("written %v, want %v", got, tt.written)
 			}
 
-			if got := srvr.LogWriteErrors() - before; got != tt.errors {
-				t.Fatalf("LogWriteErrors increased by %d, want %d", got, tt.errors)
+			if got := srvr.LogRecordsLost() - before; got != tt.errors {
+				t.Fatalf("LogRecordsLost increased by %d, want %d", got, tt.errors)
 			}
 		})
 	}

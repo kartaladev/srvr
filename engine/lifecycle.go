@@ -363,15 +363,22 @@ func (l *Lifecycle[C]) serveOn(r *run) {
 	r.err = r.runner.Serve(r.ln)
 }
 
-// serveWait bounds how long the stop sequence waits for serveOn to return
-// after the listener was closed: a consumer listener whose Close does not
-// unblock Accept would otherwise hang the stop.
-const serveWait = time.Second
+// serveGrace bounds how long the stop sequence waits for serveOn to return
+// once the drain deadline has passed: a consumer listener whose Close does
+// not unblock Accept would otherwise hang the stop. The grace only lets a
+// Serve that is already returning (an Accept that unblocks late) finish.
+const serveGrace = 100 * time.Millisecond
 
-// joinServe waits until r's serveOn returned, for at most serveWait, after
-// which it is abandoned.
-func joinServe(r *run) {
-	t := time.NewTimer(serveWait)
+// joinServe waits until r's serveOn returned, at most until drainCtx is done
+// and serveGrace after that, after which serveOn is abandoned.
+func joinServe(drainCtx context.Context, r *run) {
+	select {
+	case <-r.done:
+		return
+	case <-drainCtx.Done():
+	}
+
+	t := time.NewTimer(serveGrace)
 	defer t.Stop()
 
 	select {
@@ -409,7 +416,7 @@ func (l *Lifecycle[C]) stopRun(drainCtx context.Context, r *run) {
 	drainErr := r.runner.Drain(drainCtx)
 	l.core.logStopped(drainCtx, time.Since(begin), drainErr)
 	afterErr := l.core.runAfterDrain(drainCtx)
-	joinServe(r)
+	joinServe(drainCtx, r)
 
 	l.finish(errors.Join(beforeErr, afterErr), drainErr)
 }

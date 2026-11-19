@@ -49,10 +49,7 @@ func ResolveConfig(opts []Option) (*Core, error) {
 		unmatched: newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now),
 	}
 
-	if c.log, err = newLogHandler(&c.settings.Log); err != nil {
-		return nil, err
-	}
-
+	c.log = newLogHandler(&c.settings.Log)
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
 
 	if c.problems, err = newProblems(c.ProblemOptions()); err != nil {

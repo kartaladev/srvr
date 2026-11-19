@@ -408,11 +408,11 @@ func TestOwnHandler_FaultyMethods(t *testing.T) {
 			})))
 			base := startServer(t, srv)
 
-			before := srvr.LogWriteErrors()
+			before := srvr.LogRecordsLost()
 			if got := get(t, base+"/log").status; got != http.StatusOK {
 				t.Fatalf("status = %d, want 200", got)
 			}
-			eventually(t, func() bool { return srvr.LogWriteErrors() > before }, "the failure was not counted")
+			eventually(t, func() bool { return srvr.LogRecordsLost() > before }, "the failure was not counted")
 			for _, msg := range tt.skipped {
 				if _, ok := h.record(msg); ok {
 					t.Fatalf("record %q was written through a failing handler", msg)
