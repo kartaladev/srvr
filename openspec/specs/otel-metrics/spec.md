@@ -190,7 +190,7 @@ An `otelsrvr.Observer` not built by `otelsrvr.New` (its zero value) SHALL be a n
 | `fiber` | `404` | `0` |
 
 ### Requirement: otelsrvr configuration errors are typed
-Every error `otelsrvr.New` returns for invalid configuration SHALL contain a `*otelsrvr.ConfigError` naming the field, readable with `errors.As`, and SHALL still match `errors.Is(err, otelsrvr.ErrConfig)`; when several fields are invalid, each one SHALL be found. An underlying cause SHALL be kept in `Cause`, reachable with `errors.Is`/`errors.As`, without changing the text.
+Every error `otelsrvr.New` returns for invalid configuration SHALL contain a `*otelsrvr.ConfigError` naming the field, readable with `errors.As`, and SHALL still match `errors.Is(err, otelsrvr.ErrConfig)`; when several fields are invalid, each one SHALL be found. An underlying cause SHALL be kept in `Cause`, reachable with `errors.Is`/`errors.As`, without changing the text. A provider or propagator that panics with an error SHALL have that error kept as `Cause` the same way.
 
 #### Scenario: Typed configuration errors
 - **Given** `otelsrvr.New` called with `<options>`
@@ -211,3 +211,11 @@ Every error `otelsrvr.New` returns for invalid configuration SHALL contain a `*o
 | `WithMeterProvider(nil)` and `WithTracerProvider(nil)` | `MeterProvider` and `TracerProvider` | none |
 | `WithMeterProvider` of a meter failing to create `http.server.request.duration` with error `E` | `MeterProvider` | `E` (`errors.Is`) |
 | `WithMeterProvider` of a meter failing to create `http.server.response.body.size` with error `E`, and `WithBodySizes()` | `MeterProvider` | `E` (`errors.Is`) |
+| `WithMeterProvider` of a provider whose `Meter` panics with error `E` | `MeterProvider` | `E` (`errors.Is`) |
+| `WithTracerProvider` of a provider whose `Tracer` panics with error `E` | `TracerProvider` | `E` (`errors.Is`) |
+| `WithPropagator` of a propagator whose `Fields` panics with error `E` | `Propagator` | `E` (`errors.Is`) |
+| `WithMeterProvider` of a provider whose `Meter` panics with `"boom"` | `MeterProvider` | none |
+| `WithMeterProvider` of a provider whose `Meter` panics with a typed-nil `*MyError` | `MeterProvider` | none |
+| `WithTracerProvider` of a provider whose `Tracer` panics with an error whose `Unwrap` returns the error itself | `TracerProvider` | none, and `New` returns within `1s` |
+| `WithPropagator` of a propagator whose `Fields` panics with an error whose `Error` panics | `Propagator` | that error (`errors.Is`), and no panic escapes `New` |
+| `WithMeterProvider` of a provider whose `Meter` panics with an error of an uncomparable type `sliceError{"a"}` | `MeterProvider` | that error (`errors.As` into `sliceError`), and no panic escapes `New` |

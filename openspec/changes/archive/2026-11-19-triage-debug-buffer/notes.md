@@ -117,7 +117,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 
 
 ### engine-support main spec fails strict validation on requirement length
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 5)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 5)
 - **Target:** followups-hardening
 - **Context:** `openspec validate --specs --strict` fails `engine-support`: three requirement texts exceed 500 characters - "Engines share one per-request state" (579, already in main before `skills-compliance` was archived), and "srvr re-exports the shared types" (522) and "Registered routes are listed with their configurer" (581), both as `skills-compliance` modified them. Found while archiving `skills-compliance` on 2026-11-18; the sync copied the delta text faithfully.
 - **Evidence:** `openspec validate engine-support --type spec --strict`: `[WARNING] requirements[7]`, `[9]`, `[10]`: "Requirement text is very long (>500 characters)"; 14 of 15 main specs pass.
@@ -132,7 +132,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none. Task 8.5 measures the deferred efficiency items.
 
 ### TestShutdownHooks_Faulty "blocks and ignores its context" is timing-sensitive under load
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 5)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 5)
 - **Target:** followups-hardening
 - **Context:** this row starts a hook that blocks and ignores its context, sets `WithShutdownHookTimeout(50ms)`, and asserts that Start returns within 200ms. With `go test -race ./...` running the core, engine and tracectx packages at the same time, Start once returned after 205ms. The test was not changed by this change. Most likely it is also behind the unexplained root-package FAIL recorded in the slice 2 outcome. It does not affect the debug buffer, so it is not fixed here (AGENTS.md: follow-ups go to notes).
 - **Evidence:** run 4 of 4 of `GOWORK=off go test -race -count=1 ./...` on 2026-11-19 failed with `shutdown_test.go:569: Start returned after 205.696042ms, want within 200ms` (`TestShutdownHooks_Faulty/blocks_and_ignores_its_context`). Runs 1-3, and every run of the package alone, passed.
@@ -293,14 +293,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none. These close the 8.5 items of the archived `skills-compliance` entries "Slice 2 /simplify: efficiency items deferred to the benchmarks", "Task 9.4: measured performance changes" (deferred part) and "Target cache: patterns where it cannot hit"; the archived files are not edited.
 
 ### Debug buffer efficiency items from slice 2 not measured
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 7)
 - **Target:** followups-hardening
 - **Context:** the slice 2 outcome deferred three buffering-only items to 8.5: `attrSize` formatting `KindAny` values a second time, a `Clone` discarded when `truncator.record` rewrites, and reslicing the entries instead of a ring. Task 8.5 as written measures only the buffer's cost (D1), so these were not prototyped. `slog.Record.Clone` allocates only for records with more than five attributes, so `BenchmarkDebugBuffer` (two attributes per record) cannot show the second item.
 - **Evidence:** unverified: code reading; `BenchmarkDebugBuffer` numbers in "Task 8.5: deferred items measured with benchstat".
 - **Suggested action:** add a `BenchmarkDebugBuffer` row with records of six or more attributes and a `slog.Any` value, then measure each item with `benchstat -count=10` and apply at the D8 gain.
 
 ### Trace ids cost a crypto/rand system call per request
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 7)
 - **Target:** followups-hardening
 - **Context:** `make profile` on the root package shows 35% of the CPU samples of `BenchmarkPipeline` (mostly the parallel rows) in `syscall.rawsyscalln` under `internal/syscall/unix.ARC4Random` <- `crypto/rand.Read` <- `tracectx.New` <- `Core.BeginRequest`: every request without an incoming `traceparent` reads its trace and span ids from `crypto/rand`, a system call on darwin. W3C trace context asks for random ids, not cryptographic ones. On Linux, `crypto/rand` uses `getrandom` (vDSO on recent kernels), so the cost there is unmeasured.
 - **Evidence:** `make profile MODULES=. BENCH=BenchmarkPipeline BENCH_FLAGS=-benchtime=200ms`, then `go tool pprof -traces bench/srvr.cpu` (2026-11-19, local machine); not reproduced on Linux.
@@ -320,14 +320,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** confirm the `bench` job on the first pull request (runtime about 3-4 minutes locally) and record its timings for design D1/D8.
 
 ### Fiber copies access values of records the unmatched limit suppresses
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 7)
 - **Target:** followups-hardening
 - **Context:** `engine.Core.AccessSuppressed` (used by fiber to skip copying path, query, client address and user agent out of pooled buffers) does not consult the unmatched-record limit, because `admit` changes state and must run once, in `writeAccess`. So on fiber a record the limit suppresses still pays those copies, which is the scanner case the limit targets. Likewise, with `OmitUserAgent` set, fiber still copies the user agent (`string(c.Request().Header.UserAgent())`) and net/http and gin still read the header, only for `writeAccess` to drop it. Both costs exist only with the opt-in options.
 - **Evidence:** unverified: code reading during the slice 9 /simplify (efficiency reviewer); no benchmark row has a limit or `OmitUserAgent`.
 - **Suggested action:** add `BenchmarkPipeline` rows on fiber for a suppressed unmatched record and for `OmitUserAgent`; if `benchstat` shows the D8 gain, decide the limit once per request (cache `admit`'s result on `RequestState` from `AccessSuppressed`) and expose the omission to the engines.
 
 ### Unmatched classification of errors from consumer middleware
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 3)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 3)
 - **Target:** followups-hardening
 - **Context:** `RequestState.unmatched` treats a non-panic 404/405 failure with no matched route as answered by the router. Consumer middleware that runs before route matching (fiber `app.Use`, gin middleware on an engine given with `WithGinEngine`) and returns a 404/405 error for a path no route matches would therefore be limited too. D7 scopes the limit to "404 and 405 answered by the router"; for an unmatched path the difference is arguably immaterial (no route would have run), but the godoc promise "handler errors are never limited" reads stronger. A second, similar classification lives in `RequestState.result` (`r.Matched() || f.panic != nil`).
 - **Evidence:** unverified: altitude reviewer's code reading; no test reproduces it.
@@ -364,14 +364,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Recovered panic values that are errors are not kept as `Cause`
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 4)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 4)
 - **Target:** followups-hardening
 - **Context:** `otelsetup.validatePath` recovers `http.ServeMux` panics, whose value is an `error`, and `otelsrvr` recovers panicking Propagator/TracerProvider/MeterProvider calls; all flatten the value with `engine.ValueText`, so `Cause` stays nil (design D13 states this). A consumer's sentinel is reachable with `errors.Is` when a provider returns it but not when it panics with it.
 - **Evidence:** altitude reviewer's code reading during the 10.6 /simplify (`otelsetup/config.go` `validatePath`, `otelsrvr/otelsrvr.go` recover sites); not a defect, no test.
 - **Suggested action:** if wanted, set `Cause` when the recovered value is an `error` (text unchanged), with spec rows for a panicking provider.
 
 ### Problem-option errors are not joined with the other field errors
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 2)
+- **Status:** closed: done by followups-hardening (released v0.2.0, 2026-11-19); was adopted by followups-hardening (owner decision 2026-11-19; slice 2)
 - **Target:** followups-hardening
 - **Context:** `engine.ResolveConfig` returns a `newProblems` error after `newSettings` validated every other field, the same shape 10.2 fixed for the log fields: an invalid prblm option together with an invalid field reports only the field.
 - **Evidence:** unverified: altitude reviewer's code reading during the slice 10 /simplify (`engine/core.go` `ResolveConfig`); no test reproduces it.

@@ -168,7 +168,29 @@ The core SHALL expose the shared pieces in a package whose name and documentatio
 | `github.com/kartaladev/prblm` only |
 
 ### Requirement: srvr re-exports the shared types
-The public types every engine shares (`Config`, `LogConfig`, `AccessLogConfig`, `TraceConfig`, `ServiceConfig`, `Trace`, `ShutdownPhase`, `ErrorHook`, `Option`, `ConfigError`, `RouteCheck`, `Routes`, `Route` and the sentinel errors) SHALL be declared in the engine-support package and re-exported by `srvr` as aliases, so code written against `srvr` compiles unchanged, `errors.Is` against `srvr` sentinels matches errors created in `engine`, and `errors.As` into a `*srvr.ConfigError` reads the offending field and value.
+The public types every engine shares and the sentinel errors SHALL be declared in the engine-support package and re-exported by `srvr` as aliases, so code written against `srvr` compiles unchanged, `errors.Is` against `srvr` sentinels matches errors created in `engine`, and `errors.As` into a `*srvr.ConfigError` reads the offending field and value.
+
+#### Scenario: Re-exported names
+- **Given** the `srvr` name `<name>`
+- **When** the consumer compares its type with the engine-support declaration `<declaration>`
+- **Then** both are the same type
+
+##### Examples:
+| name | declaration |
+|------|-------------|
+| `srvr.Config` | `engine.Config` |
+| `srvr.LogConfig` | `engine.LogConfig` |
+| `srvr.AccessLogConfig` | `engine.AccessLogConfig` |
+| `srvr.TraceConfig` | `engine.TraceConfig` |
+| `srvr.ServiceConfig` | `engine.ServiceConfig` |
+| `srvr.Trace` | `engine.Trace` |
+| `srvr.ShutdownPhase` | `engine.ShutdownPhase` |
+| `srvr.ErrorHook` | `engine.ErrorHook` |
+| `srvr.Option` | `engine.Option` |
+| `srvr.ConfigError` | `engine.ConfigError` |
+| `srvr.RouteCheck` | `engine.RouteCheck` |
+| `srvr.Routes` | `engine.Routes` |
+| `srvr.Route` | `engine.Route` |
 
 #### Scenario: srvr names are the engine declarations
 - **Given** the error `<err>` produced by `<source>`
@@ -216,7 +238,7 @@ An engine SHALL report a configuration that works but is likely unintended as on
 | `net/http` | (none) | `0` | (none) |
 
 ### Requirement: Engines share one per-request state
-Every engine SHALL keep one `engine.RequestState` per request, reachable through `engine.StateFrom(ctx)` from any stage inside srvr's pipeline, holding the matched route, whether a route matched, the response status, the failure (returned error or recovered panic), the trace context and the trace an observer's trace source supplied, which `srvr.TraceFromContext`, request loggers, the problem `trace_id` and the access record read in place of the trace context when it is valid. Later stages SHALL read and extend this one state instead of adding their own per-request holders.
+Every engine SHALL keep one `engine.RequestState` per request, reachable through `engine.StateFrom(ctx)` from any stage inside srvr's pipeline, holding the matched route, whether a route matched, the response status, the failure (returned error or recovered panic) and the request's trace, chosen as request-observer's "Observers may supply the trace context" requires. Later stages SHALL read and extend this one state instead of adding their own per-request holders.
 
 #### Scenario: Request state after the chain
 - **Given** engine `<engine>` with route `GET /users/{id}` in that engine's syntax
@@ -249,12 +271,13 @@ Every engine SHALL keep one `engine.RequestState` per request, reachable through
 | a request context inside srvr's pipeline on any engine | that request's state and `true` |
 
 ### Requirement: Registered routes are listed with their configurer
-After the configure phase and before binding, every engine SHALL build `engine.Routes`, one `engine.Route{Method, Pattern, Configurer}` per route a configurer declared (pattern in the engine's syntax, configurer named by its Go type), excluding middleware and implicit routes, and SHALL pass it to every `srvr.WithRouteCheck` check as its own copy; a route served for every method is listed once with `Method` `""`. A check error or panic SHALL fail `Start` wrapping `srvr.ErrRouteConfig`; srvr SHALL read a check's error without walking a chain that cycles or whose methods panic.
+After the configure phase and before binding, every engine SHALL build `engine.Routes`, one `engine.Route{Method, Pattern, Configurer}` per route a configurer declared, and SHALL pass every `srvr.WithRouteCheck` check its own copy. A check's error or panic SHALL fail `Start` with an error wrapping `srvr.ErrRouteConfig`, read without walking a chain that cycles or whose methods panic.
 
 #### Scenario: Route listing
 - **Given** engine `<engine>` with configurer `*main.UserRoutes` declaring `<routes>`
 - **When** the server starts with a route check that records its input
 - **Then** the check receives exactly `<listed>`
+- **And** each pattern is in the engine's syntax and each configurer is named by its Go type; middleware and implicit routes are not listed, and a route served for every method is listed once with `Method` `""`
 
 ##### Examples:
 | engine | routes | listed |
