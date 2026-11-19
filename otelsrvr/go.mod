@@ -23,3 +23,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
+
+// Development builds use the modules in this repository; RELEASING.md drops
+// these lines in the commit that is tagged.
+replace github.com/kartaladev/srvr => ../

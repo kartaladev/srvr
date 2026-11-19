@@ -41,3 +41,7 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
+
+// Development builds use the modules in this repository; RELEASING.md drops
+// these lines in the commit that is tagged.
+replace github.com/kartaladev/srvr => ../

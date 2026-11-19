@@ -12,8 +12,6 @@ github.com/kartaladev/prblm v0.2.1 h1:vW8GV9X3po+69gEzvXZbl3ZRTvGHoyk7bj/UZONZj8
 github.com/kartaladev/prblm v0.2.1/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
 github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0 h1:Q9a1qPiAp35QRW8Ys6Gv+f3GyczycHRVs+3rTaF6c/g=
 github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0/go.mod h1:TfECXb1QnQSa4Fiz+leqjBnqaAn7DQgKPUeIcyeyJKU=
-github.com/kartaladev/srvr v0.2.0 h1:582UbuF9XpcTWhPslODbUomFkAVYQRYZL9ZyDZBMhT8=
-github.com/kartaladev/srvr v0.2.0/go.mod h1:yqKXmUb7yDTlORUxk01BorGneV0+o7B3lpbWx2Nt1OE=
 github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/mattn/go-colorable v0.1.16 h1:+2YjeAe7xP1OQbZW1jERPWWCDLlNqFNCvjiqGiAt84A=

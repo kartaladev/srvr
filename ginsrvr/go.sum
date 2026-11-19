@@ -36,8 +36,6 @@ github.com/kartaladev/prblm v0.2.1 h1:vW8GV9X3po+69gEzvXZbl3ZRTvGHoyk7bj/UZONZj8
 github.com/kartaladev/prblm v0.2.1/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
 github.com/kartaladev/prblm/adapters/ginprblm v0.2.1 h1:p5Oe8vTyd9rf2qO/gNgKDmOS4p81iP9exQS5SrrDiE8=
 github.com/kartaladev/prblm/adapters/ginprblm v0.2.1/go.mod h1:mNx7iDQpoKofqm1CFRbLWYb0nDwCBPSxTpnzMFzyWf8=
-github.com/kartaladev/srvr v0.2.0 h1:582UbuF9XpcTWhPslODbUomFkAVYQRYZL9ZyDZBMhT8=
-github.com/kartaladev/srvr v0.2.0/go.mod h1:yqKXmUb7yDTlORUxk01BorGneV0+o7B3lpbWx2Nt1OE=
 github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
 github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
