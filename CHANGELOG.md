@@ -6,6 +6,20 @@ once tagged.
 
 ## [Unreleased]
 
+### Added
+
+- `srvr.Static(prefix, fsys, opts...)` serves the files of an `fs.FS` (a build directory, an
+  `embed.FS`) under a prefix on the net/http engine, with `srvr.StaticConfig`, `srvr.StaticOption`,
+  `srvr.WithStaticIndexNames` and `srvr.WithStaticConfig`. Safe defaults: `GET` and `HEAD` only,
+  `index.html` for directories, no directory listing, dotfiles and escaping paths answered `404`,
+  file system errors answered with the safe `500` problem, only `If-Modified-Since` honoured (no
+  ranges, `ETag` or compression). Registered routes win over static files; static `404`s are
+  logged and limited like unmatched requests. Compared with `Mount` of `http.FileServerFS`, a
+  consumer switching gets `404` problems instead of plain text, hidden dotfiles, no listings and no
+  `/index.html` redirect.
+- `engine.RequestState.MarkRouterAnswered` (package `engine`, unstable before v1) also clears the
+  route an earlier stage recorded: an answer of the router means no route matched.
+
 ## [v0.2.0] - 2026-11-19
 
 ### Changed

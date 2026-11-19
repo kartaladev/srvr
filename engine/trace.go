@@ -132,10 +132,16 @@ func (r *RequestState) MarkCommitted() {
 
 // MarkRouterAnswered records that the router itself answered the request
 // because no route matched: net/http's unmatched interception, gin's no-route
-// chains, or fiber's router returning fiber.ErrNotFound or
-// fiber.ErrMethodNotAllowed. Only such a request counts towards the
+// chains, fiber's router returning fiber.ErrNotFound or
+// fiber.ErrMethodNotAllowed, or a static mount answering 404 or 405, which
+// is the router's answer for the paths it serves. Only such a request counts towards the
 // unmatched-record limit; a 404 or 405 consumer code reported never does.
-func (r *RequestState) MarkRouterAnswered() { r.routerAnswered = true }
+// It also forgets the route an earlier stage recorded: an answer of the
+// router means no route matched.
+func (r *RequestState) MarkRouterAnswered() {
+	r.routerAnswered = true
+	r.route = ""
+}
 
 // StateFrom returns the request state of ctx, and false outside srvr's
 // pipeline, including for a nil ctx.

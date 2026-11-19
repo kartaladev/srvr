@@ -77,6 +77,31 @@ A route configurer is typed by its engine (`RouteConfigurer[*srvr.Group]`,
 `RouteConfigurer[*gin.RouterGroup]`, `RouteConfigurer[fiber.Router]`), so a configurer for the wrong
 engine does not compile.
 
+## Static files and single-page apps
+
+`srvr.Static(prefix, fsys, opts...)` serves the files of an `fs.FS`, such as a Vite or React build
+directory or an `embed.FS`, as a route configurer:
+
+```go
+root, err := os.OpenRoot("dist") // refuses symbolic links that leave dist; os.DirFS does not
+if err != nil {
+	return err
+}
+
+if err := srv.Register(srvr.Static("/", root.FS())); err != nil {
+	return err
+}
+```
+
+With no options it serves `GET` and `HEAD` of regular files with their `Content-Type`,
+`Content-Length` and `Last-Modified`, answers a directory with its `index.html` (sent with
+`Cache-Control: no-cache`), and answers everything else with srvr's problems: `404` for missing
+files, dotfiles (`.env`, `.git/...`) and paths that try to leave the file system, `405` for other
+methods, and the safe `500` for file system errors. Directories are never listed, nothing is
+redirected or compressed, and byte ranges are not served yet. Every other registered route wins over
+the static mount, in either registration order, and a static `404` is logged and limited like a
+request no route matched.
+
 ## Modules
 
 | Module | Purpose | Dependencies |

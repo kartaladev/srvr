@@ -34,6 +34,10 @@ type route struct {
 	owner string
 	// location is the handler's code location, resolved at registration.
 	location engine.Location
+	// listMethod is the method the route listing shows, the route's own
+	// unless its registration said otherwise (a static mount, registered
+	// for every method, is listed as GET).
+	listMethod string
 }
 
 // key is the ServeMux pattern of the route.
@@ -51,6 +55,13 @@ type builder struct {
 	errs   []error
 	// owner is the Go type of the configurer running Configure.
 	owner string
+	// statics maps the joined prefix of every static mount registered so
+	// far to the configurer that registered it.
+	statics map[string]string
+	// served is what the installed routes serve, filled in by the
+	// server once they are installed; static mounts read it while
+	// serving.
+	served *served
 	// wrap turns an error-returning handler into an http.Handler that
 	// renders its errors as problems.
 	wrap func(func(http.ResponseWriter, *http.Request) error) http.Handler
@@ -172,8 +183,21 @@ func cutSegments(p string, n int) string {
 	return "/" + rest
 }
 
+// served is what a server's installed routes serve: the ServeMux and the
+// methods routes registered, sorted. Static mounts read it to answer 405
+// with the methods other routes serve for the path.
+type served struct {
+	mux     *http.ServeMux
+	methods []string
+}
+
 // add records a route for method ("" for every method) and path.
 func (g *Group) add(method, path string, h http.Handler, loc engine.Location) {
+	g.addListed(method, method, path, h, loc)
+}
+
+// addListed records a route for method and path, listed with listMethod.
+func (g *Group) addListed(method, listMethod, path string, h http.Handler, loc engine.Location) {
 	pattern, err := joinPattern(g.prefix, path)
 	if err != nil {
 		g.b.errs = append(g.b.errs, err)
@@ -181,7 +205,7 @@ func (g *Group) add(method, path string, h http.Handler, loc engine.Location) {
 		return
 	}
 
-	rt := route{method: method, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
+	rt := route{method: method, listMethod: listMethod, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
 	if engine.IsNil(h) {
 		g.b.errs = append(g.b.errs, engine.RouteErrorf("%q (%s): handler is nil", rt.key(), rt.owner))
 

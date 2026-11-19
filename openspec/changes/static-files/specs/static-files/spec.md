@@ -224,11 +224,11 @@ A static configurer SHALL resolve a request only to a name inside its `fs.FS`. A
 ##### Examples:
 | fs | outcome |
 |----|---------|
-| `root.FS()`, `root` from `os.OpenRoot(dir)` | a `500` problem without `SECRET`, the path or the error text; the `http.request.failed` record has the error chain (the root refuses the escape) |
+| `root.FS()`, `root` from `os.OpenRoot(dir)` | a `500` problem without `SECRET`, the path or the error text; the `http.request.failed` record has the error's `error.chain` and `exception.message` (the root refuses the escape) |
 | `os.DirFS(dir)` | `200` with `SECRET`: `os.DirFS` follows links out of its directory, which the godoc warns about and is why it recommends `os.OpenRoot` |
 
 ### Requirement: File system errors are safe 500 problems
-When the file system returns an error other than not-exist or invalid name, or panics, while a request is resolved or opened, the static configurer SHALL answer the safe `500` problem with no error text, file name or path. The `http.request.failed` record SHALL carry the error chain. A failure after the response started SHALL leave the response as sent.
+When the file system returns an error other than not-exist or invalid name, or panics, while a request is resolved or opened, the static configurer SHALL answer the safe `500` problem with no error text, file name or path. The `http.request.failed` record SHALL carry the error (`error.chain`, `exception.message`). A failure after the response started SHALL leave the response as sent.
 
 #### Scenario: Faulty file system
 - **Given** a server on every engine with `Static("/assets", fsys)` where `fsys` `<fault>` for `app.js`
@@ -239,13 +239,13 @@ When the file system returns an error other than not-exist or invalid name, or p
 ##### Examples:
 | fault | response | level | record |
 |-------|----------|-------|--------|
-| returns an error wrapping `fs.ErrPermission` from `Open` | a `500` problem `{"title":"Internal Server Error","status":500,"instance":"/assets/app.js","trace_id":"…"}` | `ERROR` | `error.chain` containing `permission denied` |
-| returns `errors.New("disk on fire")` from `Stat` | a `500` problem without `disk on fire` | `ERROR` | `error.chain` containing `disk on fire` |
+| returns an error wrapping `fs.ErrPermission` from `Open` | a `500` problem `{"title":"Internal Server Error","status":500,"instance":"/assets/app.js","trace_id":"…"}` | `ERROR` | `exception.message` containing `permission denied` |
+| returns `errors.New("disk on fire")` from `Stat` | a `500` problem without `disk on fire` | `ERROR` | `exception.message` containing `disk on fire` |
 | panics with `"boom"` in `Open` | a `500` problem | `ERROR` | `error.kind` `panic` |
 | returns a typed-nil `*main.MyErr` as `error` from `Open` | a `500` problem | `ERROR` | `error.type` `*main.MyErr` |
-| returns a file that does not implement `io.Seeker` | a `500` problem | `ERROR` | `error.chain` naming the file's Go type and saying it cannot seek |
+| returns a file that does not implement `io.Seeker` | a `500` problem | `ERROR` | `exception.message` naming the file's Go type and saying it cannot seek |
 | returns a file whose `Read` fails after `10` bytes | status `200` with `Content-Length` `14` and a body cut short; the connection is closed | `INFO` | `msg` `http.request.completed` (the failure arrived after the response started) |
-| returns `fs.ErrNotExist` wrapped as `fmt.Errorf("lookup: %w", fs.ErrNotExist)` | a `404` problem | `WARN` | no `error.chain` member naming the file system |
+| returns `fs.ErrNotExist` wrapped as `fmt.Errorf("lookup: %w", fs.ErrNotExist)` | a `404` problem | `WARN` | no `exception.message` naming the file system's error |
 | returns a file that is removed between resolution and serving (`Stat` succeeds, `Open` returns `fs.ErrNotExist`) | a `404` problem | `WARN` | `http.response.status_code` `404` |
 
 ### Requirement: The SPA fallback serves navigations that match no file
@@ -383,11 +383,14 @@ Any route registered by a configurer SHALL take precedence over a static mount a
 ##### Examples:
 | engine | route | result |
 |--------|-------|--------|
-| `net/http` | `GET /{path...}` | `Start` returns an error wrapping `srvr.ErrRouteConfig` naming both patterns and both configurers |
-| `net/http` | `GET /` | `Start` returns an error wrapping `srvr.ErrRouteConfig` naming both patterns and both configurers |
+| `net/http` | `GET /{path...}` | the server starts; the consumer's route answers every `GET` and `HEAD` (it is more specific than the mount's every-method pattern) and the static mount answers the other methods with `405` |
+| `net/http` | `GET /` (ServeMux's `/` matches every path) | the server starts; the consumer's route answers every `GET` and `HEAD` |
+| `net/http` | `GET /{$}` | the server starts; the route answers `GET /` and the static mount `GET /app.js` |
+| `net/http` | `Mount("/api/", h)` | the server starts; `h` answers `/api/x` and the static mount `GET /app.js` |
 | `fiber` | `Get("/*")` | `Start` returns an error wrapping `srvr.ErrRouteConfig` naming the duplicate route |
 | `gin` | `GET /*any` | the server starts; the consumer's catch-all answers every `GET` and the static mount answers only what gin routes to no route (gin's catch-all is a registered route) |
-| `net/http` | `Mount("/", h)` | `Start` returns an error wrapping `srvr.ErrRouteConfig` |
+| `net/http` | `Mount("/", h)` | `Start` returns an error wrapping `srvr.ErrRouteConfig` naming both patterns and both configurers |
+| `net/http` | `Mount("/assets/", h)` with `Static("/assets", site)` instead of `Static("/", site)` | `Start` returns an error wrapping `srvr.ErrRouteConfig` naming both patterns and both configurers |
 
 ### Requirement: Static requests are logged, observed and limited like routed requests
 Static requests SHALL pass through the whole pipeline (trace context, access record, observers, recovery, problems). A served file or fallback SHALL be recorded with `http.route` in the engine's syntax. A static `404` or `405` SHALL be recorded like a request no route matched (no `http.route`) and counted by the unmatched-record limit. A failure consumer middleware reports SHALL not count.
@@ -420,7 +423,7 @@ Static requests SHALL pass through the whole pipeline (trace context, access rec
 #### Scenario: Static misses and the unmatched-record limit
 - **Given** a server on engine `<engine>` with `WithUnmatchedRecordLimit(1, time.Minute)`, `Static("/", site)` and `<middleware>`
 - **When** a client sends `GET /nope-1.js`, `GET /nope-2.js` and `GET /nope-3.js`
-- **Then** each response is a `<status>` problem and `<written>` `http.request.failed` records are written
+- **Then** each response is a `<status>` problem and `<written>` access records with that status are written
 
 ##### Examples:
 | engine | middleware | status | written |
@@ -430,7 +433,7 @@ Static requests SHALL pass through the whole pipeline (trace context, access rec
 | `fiber` | (none) | `404` | `1` |
 | `fiber` | `router.Use(mw)` on the root router, `mw` returning `c.Next()` | `404` | `1` |
 | `fiber` | `router.Use(mw)` on the root router, `mw` returning `prblm.ErrNotFound` without calling `c.Next()` | `404` | `3` |
-| `net/http` | a root-group middleware registered before the static configurer, returning `prblm.ErrNotFound` | `404` | `3` |
+| `net/http` | a root-group middleware registered before the static configurer, writing the `404` problem of `prblm.ErrNotFound` itself without calling next (net/http middleware cannot return an error) | `404` | `3` |
 | `gin` | (none), with the requests sent as `PUT` | `405` | `1` |
 
 #### Scenario: Observers see static requests
@@ -453,9 +456,9 @@ Static requests SHALL pass through the whole pipeline (trace context, access rec
 ##### Examples:
 | engine | middleware | response |
 |--------|------------|----------|
-| `net/http` | returns `prblm.ErrUnauthorized` without calling next | a `401` problem |
-| `gin` | calls `c.AbortWithError(401, prblm.ErrUnauthorized)` | a `401` problem |
-| `fiber` | returns `prblm.ErrUnauthorized` without calling `c.Next()` | a `401` problem |
+| `net/http` | returns `prblm.ErrUnauthenticated` without calling next | a `401` problem |
+| `gin` | calls `c.AbortWithError(401, prblm.ErrUnauthenticated)` | a `401` problem |
+| `fiber` | returns `prblm.ErrUnauthenticated` without calling `c.Next()` | a `401` problem |
 | `net/http` | panics with `"boom"` | a `500` problem; the record has `error.kind` `panic` |
 | `gin` | panics with `"boom"` | a `500` problem; the record has `error.kind` `panic` |
 | `fiber` | panics with `"boom"` | a `500` problem; the record has `error.kind` `panic` |

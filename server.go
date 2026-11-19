@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/engine"
@@ -123,7 +124,7 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx)
 // router runs the configurers and returns the ServeMux holding their
 // routes and the listing of the routes they declared.
 func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, engine.Routes, error) {
-	b := &builder{wrap: s.wrapHandler}
+	b := &builder{wrap: s.wrapHandler, served: &served{}}
 	g := &Group{b: b}
 
 	for _, c := range configurers {
@@ -144,10 +145,30 @@ func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, 
 
 	routes := make(engine.Routes, len(b.routes))
 	for i, rt := range b.routes {
-		routes[i] = engine.Route{Method: rt.method, Pattern: rt.pattern, Configurer: rt.owner}
+		routes[i] = engine.Route{Method: rt.listMethod, Pattern: rt.pattern, Configurer: rt.owner}
+	}
+
+	if len(b.statics) > 0 {
+		b.served.mux, b.served.methods = mux, registeredMethods(b.routes)
 	}
 
 	return mux, routes, nil
+}
+
+// registeredMethods returns the methods routes registered, sorted, without
+// "" (every method).
+func registeredMethods(routes []route) []string {
+	var methods []string
+
+	for _, rt := range routes {
+		if rt.method != "" && !slices.Contains(methods, rt.method) {
+			methods = append(methods, rt.method)
+		}
+	}
+
+	slices.Sort(methods)
+
+	return methods
 }
 
 // pipeline wraps the router in the per-request stages, outermost first:
