@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +32,10 @@ type ConfigError struct {
 	// Reason says what is wrong with it.
 	Reason string
 	// Cause is the underlying error, such as a parse error, whose text
-	// Reason already holds; nil when there is none.
+	// Reason already holds; nil when there is none. When http.ServeMux
+	// rejects Prometheus.Path by panicking with an error, Cause is that
+	// error; a panic value that is not an error, a typed nil or an error
+	// whose chain cannot be walked leaves Cause nil.
 	Cause error
 
 	// text is the message after the prefix when it is not Field, Value
@@ -360,11 +364,37 @@ func validatePath(path string) (err error) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = configErrorColon("Prometheus.Path", strconv.Quote(path), engine.ValueText(v))
+			e := configErrorColon("Prometheus.Path", strconv.Quote(path), engine.ValueText(v))
+			e.Cause = panicCause(v)
+			err = e
 		}
 	}()
 
 	http.NewServeMux().Handle(path, http.NotFoundHandler())
 
 	return nil
+}
+
+// panicCause returns the recovered panic value v when it is an error that
+// callers can safely reach with errors.Is and errors.As, and nil
+// otherwise: a value that is not an error, a typed nil (it carries no
+// cause), or an error whose chain cycles or whose Unwrap panics (errors.Is
+// would loop or crash). An error whose Error method panics is kept:
+// errors.Is never calls Error, and the text goes through engine.ValueText.
+// otelsrvr and otelsetup each keep a copy, so engine's public API does not
+// grow for it.
+func panicCause(v any) error {
+	err, ok := v.(error)
+	if !ok || engine.IsNil(err) {
+		return nil
+	}
+
+	// GuardChain returns err itself when its chain can be walked and an
+	// error of another type otherwise. Types are compared, never values,
+	// because err's type may not be comparable.
+	if reflect.TypeOf(engine.GuardChain(err)) != reflect.TypeOf(err) {
+		return nil
+	}
+
+	return err
 }

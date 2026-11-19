@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -43,7 +44,10 @@ type ConfigError struct {
 	// Reason says what is wrong with it.
 	Reason string
 	// Cause is the underlying error, such as a parse error, whose text
-	// Reason already holds; nil when there is none.
+	// Reason already holds; nil when there is none. When a provider or
+	// propagator panics with an error, Cause is that error; a panic value
+	// that is not an error, a typed nil or an error whose chain cannot be
+	// walked leaves Cause nil.
 	Cause error
 
 	// text is the message after the prefix when it is not Field, Value
@@ -86,6 +90,37 @@ func configError(field, value, reason string) error {
 // reason".
 func configErrorColon(field, value, reason string) error {
 	return &ConfigError{Field: field, Value: value, Reason: reason, text: field + " " + value + ": " + reason}
+}
+
+// panicError returns a *ConfigError for field and value reporting the
+// recovered panic value v, with v as Cause when it is a usable error (see
+// panicCause).
+func panicError(field, value string, v any) error {
+	return &ConfigError{Field: field, Value: value, Reason: "panicked: " + engine.ValueText(v), Cause: panicCause(v)}
+}
+
+// panicCause returns the recovered panic value v when it is an error that
+// callers can safely reach with errors.Is and errors.As, and nil
+// otherwise: a value that is not an error, a typed nil (it carries no
+// cause), or an error whose chain cycles or whose Unwrap panics (errors.Is
+// would loop or crash). An error whose Error method panics is kept:
+// errors.Is never calls Error, and the text goes through engine.ValueText.
+// otelsrvr and otelsetup each keep a copy, so engine's public API does not
+// grow for it.
+func panicCause(v any) error {
+	err, ok := v.(error)
+	if !ok || engine.IsNil(err) {
+		return nil
+	}
+
+	// GuardChain returns err itself when its chain can be walked and an
+	// error of another type otherwise. Types are compared, never values,
+	// because err's type may not be comparable.
+	if reflect.TypeOf(engine.GuardChain(err)) != reflect.TypeOf(err) {
+		return nil
+	}
+
+	return err
 }
 
 // Option configures an [Observer]. Options apply in argument order, so a
@@ -197,7 +232,7 @@ func validatePropagator(p propagation.TextMapPropagator) (err error) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = configError("Propagator", engine.TypeName(p), "panicked: "+engine.ValueText(v))
+			err = panicError("Propagator", engine.TypeName(p), v)
 		}
 	}()
 
@@ -338,7 +373,7 @@ func New(opts ...Option) (*Observer, error) {
 func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = configError("TracerProvider", engine.TypeName(tp), "panicked: "+engine.ValueText(v))
+			err = panicError("TracerProvider", engine.TypeName(tp), v)
 		}
 	}()
 
@@ -350,7 +385,7 @@ func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 func newObserver(mp metric.MeterProvider, cfg Config) (o *Observer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			o, err = nil, configError("MeterProvider", engine.TypeName(mp), "panicked: "+engine.ValueText(v))
+			o, err = nil, panicError("MeterProvider", engine.TypeName(mp), v)
 		}
 	}()
 

@@ -11,6 +11,12 @@ once tagged.
 - Requires `github.com/kartaladev/prblm` v0.2.1 (was v0.2.0) in every module, and `ginsrvr` requires
   `prblm/adapters/ginprblm` v0.2.1: an error whose `As` or `Is` method panics, or a panic whose value
   is such an error, now gets the safe 500 problem instead of escaping prblm.
+- `otelsrvr.ConfigError.Cause` and `otelsetup.ConfigError.Cause` now keep a recovered panic value
+  that is an error: a meter provider, tracer provider or propagator that panics with an error in
+  `otelsrvr.New`, and the error `http.ServeMux` panics with for a rejected `Prometheus.Path` in
+  `otelsetup.New`. `errors.Is`/`errors.As` reach it; `Cause` was nil before. The text is unchanged.
+  A panic value that is not an error, a typed nil, or an error whose chain cycles or whose `Unwrap`
+  panics still leaves `Cause` nil.
 
 ### Fixed
 

@@ -67,17 +67,18 @@ func (panickingHistogram) Record(context.Context, float64, ...metric.RecordOptio
 	panic("Record panicked")
 }
 
-// meterProvider returns m from Meter, or panics when panics is set.
+// meterProvider returns m from Meter, or panics with panicWith when it is
+// set.
 type meterProvider struct {
 	noop.MeterProvider
 
-	meter  metric.Meter
-	panics bool
+	meter     metric.Meter
+	panicWith any
 }
 
 func (p meterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
-	if p.panics {
-		panic("Meter panicked")
+	if p.panicWith != nil {
+		panic(p.panicWith)
 	}
 
 	return p.meter
@@ -91,7 +92,7 @@ func TestProviderFaults(t *testing.T) {
 	construction := map[string]metric.MeterProvider{
 		"meter fails to create the histogram":      meterProvider{meter: faultyMeter{fail: "http.server.request.duration"}},
 		"meter panics creating the histogram":      meterProvider{meter: faultyMeter{panicCreate: true}},
-		"Meter panics":                             meterProvider{panics: true},
+		"Meter panics":                             meterProvider{panicWith: "Meter panicked"},
 		"meter fails to create active_requests":    meterProvider{meter: faultyMeter{fail: "http.server.active_requests"}},
 		"meter fails to create request.body.size":  meterProvider{meter: faultyMeter{fail: "http.server.request.body.size"}},
 		"meter fails to create response.body.size": meterProvider{meter: faultyMeter{fail: "http.server.response.body.size"}},

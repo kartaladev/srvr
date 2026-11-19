@@ -145,11 +145,20 @@ func TestTracingSwitch(t *testing.T) {
 	}
 }
 
-// panickingTracerProvider panics in Tracer.
-type panickingTracerProvider struct{ tracenoop.TracerProvider }
+// panickingTracerProvider panics in Tracer with v, or with "Tracer
+// panicked" when v is nil.
+type panickingTracerProvider struct {
+	tracenoop.TracerProvider
 
-func (panickingTracerProvider) Tracer(string, ...trace.TracerOption) trace.Tracer {
-	panic("Tracer panicked")
+	v any
+}
+
+func (p panickingTracerProvider) Tracer(string, ...trace.TracerOption) trace.Tracer {
+	if p.v == nil {
+		panic("Tracer panicked")
+	}
+
+	panic(p.v)
 }
 
 // TestTracerProviderPanics checks that a provider panicking in Tracer
@@ -435,10 +444,21 @@ func (extractPanics) Extract(context.Context, propagation.TextMapCarrier) contex
 	panic("Extract panicked")
 }
 
-// fieldsPanics is a propagator whose Fields panics.
-type fieldsPanics struct{ propagation.TraceContext }
+// fieldsPanics is a propagator whose Fields panics with v, or with
+// "Fields panicked" when v is nil.
+type fieldsPanics struct {
+	propagation.TraceContext
 
-func (fieldsPanics) Fields() []string { panic("Fields panicked") }
+	v any
+}
+
+func (p fieldsPanics) Fields() []string {
+	if p.v == nil {
+		panic("Fields panicked")
+	}
+
+	panic(p.v)
+}
 
 // TestPropagation covers otel-tracing "Parent extraction", all rows, plus
 // faulty propagators (design D11). Rows using the global propagator

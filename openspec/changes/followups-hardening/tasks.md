@@ -35,17 +35,17 @@
 
 ## 4. Slice: recovered panic errors are kept as Cause (item 6)
 
-- [ ] 4.1 otelsrvr keeps a recovered panic error as `Cause` (otel-metrics / Scenario: Typed configuration errors, the eight new panic rows); verify `go test -race -run TestConfigError ./...` in `otelsrvr` passes
+- [x] 4.1 otelsrvr keeps a recovered panic error as `Cause` (otel-metrics / Scenario: Typed configuration errors, the eight new panic rows); verify `go test -race -run TestConfigError ./...` in `otelsrvr` passes
   - RED: add the rows to `TestConfigError` (`otelsrvr/config_test.go`) with fakes whose `Meter`, `Tracer` or `Fields` panic; expected failure: `New error does not reach the expected cause` on the three `E` rows, the `Error`-panics row and the `sliceError` row; the `"boom"`, typed-nil and cyclic rows pass already (they pin the guard)
   - GREEN: design D4: an unexported cause helper (error, not typed nil, walkable chain, no `==` on values) used at the three recover sites; text unchanged (`ValueText`)
   - REFACTOR: one helper for the three sites (Extract Function); diff the message of every invalid case before and after, expecting `SAME`
-- [ ] 4.2 otelsetup keeps the error `http.ServeMux` panics with as `Cause` (telemetry-setup / Scenario: Typed configuration errors, the two `Prometheus.Path` rows); verify `go test -race -run TestConfigError ./...` in `otelsetup` passes
+- [x] 4.2 otelsetup keeps the error `http.ServeMux` panics with as `Cause` (telemetry-setup / Scenario: Typed configuration errors, the two `Prometheus.Path` rows); verify `go test -race -run TestConfigError ./...` in `otelsetup` passes
   - RED: the two rows in `TestConfigError` (`otelsetup/setup_test.go`), the expected text obtained by registering the same path on a throwaway `http.ServeMux` under recover in the test; fails with a nil `Cause`
   - GREEN: the same helper logic in `validatePath`
   - REFACTOR: reuse `configCauses`; no shared export in `engine` (design D4)
-- [ ] 4.3 Godoc of both `ConfigError.Cause` fields says recovered panic errors are kept; `CHANGELOG.md` "Changed" entry (a `Cause` that was nil is now set); verify `go doc ./otelsrvr ConfigError` and `go doc ./otelsetup ConfigError` show it
-- [ ] 4.4 Verify the slice end to end: `make check MODULES="otelsrvr otelsetup"` passes; `go tool cover -func` shows every branch of the helper and each recover site covered; `gopls` diagnostics clean
-- [ ] 4.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `fix(otel): keep recovered panic errors as ConfigError.Cause`; verify with `git log -1 --stat`
+- [x] 4.3 Godoc of both `ConfigError.Cause` fields says recovered panic errors are kept; `CHANGELOG.md` "Changed" entry (a `Cause` that was nil is now set); verify `go doc ./otelsrvr ConfigError` and `go doc ./otelsetup ConfigError` show it
+- [x] 4.4 Verify the slice end to end: `make check MODULES="otelsrvr otelsetup"` passes; `go tool cover -func` shows every branch of the helper and each recover site covered; `gopls` diagnostics clean
+- [x] 4.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `fix(otel): keep recovered panic errors as ConfigError.Cause`; verify with `git log -1 --stat`
 
 ## 5. Slice: spec and test hygiene (items 1, 2 and RELEASING.md)
 

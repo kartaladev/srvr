@@ -77,6 +77,10 @@ func TestUnresolvable(t *testing.T) {
 	if u.Error() != "srvr: error chain cannot be resolved" || errors.Unwrap(u) != nil {
 		t.Fatalf("guardChain = %v", u)
 	}
+	// otelsrvr and otelsetup tell the stand-in from err by its type.
+	if _, ok := u.(*unresolvable); !ok { //nolint:errorlint // the stand-in itself, not one it wraps
+		t.Fatalf("GuardChain(selfError{}) is %T, want *unresolvable", u)
+	}
 	if GuardChain(nil) != nil {
 		t.Fatal("GuardChain(nil) != nil")
 	}

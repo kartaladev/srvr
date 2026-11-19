@@ -2,6 +2,7 @@ package otelsrvr_test
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"os/exec"
@@ -413,11 +414,21 @@ func TestConfigError(t *testing.T) {
 		return otelsrvr.WithMeterProvider(meterProvider{meter: faultyMeter{fail: instrument, err: errMeter}})
 	}
 
+	errPanic := errors.New("provider panicked")
+	errorPanics := &textPanicsError{}
+	meterPanics := func(v any) otelsrvr.Option { return otelsrvr.WithMeterProvider(meterProvider{panicWith: v}) }
+	tracerPanics := func(v any) []otelsrvr.Option {
+		return []otelsrvr.Option{otelsrvr.WithTracing(), otelsrvr.WithTracerProvider(panickingTracerProvider{v: v})}
+	}
+	propagatorPanics := func(v any) otelsrvr.Option { return otelsrvr.WithPropagator(fieldsPanics{v: v}) }
+
 	tests := []struct {
 		name   string
 		opts   []otelsrvr.Option
 		fields []string
-		cause  error // nil: every *ConfigError has a nil Cause
+		// cause reports whether the returned error reaches the expected
+		// cause; nil: every *ConfigError has a nil Cause.
+		cause func(error) bool
 	}{
 		{"nil", []otelsrvr.Option{nil}, []string{"Option"}, nil},
 		{"WithMeterProvider(nil)", []otelsrvr.Option{otelsrvr.WithMeterProvider(nil)}, []string{"MeterProvider"}, nil},
@@ -435,13 +446,26 @@ func TestConfigError(t *testing.T) {
 			"meter failing to create http.server.request.duration",
 			[]otelsrvr.Option{failing("http.server.request.duration")},
 			[]string{"MeterProvider"},
-			errMeter,
+			isCause(errMeter),
 		},
 		{
 			"meter failing to create http.server.response.body.size, WithBodySizes()",
 			[]otelsrvr.Option{failing("http.server.response.body.size"), otelsrvr.WithBodySizes()},
 			[]string{"MeterProvider"},
-			errMeter,
+			isCause(errMeter),
+		},
+		{"Meter panics with error E", []otelsrvr.Option{meterPanics(errPanic)}, []string{"MeterProvider"}, isCause(errPanic)},
+		{"Tracer panics with error E", tracerPanics(errPanic), []string{"TracerProvider"}, isCause(errPanic)},
+		{"Fields panics with error E", []otelsrvr.Option{propagatorPanics(errPanic)}, []string{"Propagator"}, isCause(errPanic)},
+		{"Meter panics with \"boom\"", []otelsrvr.Option{meterPanics("boom")}, []string{"MeterProvider"}, nil},
+		{"Meter panics with a typed-nil *MyError", []otelsrvr.Option{meterPanics((*myError)(nil))}, []string{"MeterProvider"}, nil},
+		{"Tracer panics with an error unwrapping to itself", tracerPanics(&selfUnwrapError{}), []string{"TracerProvider"}, nil},
+		{"Fields panics with an error whose Error panics", []otelsrvr.Option{propagatorPanics(errorPanics)}, []string{"Propagator"}, isCause(errorPanics)},
+		{
+			"Meter panics with an uncomparable sliceError",
+			[]otelsrvr.Option{meterPanics(sliceError{"a"})},
+			[]string{"MeterProvider"},
+			func(err error) bool { _, ok := errors.AsType[sliceError](err); return ok },
 		},
 	}
 
@@ -449,7 +473,7 @@ func TestConfigError(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := otelsrvr.New(tt.opts...)
+			err := newWithin(t, time.Second, tt.opts...)
 			if !errors.Is(err, otelsrvr.ErrConfig) {
 				t.Fatalf("New = %v, want an error wrapping ErrConfig", err)
 			}
@@ -465,12 +489,65 @@ func TestConfigError(t *testing.T) {
 				if causes := configCauses(err); len(causes) > 0 {
 					t.Errorf("New error has *ConfigError causes %v, want none; error: %v", causes, err)
 				}
-			} else if !errors.Is(err, tt.cause) {
-				t.Errorf("errors.Is(New error, %v) = false, want true; error: %v", tt.cause, err)
+			} else if !tt.cause(err) {
+				t.Errorf("New error does not reach the expected cause; error: %v", err)
 			}
 		})
 	}
 }
+
+// newWithin returns the error of otelsrvr.New(opts...), failing the test
+// when New panics or does not return within d.
+func newWithin(t *testing.T, d time.Duration, opts ...otelsrvr.Option) error {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				done <- fmt.Errorf("New panicked: %v", v)
+			}
+		}()
+
+		_, err := otelsrvr.New(opts...)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(d):
+		t.Fatalf("New did not return within %v", d)
+
+		return nil
+	}
+}
+
+// isCause returns a check that errors.Is reaches target.
+func isCause(target error) func(error) bool {
+	return func(err error) bool { return errors.Is(err, target) }
+}
+
+// myError is an error type whose typed nil a provider panics with.
+type myError struct{}
+
+func (*myError) Error() string { return "my error" }
+
+// selfUnwrapError unwraps to itself, so its chain never ends.
+type selfUnwrapError struct{}
+
+func (e *selfUnwrapError) Error() string { return "self" }
+func (e *selfUnwrapError) Unwrap() error { return e }
+
+// textPanicsError panics in Error.
+type textPanicsError struct{}
+
+func (*textPanicsError) Error() string { panic("Error panicked") }
+
+// sliceError is an error of an uncomparable type.
+type sliceError []string
+
+func (e sliceError) Error() string { return strings.Join(e, ",") }
 
 // configCauses returns the non-nil Cause of every *otelsrvr.ConfigError a
 // joined error holds, in order.
