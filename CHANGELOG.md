@@ -6,6 +6,8 @@ once tagged.
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-11-19
+
 ### Changed
 
 - Requires `github.com/kartaladev/prblm` v0.2.1 (was v0.2.0) in every module, and `ginsrvr` requires
