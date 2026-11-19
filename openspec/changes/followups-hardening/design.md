@@ -113,6 +113,7 @@ Trace ids are not secrets. srvr sends `trace_id` in every problem response and w
 - Apply nothing unless `BenchmarkPipeline` (not only the micro-benchmark) shows the D8 gain.
 - Prefer (b) at a similar gain, because the source stays `crypto/rand` and the snapshot exposure is bounded by the buffer size.
 - Any candidate is applied only after the owner confirms the trade-off (task 7.4).
+- **Decided (owner, 2026-11-19):** (b) is applied. It met the gain on `BenchmarkPipeline` on darwin only, and on Linux CI it is unverified. The owner accepted the trade-off above (`notes.md`, "Slice 7: trace-id cost and candidates").
 - The modified `trace-context` requirement allows (b) and (c) and forbids a non-cryptographic or self-seeded generator.
 - The all-zero rejection loop stays. The W3C sampled flag and the other flags are unchanged.
 

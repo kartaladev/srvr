@@ -29,39 +29,15 @@ func errorChain(n int) error {
 // unmatched-route answers, router) with logging to io.Discard: a success,
 // a handler error rendered as a 500 problem, an unmatched path answered
 // as a 404 problem, a panic recovered as a 500, a body over
-// MaxRequestBodyBytes answered 413 and a 32-link error chain. Each case
+// MaxRequestBodyBytes answered 413, a 32-link error chain and a success
+// from a client sending a User-Agent that WithoutAccessLogUserAgent
+// leaves out of the record. Each case
 // runs sequentially and, as "<case> parallel", from GOMAXPROCS goroutines
 // with b.RunParallel.
 func BenchmarkPipeline(b *testing.B) {
-	srv, err := New(WithLogOutput(io.Discard), WithMaxRequestBodyBytes(benchBodyLimit))
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	chain := errorChain(32)
-
-	mux, _, err := srv.router([]RouteConfigurer[*Group]{routes(func(g *Group) {
-		g.GET("/ok", func(w http.ResponseWriter, _ *http.Request) error {
-			w.WriteHeader(http.StatusOK)
-
-			return nil
-		})
-		g.GET("/fail", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") })
-		g.GET("/panic", func(http.ResponseWriter, *http.Request) error { panic("boom") })
-		g.POST("/upload", func(_ http.ResponseWriter, r *http.Request) error {
-			_, err := io.Copy(io.Discard, r.Body)
-
-			return err
-		})
-		g.GET("/chain", func(http.ResponseWriter, *http.Request) error { return chain })
-	})})
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	h := srv.pipeline(mux)
-
 	for _, bc := range pipelineCases {
+		h := pipelineHandler(b, bc.opts...)
+
 		b.Run(bc.name, func(b *testing.B) {
 			req := bc.request(b)
 			if w := serve(h, req); w.Code != bc.status {
@@ -88,11 +64,50 @@ func BenchmarkPipeline(b *testing.B) {
 	}
 }
 
+// pipelineHandler returns the pipeline of a server built with opts that
+// logs to io.Discard and limits request bodies to benchBodyLimit, routing
+// the paths of pipelineCases.
+func pipelineHandler(b *testing.B, opts ...Option) http.Handler {
+	b.Helper()
+
+	srv, err := New(append([]Option{WithLogOutput(io.Discard), WithMaxRequestBodyBytes(benchBodyLimit)}, opts...)...)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	chain := errorChain(32)
+
+	mux, _, err := srv.router([]RouteConfigurer[*Group]{routes(func(g *Group) {
+		g.GET("/ok", func(w http.ResponseWriter, _ *http.Request) error {
+			w.WriteHeader(http.StatusOK)
+
+			return nil
+		})
+		g.GET("/fail", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") })
+		g.GET("/panic", func(http.ResponseWriter, *http.Request) error { panic("boom") })
+		g.POST("/upload", func(_ http.ResponseWriter, r *http.Request) error {
+			_, err := io.Copy(io.Discard, r.Body)
+
+			return err
+		})
+		g.GET("/chain", func(http.ResponseWriter, *http.Request) error { return chain })
+	})})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	return srv.pipeline(mux)
+}
+
 // pipelineCase is one request of BenchmarkPipeline.
 type pipelineCase struct {
 	name, method, path string
 	body               []byte
 	status             int
+	// userAgent is the request's User-Agent header, none when empty.
+	userAgent string
+	// opts are the case's server options besides the benchmark's own.
+	opts []Option
 }
 
 // pipelineCases are the requests of BenchmarkPipeline.
@@ -106,6 +121,10 @@ var pipelineCases = []pipelineCase{
 		body: make([]byte, 2*benchBodyLimit), status: http.StatusRequestEntityTooLarge,
 	},
 	{name: "32-link error chain", method: http.MethodGet, path: "/chain", status: http.StatusInternalServerError},
+	{
+		name: "user agent omitted", method: http.MethodGet, path: "/ok", status: http.StatusOK,
+		userAgent: "bench-client/1.0", opts: []Option{WithoutAccessLogUserAgent()},
+	},
 }
 
 // request returns the case's request. serve rewinds its body, so it is
@@ -117,6 +136,10 @@ func (bc pipelineCase) request(b *testing.B) *http.Request {
 	if bc.body != nil {
 		req.Body = rewindBody{bytes.NewReader(bc.body)}
 		req.ContentLength = int64(len(bc.body))
+	}
+
+	if bc.userAgent != "" {
+		req.Header.Set("User-Agent", bc.userAgent)
 	}
 
 	return req

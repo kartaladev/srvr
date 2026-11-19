@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strings"
+	"sync"
 )
 
 // Field lengths of a traceparent header, in hex characters.
@@ -44,15 +45,23 @@ func FromHeaders(values []string) Trace {
 	return New()
 }
 
+// rawLen is the number of random bytes of a trace's two ids.
+const rawLen = (traceIDLen + spanIDLen) / 2
+
 // New returns a new trace with random trace and span ids, both never all
-// zeros, from one read of crypto/rand. crypto/rand.Read never fails on
-// supported platforms; on failure the program crashes (Go 1.24+).
+// zeros, drawn from a batch of crypto/rand bytes (see idBatch).
+// crypto/rand.Read never fails on supported platforms; on failure the
+// program crashes (Go 1.24+) rather than generate predictable ids.
 func New() Trace {
-	var raw [(traceIDLen + spanIDLen) / 2]byte
+	var raw [rawLen]byte
 
 	var ids [traceIDLen + spanIDLen]byte
+
+	b := idBatches.Get().(*idBatch) //nolint:forcetypeassert // the pool holds only *idBatch
+	defer idBatches.Put(b)
+
 	for {
-		_, _ = rand.Read(raw[:])
+		b.next(&raw)
 		hex.Encode(ids[:], raw[:])
 
 		s := string(ids[:])
@@ -116,4 +125,45 @@ func isZero(s string) bool { return strings.Trim(s, "0") == "" }
 func Valid(traceID, spanID string) bool {
 	return len(traceID) == traceIDLen && len(spanID) == spanIDLen &&
 		isHex(traceID) && isHex(spanID) && !isZero(traceID) && !isZero(spanID)
+}
+
+// batchTraces is the number of traces' ids one crypto/rand read yields.
+// One read per request was a third of the request pipeline's CPU on darwin,
+// where crypto/rand is a system call (followups-hardening design D7).
+const batchTraces = 32
+
+// idBatch holds crypto/rand bytes for the next traces' ids. It is used by
+// one goroutine at a time (idBatches), so no bytes are handed out twice,
+// and the bytes it hands out are cleared, so it holds only future ids. The
+// zero value is an empty batch.
+//
+// Security trade-off, accepted by the owner (design D7): up to
+// batchTraces*rawLen (768) bytes of future ids per pooled batch stay in
+// process memory, so a heap disclosure (a core dump, a memory-read bug)
+// reveals the next ids drawn from that batch; and a process or VM snapshot
+// restored twice repeats the ids of the batches it copied, where reading
+// crypto/rand per trace gets the kernel's reseed. Trace ids are not
+// secrets (srvr writes them to responses and logs): W3C Trace Context
+// asks only that they be random and unique. The source stays crypto/rand.
+type idBatch struct {
+	buf  [batchTraces * rawLen]byte
+	left int // bytes of buf not handed out yet, at its start
+}
+
+// idBatches pools batches; one the GC drops takes its unused ids with it,
+// and a new one starts empty.
+var idBatches = sync.Pool{New: func() any { return new(idBatch) }}
+
+// next fills raw with the batch's next bytes, refilling the batch from
+// crypto/rand when it is used up, and clears the bytes it handed out.
+func (b *idBatch) next(raw *[rawLen]byte) {
+	if b.left == 0 {
+		_, _ = rand.Read(b.buf[:])
+		b.left = len(b.buf)
+	}
+
+	b.left -= rawLen
+	drawn := b.buf[b.left : b.left+rawLen]
+	copy(raw[:], drawn)
+	clear(drawn)
 }

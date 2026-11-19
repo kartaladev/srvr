@@ -3,10 +3,13 @@ package srvr_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kartaladev/prblm"
@@ -103,49 +106,100 @@ func TestTraceFromContext(t *testing.T) {
 // Trace aliases srvr.Trace for brevity.
 type Trace = srvr.Trace
 
-// TestTrace_Unique covers trace-context / Scenario: Concurrent generation.
+// TestTrace_Unique covers trace-context / Scenario: Concurrent generation:
+// requests without traceparent from concurrent clients get distinct,
+// well-formed trace and span ids. It guards any change of id source.
 func TestTrace_Unique(t *testing.T) {
 	t.Parallel()
 
-	srv := newServer(t)
-	mustNil(t, srv.Register(configFunc(traceEcho)))
-	base := startServer(t, srv)
+	tests := []struct{ requests, clients, distinct int }{
+		{1000, 1000, 1000},
+		{10000, 64, 10000},
+		{10000, 1, 10000},
+	}
 
-	const n = 1000
-	var (
-		mu  sync.Mutex
-		ids = map[string]bool{}
-		wg  sync.WaitGroup
-	)
-	const workers = 50
-	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: workers}}
-	defer client.CloseIdleConnections()
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d requests, %d clients", tt.requests, tt.clients), func(t *testing.T) {
+			t.Parallel()
 
-	sem := make(chan struct{}, workers)
-	for range n {
-		wg.Go(func() {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/trace", nil)
-			res, err := client.Do(req)
-			if err != nil {
-				t.Error(err)
+			srv := newServer(t)
+			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
+				g.GET("/ids", func(w http.ResponseWriter, r *http.Request) error {
+					tr, _ := srvr.TraceFromContext(r.Context())
+					_, err := io.WriteString(w, tr.TraceID+" "+tr.SpanID)
 
-				return
+					return err
+				})
+			})))
+			base := startServer(t, srv)
+
+			traces, spans := generatedIDs(t, base+"/ids", tt.requests, tt.clients)
+			if len(traces) != tt.distinct || len(spans) != tt.distinct {
+				t.Fatalf("distinct trace ids = %d, span ids = %d, want %d", len(traces), len(spans), tt.distinct)
 			}
-			b, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			id := string(b)
-			mu.Lock()
-			ids[id] = true
-			mu.Unlock()
+
+			checkIDs(t, "trace", traces, hexTraceID)
+			checkIDs(t, "span", spans, hex16)
 		})
 	}
+}
+
+// checkIDs fails t unless every id of kind matches format (lowercase hex
+// of a fixed width) and is not all zeros.
+func checkIDs(t *testing.T, kind string, ids map[string]bool, format *regexp.Regexp) {
+	t.Helper()
+
+	for id := range ids {
+		if !format.MatchString(id) || strings.Trim(id, "0") == "" {
+			t.Fatalf("%s id %q is not lowercase hex of its width, or is all zeros", kind, id)
+		}
+	}
+}
+
+// generatedIDs sends requests GET requests to url from clients concurrent
+// clients and returns the distinct trace and span ids the responses
+// carry, each body being "<trace id> <span id>".
+func generatedIDs(t *testing.T, url string, requests, clients int) (traces, spans map[string]bool) {
+	t.Helper()
+
+	traces, spans = map[string]bool{}, map[string]bool{}
+
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		next atomic.Int64
+	)
+
+	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: clients}}
+	defer client.CloseIdleConnections()
+
+	for range clients {
+		wg.Go(func() {
+			for next.Add(1) <= int64(requests) {
+				req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+
+				res, err := client.Do(req)
+				if err != nil {
+					t.Error(err)
+
+					return
+				}
+
+				b, _ := io.ReadAll(res.Body)
+				res.Body.Close()
+
+				traceID, spanID, _ := strings.Cut(string(b), " ")
+
+				mu.Lock()
+				traces[traceID], spans[spanID] = true, true
+				mu.Unlock()
+			}
+		})
+	}
+
 	wg.Wait()
 
-	if len(ids) != n {
-		t.Fatalf("distinct trace ids = %d, want %d", len(ids), n)
-	}
+	return traces, spans
 }
 
 // TestProblemTraceID covers error-responses / Scenario: Trace id in the problem.

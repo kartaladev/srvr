@@ -17,6 +17,16 @@ once tagged.
   `otelsetup.New`. `errors.Is`/`errors.As` reach it; `Cause` was nil before. The text is unchanged.
   A panic value that is not an error, a typed nil, or an error whose chain cycles or whose `Unwrap`
   panics still leaves `Cause` nil.
+- With the debug buffer on, a request's buffered records are held in a ring: a request that buffers
+  a few records allocates about 17% fewer bytes, and one past `MaxRecords` (evicting) about 47% fewer.
+  What is written, and its order, are unchanged. Performance only.
+- Generated trace and span ids are drawn from a pooled batch of `crypto/rand` bytes, one read per 32
+  traces, instead of one `crypto/rand` read per request. On macOS that read was a system call taking
+  about 40% of a request's CPU, and a request now costs about 12% less (47% less under parallel
+  load). On Linux (`getrandom` vDSO) the change is within noise. Ids stay cryptographically random
+  from `crypto/rand`. The trade-off: up to 768 bytes of future ids per pooled batch stay in process
+  memory, and ids repeat when a process or VM snapshot is restored more than once (see
+  `docs/PERFORMANCE.md`).
 
 ### Fixed
 

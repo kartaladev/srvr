@@ -156,19 +156,41 @@ func BenchmarkRedactSecrets(b *testing.B) {
 	}
 }
 
-// BenchmarkDebugBuffer measures one request that logs five DEBUG records
-// below the INFO level and ends: with buffering off (the records are
-// dropped by Enabled), on with a 200 (buffered, then discarded) and on
-// with a 500 (buffered, then written before the access record).
+// BenchmarkDebugBuffer measures one request that logs DEBUG records below
+// the INFO level and ends: five two-attribute records with buffering off
+// (the records are dropped by Enabled), on with a 200 (buffered, then
+// discarded) and on with a 500 (buffered, then written before the access
+// record); on with a 500, five records of seven attributes, one a
+// slog.Any value; and on with a 500, 150 records, past the default 100,
+// so the oldest are evicted.
 func BenchmarkDebugBuffer(b *testing.B) {
+	// two attributes per record, below slog's inline five: Clone does not
+	// allocate.
+	narrow := func(ctx context.Context, logger *slog.Logger, i int) {
+		logger.DebugContext(ctx, "step", "i", i, "user.id", "42")
+	}
+	// seven attributes, one a slog.Any value: Clone allocates and the
+	// value is formatted to cut and to size it (design D8).
+	header := http.Header{"Accept": {"application/json"}, "X-Request-Id": {"r-1"}}
+	wide := func(ctx context.Context, logger *slog.Logger, i int) {
+		logger.LogAttrs(ctx, slog.LevelDebug, "step", slog.Int("i", i), slog.String("user.id", "42"),
+			slog.String("order.id", "o-7"), slog.Int("cart.items", 3), slog.String("region", "eu-west-1"),
+			slog.Bool("retry", false), slog.Any("http.request.header", header))
+	}
+
 	cases := []struct {
 		name    string
 		enabled bool
 		status  int
+		records int
+		log     func(context.Context, *slog.Logger, int)
 	}{
-		{"off", false, http.StatusOK},
-		{"on-success", true, http.StatusOK},
-		{"on-failure", true, http.StatusInternalServerError},
+		{"off", false, http.StatusOK, 5, narrow},
+		{"on-success", true, http.StatusOK, 5, narrow},
+		{"on-failure", true, http.StatusInternalServerError, 5, narrow},
+		{"on-failure 7 attributes with slog.Any", true, http.StatusInternalServerError, 5, wide},
+		// past the default 100 records: the oldest are evicted.
+		{"on-failure 150 records", true, http.StatusInternalServerError, 150, narrow},
 	}
 
 	for _, bc := range cases {
@@ -182,8 +204,8 @@ func BenchmarkDebugBuffer(b *testing.B) {
 				ctx := c.BeginRequest(b.Context(), nil)
 				logger := LoggerFromContext(ctx)
 
-				for i := range 5 {
-					logger.DebugContext(ctx, "step", "i", i, "user.id", "42")
+				for i := range bc.records {
+					bc.log(ctx, logger, i)
 				}
 
 				c.WriteAccess(ctx, info)

@@ -1,9 +1,16 @@
 package tracectx_test
 
 import (
+	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
 	"regexp"
+	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kartaladev/srvr/internal/tracectx"
@@ -121,4 +128,75 @@ func FuzzTraceparent(f *testing.F) {
 			t.Fatalf("accepted %q gave %+v, want its ids, a new span and sampled = flags bit 0", header, tr)
 		}
 	})
+}
+
+// countingReader counts the reads of the random source it wraps.
+type countingReader struct {
+	r     io.Reader
+	reads atomic.Int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	c.reads.Add(1)
+
+	return c.r.Read(p)
+}
+
+// TestNew_BatchesRandomness covers trace-context / design D7 (b): new
+// traces draw their ids from batches of crypto/rand bytes, not from one
+// crypto/rand read each. It replaces the process-wide crypto/rand.Reader,
+// so it does not run in parallel with other tests.
+func TestNew_BatchesRandomness(t *testing.T) { //nolint:paralleltest // replaces crypto/rand.Reader for the process
+	const traces = 320
+
+	counter := &countingReader{r: rand.Reader}
+	rand.Reader = counter
+	t.Cleanup(func() { rand.Reader = counter.r })
+
+	// A collection would empty the pool and add refills the row does not
+	// count on.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+
+	for range traces {
+		_ = tracectx.New()
+	}
+
+	// One read per 32 traces, with headroom: under -race sync.Pool drops
+	// about a quarter of its Puts on purpose, and each dropped batch is
+	// refilled. One read per trace is twice the bound.
+	if reads := counter.reads.Load(); reads > traces/2 {
+		t.Fatalf("%d crypto/rand reads for %d traces, want at most %d", reads, traces, traces/2)
+	}
+}
+
+// failingReaderEnv makes the test binary, run by
+// TestNew_RandomSourceFailure, generate a trace from a failing source.
+const failingReaderEnv = "TRACECTX_FAILING_READER"
+
+// failingReader is a random source whose every read fails.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+
+// TestNew_RandomSourceFailure covers design D7's failure mode: when
+// crypto/rand cannot read, the program crashes (crypto/rand.Read's
+// behaviour since Go 1.24) instead of generating predictable ids. The crash
+// runs in a child process: this test binary, re-run for this test only.
+func TestNew_RandomSourceFailure(t *testing.T) {
+	t.Parallel()
+
+	if os.Getenv(failingReaderEnv) == "1" {
+		rand.Reader = failingReader{}
+		t.Errorf("New returned %+v", tracectx.New())
+
+		return
+	}
+
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestNew_RandomSourceFailure$")
+	cmd.Env = append(os.Environ(), failingReaderEnv+"=1")
+
+	// Only crypto/rand's crash prints this text, and it ends the child.
+	if out, err := cmd.CombinedOutput(); !strings.Contains(string(out), "crypto/rand: failed to read random data") {
+		t.Fatalf("child err = %v, output:\n%s\nwant a crash from crypto/rand", err, out)
+	}
 }
