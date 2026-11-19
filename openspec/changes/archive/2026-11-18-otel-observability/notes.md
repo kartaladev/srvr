@@ -216,8 +216,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### engine-support "Engines share one per-request state" exceeds the 500-character requirement limit
-- **Status:** open (skills-compliance consolidation 2026-11-18: deferred - this change's engine-support delta does not modify that requirement, and splitting it means moving its scenarios)
-- **Target:** unassigned (next change that touches engine-support)
+- **Status:** adopted by followups-hardening (consolidation 2026-11-19: the requirement is shortened, not split, in slice 5, design D1; the trace-source clause points to request-observer's requirement)
+- **Target:** followups-hardening
 - **Context:** archiving otel-observability merged its MODIFIED requirement verbatim into `openspec/specs/engine-support/spec.md`. The added trace-source clause pushes the requirement text past 500 characters, so `openspec validate engine-support --type spec --strict` reports a length warning; non-strict validation passes. The sync rules forbid trimming MODIFIED text only to meet the limit.
 - **Evidence:** `openspec validate engine-support --type spec --strict` → `requirements[9]: Requirement text is very long (>500 characters)`.
 - **Suggested action:** split the requirement in a later delta: keep the per-request state holder, and move "an observer's trace source replaces the trace for loggers, problem trace_id and access record" into its own requirement with its existing scenarios.

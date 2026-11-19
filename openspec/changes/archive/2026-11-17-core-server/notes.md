@@ -25,8 +25,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none; consolidation 1.3 re-checks these against merged code.
 
 ### Ask prblm for a composable OnError and an exported status-only sentinel
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (consolidation 2026-11-19: part 1 was answered by prblm v0.2.0 in `triage-debug-buffer`; part 2, switching gin's classification to `ginprblm.ErrStatusOnly`, is slice 6, design D6)
+- **Target:** followups-hardening
 - **Context:** One upstream issue on kartaladev/prblm covering two asks. (1) `prblm.OnError` is a single slot (the last option wins), so srvr must own it and offer `WithErrorHook`; a consumer passing `prblm.OnError` through `WithProblemOptions` is silently overridden. (2) `ginprblm` reports `c.AbortWithStatus(4xx)` to `OnError` with the unexported `errStatusOnly`, so callers cannot tell it apart with `errors.Is`; the gin engine therefore classifies failures from `c.Errors` (gin-and-fiber-engines notes "ginprblm reports status-only aborts to OnError with an unexported error" is merged into this entry). Asks: allow several `OnError` hooks run in order, and export `ginprblm.ErrStatusOnly`.
 - **Evidence:** (1) `upstream_test.go` `TestUpstream_PrblmOnErrorComposes` (`SRVR_UPSTREAM_TESTS=1 go test -count=1 -run TestUpstream ./...`, prblm v0.1.0): `OnError hooks called: first=false second=true, want both`; it is skipped without the variable so CI stays green, and srvr documents the workaround on `WithProblemOptions` and `WithErrorHook` (godoc, `ExampleWithErrorHook`). Earlier: unverified for (1) as a running test until task 5.5 adds one; (2) probe `probes/gin/hook_test.go` `TestHookOnStatusOnly` (`go test -count=1 -v -run TestHookOnStatusOnly .`): `OnError called: err="ginprblm: response aborted with an error status and no error" type=*prblm.statusError`.
 - **Suggested action:** Open one issue on kartaladev/prblm with both asks; when released, drop srvr's single-slot workaround note and switch the gin classification to `errors.Is(err, ginprblm.ErrStatusOnly)`.
