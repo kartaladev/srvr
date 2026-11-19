@@ -98,7 +98,9 @@ func dirSite(t *testing.T) string {
 }
 
 // TestStatic_ConfigErrors covers static-files / Scenario: Rejected static
-// configuration and Scenario: Several invalid settings on net/http.
+// configuration, Scenario: Several invalid settings and Scenario: Rejected
+// file cache configuration on net/http, which has no file cache: a non-zero
+// StaticConfig.FiberSendFileCache fails Start instead of being ignored.
 func TestStatic_ConfigErrors(t *testing.T) {
 	t.Parallel()
 
@@ -110,60 +112,73 @@ func TestStatic_ConfigErrors(t *testing.T) {
 		name        string
 		configurers []srvr.RouteConfigurer[*srvr.Group]
 		fields      []string
+		value       string // the first *ConfigError's Value; "" for any
 	}{
-		{"nil FS", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", nil)}, []string{"Static.FS"}},
-		{"typed-nil *embed.FS", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", typedNil)}, []string{"Static.FS"}},
-		{"empty prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("", site)}, []string{"Static.Prefix"}},
-		{"relative prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("assets", site)}, []string{"Static.Prefix"}},
-		{"wildcard prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/{name}", site)}, []string{"Static.Prefix"}},
-		{"star prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/*", site)}, []string{"Static.Prefix"}},
-		{"parameter prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/:id", site)}, []string{"Static.Prefix"}},
-		{"dot-dot prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a/../b", site)}, []string{"Static.Prefix"}},
-		{"empty element prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a//b", site)}, []string{"Static.Prefix"}},
-		{"NUL in prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a\x00", site)}, []string{"Static.Prefix"}},
-		{"nil option", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", site, nil)}, []string{"StaticOption"}},
+		{"nil FS", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", nil)}, []string{"Static.FS"}, ""},
+		{"typed-nil *embed.FS", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", typedNil)}, []string{"Static.FS"}, ""},
+		{"empty prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("", site)}, []string{"Static.Prefix"}, ""},
+		{"relative prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("assets", site)}, []string{"Static.Prefix"}, ""},
+		{"wildcard prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/{name}", site)}, []string{"Static.Prefix"}, ""},
+		{"star prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/*", site)}, []string{"Static.Prefix"}, ""},
+		{"parameter prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/assets/:id", site)}, []string{"Static.Prefix"}, ""},
+		{"dot-dot prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a/../b", site)}, []string{"Static.Prefix"}, ""},
+		{"empty element prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a//b", site)}, []string{"Static.Prefix"}, ""},
+		{"NUL in prefix", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/a\x00", site)}, []string{"Static.Prefix"}, ""},
+		{"nil option", []srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", site, nil)}, []string{"StaticOption"}, ""},
 		{"empty index name", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithStaticIndexNames("")),
-		}, []string{"Static.IndexNames"}},
+		}, []string{"Static.IndexNames"}, ""},
 		{"index name with a slash", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithStaticIndexNames("a/index.html")),
-		}, []string{"Static.IndexNames"}},
+		}, []string{"Static.IndexNames"}, ""},
 		{"dot-dot index name", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithStaticIndexNames("..")),
-		}, []string{"Static.IndexNames"}},
+		}, []string{"Static.IndexNames"}, ""},
 		{"same prefix twice", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/assets", site), srvr.Static("/assets", site),
-		}, []string{"Static.Prefix"}},
+		}, []string{"Static.Prefix"}, ""},
 		{"root twice with other file systems", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site), srvr.Static("/", fstest.MapFS{}),
-		}, []string{"Static.Prefix"}},
+		}, []string{"Static.Prefix"}, ""},
 		{"missing fallback", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithSPAFallback("missing.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"directory fallback", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithSPAFallback("docs")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"fallback leaving the file system", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithSPAFallback("../index.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"absolute fallback", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithSPAFallback("/index.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"header injection in CacheControl", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithStaticCacheControl("max-age=60\r\nSet-Cookie: a=b")),
-		}, []string{"Static.CacheControl"}},
+		}, []string{"Static.CacheControl"}, ""},
 		{"NUL in IndexCacheControl", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", site, srvr.WithStaticIndexCacheControl("no-cache\x00")),
-		}, []string{"Static.IndexCacheControl"}},
+		}, []string{"Static.IndexCacheControl"}, ""},
 		{"fallback Open panics", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", failingIndex(site, func() (fs.File, error) { panic("boom") }), srvr.WithSPAFallback("index.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"fallback Open permission denied", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("/", failingIndex(site, func() (fs.File, error) { return nil, fs.ErrPermission }), srvr.WithSPAFallback("index.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"several invalid settings", []srvr.RouteConfigurer[*srvr.Group]{
 			srvr.Static("assets", nil, srvr.WithStaticCacheControl("a\nb")),
-		}, []string{"Static.Prefix", "Static.FS", "Static.CacheControl"}},
+		}, []string{"Static.Prefix", "Static.FS", "Static.CacheControl"}, ""},
+		{
+			"FiberSendFileCache 1h0m0s",
+			[]srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", site, srvr.WithStaticConfig(srvr.StaticConfig{FiberSendFileCache: time.Hour}))},
+			[]string{"Static.FiberSendFileCache"},
+			"1h0m0s",
+		},
+		{
+			"FiberSendFileCache -1s",
+			[]srvr.RouteConfigurer[*srvr.Group]{srvr.Static("/", site, srvr.WithStaticConfig(srvr.StaticConfig{FiberSendFileCache: -time.Second}))},
+			[]string{"Static.FiberSendFileCache"},
+			"-1s",
+		},
 	}
 
 	for _, tt := range tests {
@@ -180,8 +195,8 @@ func TestStatic_ConfigErrors(t *testing.T) {
 				t.Fatalf("Start = %v, want an error wrapping ErrRouteConfig and ErrConfig", err)
 			}
 
-			if _, ok := errors.AsType[*srvr.ConfigError](err); !ok {
-				t.Errorf("Start = %v, want a *ConfigError", err)
+			if ce, ok := errors.AsType[*srvr.ConfigError](err); !ok || (tt.value != "" && ce.Value != tt.value) {
+				t.Errorf("Start = %v, want a *ConfigError with Value %q", err, tt.value)
 			}
 
 			if got := configFields(err); !slices.Equal(got, tt.fields) {
@@ -277,11 +292,13 @@ func TestStatic_Serve(t *testing.T) {
 	}
 
 	for _, site := range sites {
+		fsys := site.build(t) // read only: built once for every row
+
 		for _, tt := range tests {
 			t.Run(site.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				base, _ := staticServer(t, srvr.Static(tt.prefix, site.build(t)))
+				base, _ := staticServer(t, srvr.Static(tt.prefix, fsys))
 				res := do(t, tt.method, base+tt.path, nil, nil)
 				checkServed(t, res, tt.ctype, siteFiles[tt.file], site.name == "DirFS")
 
@@ -803,11 +820,13 @@ func TestStatic_NotFound(t *testing.T) {
 	}
 
 	for _, site := range sites {
+		fsys := site.build(t) // read only: built once for every row
+
 		for _, tt := range tests {
 			t.Run(site.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				base, _ := staticServer(t, srvr.Static("/assets", site.build(t), tt.opts...))
+				base, _ := staticServer(t, srvr.Static("/assets", fsys, tt.opts...))
 				checkNotFound(t, do(t, tt.method, base+tt.path, nil, nil), tt.path, tt.method == http.MethodHead)
 			})
 		}
@@ -835,11 +854,14 @@ func TestStatic_Hostile(t *testing.T) {
 		{"/assets//app.js", 307, "/assets/app.js"},
 	}
 
+	// One server, which every row only reads; it stops when the test ends,
+	// after its rows.
+	base, _ := staticServer(t, srvr.Static("/assets", os.DirFS(dirSite(t))))
+
 	for _, tt := range tests {
 		t.Run(tt.target, func(t *testing.T) {
 			t.Parallel()
 
-			base, _ := staticServer(t, srvr.Static("/assets", os.DirFS(dirSite(t))))
 			res := rawGet(t, base, tt.target, map[string]string{"Accept": "text/html"})
 
 			if res.status != tt.status || res.header.Get("Location") != tt.location {

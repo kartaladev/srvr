@@ -43,7 +43,7 @@ func TestFiberErrors(t *testing.T) {
 			var hooks int
 
 			srv, _ := newServer(t, srvr.WithErrorHook(func(context.Context, error, *prblm.Problem) { hooks++ }))
-			res := serve(t, srv, routes(func(r fiber.Router) { r.Get("/items/:id", tt.handler) }), http.MethodGet, "/items/7", nil, nil)
+			res := serve(t, srv, http.MethodGet, "/items/7", nil, nil, routes(func(r fiber.Router) { r.Get("/items/:id", tt.handler) }))
 
 			if res.status != tt.status || res.header.Get("Content-Type") != tt.contentType {
 				t.Fatalf("response %d %q %s, want %d %q", res.status, res.header.Get("Content-Type"), res.body, tt.status, tt.contentType)
@@ -85,10 +85,12 @@ func TestFiberUnmatched(t *testing.T) {
 			t.Parallel()
 
 			srv, _ := newServer(t)
-			res := serve(t, srv, routes(func(r fiber.Router) {
-				r.Get("/users", ok)
-				r.Post("/users", ok)
-			}), tt.method, tt.path, nil, nil)
+			res := serve(t, srv,
+
+				tt.method, tt.path, nil, nil, routes(func(r fiber.Router) {
+					r.Get("/users", ok)
+					r.Post("/users", ok)
+				}))
 
 			if res.status != tt.status || res.header.Get("Content-Type") != "application/problem+json" {
 				t.Fatalf("response %d %q, want %d problem", res.status, res.header.Get("Content-Type"), tt.status)
@@ -127,12 +129,12 @@ func TestFiberPanic(t *testing.T) {
 				r.Get("/ok", ok)
 			})
 
-			res := serve(t, srv, conf, http.MethodGet, "/p", nil, nil)
+			res := serve(t, srv, http.MethodGet, "/p", nil, nil, conf)
 			if res.status != http.StatusInternalServerError || res.problem == nil || (tt.hidden != "" && strings.Contains(res.body, tt.hidden)) {
 				t.Fatalf("response %d %s, want a safe 500 problem", res.status, res.body)
 			}
 
-			if next := serve(t, srv, conf, http.MethodGet, "/ok", nil, nil); next.status != http.StatusOK {
+			if next := serve(t, srv, http.MethodGet, "/ok", nil, nil, conf); next.status != http.StatusOK {
 				t.Fatalf("next request %d", next.status)
 			}
 
@@ -238,7 +240,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 		t.Helper()
 
 		srv, logs := newServer(t, opts...)
-		res := serve(t, srv, routes(func(r fiber.Router) { r.Get("/f", h) }), http.MethodGet, "/f", nil, nil)
+		res := serve(t, srv, http.MethodGet, "/f", nil, nil, routes(func(r fiber.Router) { r.Get("/f", h) }))
 
 		recs := logs.access(t)
 		if len(recs) != 1 {
@@ -316,7 +318,7 @@ func TestFiberConsumerFaults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res := serve(t, srv, routes(func(r fiber.Router) { r.Get("/f", ok) }), http.MethodGet, "/f", nil, nil); res.status != 200 {
+		if res := serve(t, srv, http.MethodGet, "/f", nil, nil, routes(func(r fiber.Router) { r.Get("/f", ok) })); res.status != 200 {
 			t.Fatalf("status %d", res.status)
 		}
 		if srvr.LogRecordsLost() <= before {

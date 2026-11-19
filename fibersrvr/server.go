@@ -217,7 +217,21 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 
 	defer func() { s.owners.current = "" }()
 
+	cfg := s.app.Config()
+
+	// The mounts percent-decode the request path themselves unless fiber's
+	// UnescapePath already does.
+	statics := staticMounts{decode: !cfg.UnescapePath}
+
 	for _, c := range configurers {
+		if sc, ok := c.(*staticConfigurer); ok {
+			if err := statics.add(sc); err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
 		s.owners.current = fmt.Sprintf("%T", c)
 		before := len(firstStack(s.app))
 
@@ -232,7 +246,11 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 		return nil, err
 	}
 
-	cfg := s.app.Config()
+	// After every other configurer, so every route and middleware they
+	// registered comes first in fiber's stack (design D4).
+	s.owners.current = staticOwner
+	statics.install(s.app)
+
 	if err := s.owners.duplicate(&cfg); err != nil {
 		return nil, err
 	}
@@ -246,6 +264,9 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[fiber.Router]) (en
 			s.locations[handlerKey(h)] = engine.FuncLocation(h)
 		}
 	}
+
+	// A static mount's handler is srvr's code, not the consumer's.
+	delete(s.locations, staticHandlerKey)
 
 	return engine.CollapseMethods(s.owners.routes, cfg.RequestMethods), nil
 }
@@ -704,6 +725,8 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 		}
 	}
 
+	// A static mount's miss matched a route but is the router's answer
+	// (design D5): the state then ignores the route set here.
 	if c.Matched() {
 		route := c.Route()
 		state.SetRoute(route.Path) // the app's registered string, never a pooled buffer

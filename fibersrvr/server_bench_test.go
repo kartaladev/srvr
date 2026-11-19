@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,9 +34,9 @@ func errorChain(n int) error {
 // chain, a success on a skip path, whose access record is suppressed, an
 // unmatched path whose record WithUnmatchedRecordLimit suppresses, and a
 // success from a client sending a User-Agent that
-// WithoutAccessLogUserAgent leaves out of the record. Each case runs
-// sequentially and, as "<case> parallel",
-// from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
+// WithoutAccessLogUserAgent leaves out of the record, and a file a static
+// mount serves from disk, without and with fiber's open-file cache. Each case runs sequentially and, as "<case>
+// parallel", from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
 // connection is part of every measurement.
 //
 // A body over MaxRequestBodyBytes has no row: fasthttp rejects it before
@@ -58,6 +61,11 @@ func BenchmarkPipeline(b *testing.B) {
 		userAgent string
 		// opts are the case's server options besides the benchmark's own.
 		opts []srvr.Option
+		// static adds a static mount of benchSite at /assets, which only its
+		// case gets, so the others measure a server without one.
+		static bool
+		// staticOpts are the static mount's options.
+		staticOpts []srvr.StaticOption
 	}{
 		{name: "success", path: "/ok", status: http.StatusOK},
 		{name: "handler error", path: "/fail", status: http.StatusInternalServerError},
@@ -75,10 +83,22 @@ func BenchmarkPipeline(b *testing.B) {
 			name: "user agent omitted", path: "/ok", status: http.StatusOK,
 			userAgent: "bench-client/1.0", opts: []srvr.Option{srvr.WithoutAccessLogUserAgent()},
 		},
+		{name: "static", path: "/assets/app.js", status: http.StatusOK, static: true},
+		{
+			// fiber's open-file cache, opt-in: its gain over "static" is what
+			// WithSendFileCache buys (design D2).
+			name: "static cached", path: "/assets/app.js", status: http.StatusOK, static: true,
+			staticOpts: []srvr.StaticOption{fibersrvr.WithSendFileCache(time.Minute)},
+		},
 	}
 
 	for _, bc := range cases {
 		srv := pipelineServer(b, bc.opts...)
+
+		confs := []srvr.RouteConfigurer[fiber.Router]{conf}
+		if bc.static {
+			confs = append(confs, fibersrvr.Static("/assets", benchSite(b), bc.staticOpts...))
+		}
 
 		// do sends one request; it reports failures with Error, as
 		// RunParallel's goroutines must not call FailNow.
@@ -96,7 +116,7 @@ func BenchmarkPipeline(b *testing.B) {
 				req.Header.Set("User-Agent", bc.userAgent)
 			}
 
-			res, err := srv.Test(req, conf)
+			res, err := srv.Test(req, confs...)
 			if err != nil {
 				b.Error(err)
 
@@ -133,6 +153,19 @@ func BenchmarkPipeline(b *testing.B) {
 			})
 		})
 	}
+}
+
+// benchSite returns a directory file system holding app.js, as a build
+// directory served from disk is.
+func benchSite(b *testing.B) fs.FS {
+	b.Helper()
+
+	dir := b.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	return os.DirFS(dir)
 }
 
 // pipelineServer returns a server built with opts that logs to io.Discard

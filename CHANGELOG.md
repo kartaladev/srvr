@@ -32,6 +32,40 @@ once tagged.
   the requests gin answers with its own `404` or `405`. Any other method that another method's route
   matches keeps gin's `405` (`Allow: POST` where net/http and fiber send `Allow: GET, HEAD, POST`). A mount replaces a `NoRoute` handler set by a
   `ginsrvr.WithGinEngine` hook.
+- `fibersrvr.Static(prefix, fsys, opts...)` serves static files and single-page apps on the fiber
+  engine with the same `srvr.StaticOption` values, defaults and answers as `srvr.Static`. Files are
+  sent with fiber's `Ctx.SendFile` with its open-file cache off (a file replaced on disk is served
+  fresh), no compression and no byte ranges. Mounts are installed after every other configurer,
+  longest prefix first, so registered routes win in either order, middleware added with `Use` runs
+  around the mounts even when added after `Static`, and a `GET` or `HEAD` to a path only another
+  method's route serves gets the file or the SPA fallback. A consumer route that repeats a mount's
+  pattern, such as `Get("/*")` beside `Static("/")`, fails `Start` as a duplicate (net/http and gin
+  let the consumer's catch-all win).
+- `fibersrvr.WithSendFileCache(d)` and `srvr.StaticConfig.FiberSendFileCache`
+  (`fiber_send_file_cache`) turn on fiber's open-file cache for one static mount (opt-in; off by
+  default). About twice as fast per request on `os.DirFS`, but a file replaced on disk may be served
+  stale for up to `d` (an `embed.FS` is unaffected), and each cached mount starts fasthttp's cache
+  cleaner goroutine, which outlives `Shutdown` because fiber v3.7.0 never sets
+  `fasthttp.FS.CleanStop`. `d <= 0` in the option and a negative field fail `Start`; `srvr.Static`
+  and `ginsrvr.Static` fail `Start` on any non-zero value, since they have no file cache.
+- `engine.StaticSettings`, `engine.RejectSendFileCache`, `engine.Static.SendFileCache`,
+  `engine.Static.FS`, `engine.Static.Patterns`, `engine.StaticResult.Failure`,
+  `engine.StaticPrefixes.Claim` and `Len`, and `engine.MarkRouterAnswered` (package `engine`,
+  unstable before v1): what a `StaticOption` builds, with the errors an engine module's option
+  collects for a refused argument; the last option of an engine without an open-file cache, which
+  refuses a positive `FiberSendFileCache`; the mount's cache duration, file system and route
+  patterns; the error a 404, 405 or failed resolution answers with, marking the router's answer;
+  the duplicate-prefix rule for a key an engine chooses; and the router's-answer mark of a
+  request context. Once a request is marked as the router's answer, `RequestState.SetRoute` and
+  `SetLocation` do nothing, so a static miss records no `http.route` on any engine.
+- The static-file policy every engine shares (package `engine`, unstable before v1):
+  `engine.StaticConfig` and `engine.StaticOption` (aliased as `srvr.StaticConfig` and
+  `srvr.StaticOption`); `engine.NewStatic`, building a mount (`*engine.Static`) with its `Prefix`,
+  `Check` and `Resolve` methods; `engine.CheckStatic`, the configuration check of a mount's
+  construction; `engine.StaticPrefixes`, which adds the mounts of one server and refuses a prefix
+  served twice; `engine.StaticResult`, `engine.StaticAnswer` (`StaticFile`, `StaticNotFound`,
+  `StaticMethodNotAllowed`, `StaticFailed`) and `engine.StaticFileContent`, the decision `Resolve`
+  returns for an engine to answer.
 - `engine.ServeStaticFile` (package `engine`, unstable before v1) sends a static mount's file with
   `http.ServeContent`, shared by the net/http and gin engines.
 - `engine.RequestState.MarkRouterAnswered` (package `engine`, unstable before v1) also clears the

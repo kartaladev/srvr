@@ -69,4 +69,9 @@
 //   - The access record's http.response.body.size for a streamed body
 //     (c.SendStream) is the stream's declared Content-Length, 0 when it has
 //     none, not the bytes written: measuring the stream would buffer it.
+//   - [Static] mounts are routes installed after every other configurer,
+//     so a consumer route that repeats a mount's pattern, such as
+//     Get("/*") beside Static("/"), fails Start as a duplicate, where the
+//     consumer's catch-all wins on net/http and gin. Middleware added with
+//     Use runs around the mounts even when added after Static.
 package fibersrvr

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
 )
@@ -59,12 +59,16 @@ import (
 // prefix must start with "/" and have no empty, "." or ".." element, no
 // whitespace or control character and none of { } * : % ? # \; one
 // trailing slash is dropped. fsys must not be nil, and two mounts must not
-// share a prefix. A nil option or invalid configuration fails Start with
-// an error wrapping srvr.ErrRouteConfig and a *srvr.ConfigError per
-// invalid setting. Register it with [Server.Register]: its Configure
-// panics, so a configurer calling it fails Start.
+// share a prefix. A nil option or invalid configuration, including any
+// non-zero srvr.StaticConfig.FiberSendFileCache (gin has no open-file
+// cache, so the fiber-only setting fails instead of being ignored), fails
+// Start with an error wrapping srvr.ErrRouteConfig and a
+// *srvr.ConfigError per invalid setting. Register it with
+// [Server.Register]: its Configure panics, so a configurer calling it
+// fails Start.
 func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConfigurer[*gin.RouterGroup] {
-	m, err := engine.NewStatic(prefix, fsys, opts...)
+	// gin has no open-file cache: a positive FiberSendFileCache fails.
+	m, err := engine.NewStatic(prefix, fsys, append(slices.Clip(opts), engine.RejectSendFileCache)...)
 
 	return &staticConfigurer{prefix: prefix, mount: m, err: err}
 }
@@ -91,9 +95,8 @@ func (c *staticConfigurer) Configure(*gin.RouterGroup) {
 // staticMounts are a server's static mounts in registration order, built
 // by the configure phase.
 type staticMounts struct {
-	mounts []*engine.Static
-	// owners name the configurer of each mount, by normalised prefix.
-	owners map[string]string
+	mounts   []*engine.Static
+	prefixes engine.StaticPrefixes
 }
 
 // staticOwner is the configurer type every static mount is listed with.
@@ -102,25 +105,10 @@ const staticOwner = "*ginsrvr.staticConfigurer"
 // add checks c at its position in the configure phase and adds its mount,
 // or returns the route error that fails Start.
 func (ms *staticMounts) add(c *staticConfigurer) error {
-	name := fmt.Sprintf("static %q (%T)", c.prefix, c)
-
-	// Reads the file system, which the consumer may fill until Start.
-	if err := engine.CheckStatic(c.mount, c.err); err != nil {
-		return engine.RouteErrorf("%s: %w", name, err)
+	if err := ms.prefixes.Add(c, c.prefix, c.mount, c.err); err != nil {
+		return err
 	}
 
-	p := c.mount.Prefix()
-	if earlier, dup := ms.owners[p]; dup {
-		err := engine.NewConfigError("Static.Prefix", c.prefix, "is already served by another static mount ("+earlier+")")
-
-		return engine.RouteErrorf("%s: %w", name, err)
-	}
-
-	if ms.owners == nil {
-		ms.owners = map[string]string{}
-	}
-
-	ms.owners[p] = name
 	ms.mounts = append(ms.mounts, c.mount)
 
 	return nil
@@ -132,12 +120,9 @@ func (ms *staticMounts) routes() engine.Routes {
 	var out engine.Routes
 
 	for _, m := range ms.mounts {
-		p := m.Prefix()
-		if p != "/" {
+		for _, p := range m.Patterns("*filepath") {
 			out = append(out, engine.Route{Method: http.MethodGet, Pattern: p, Configurer: staticOwner})
 		}
-
-		out = append(out, engine.Route{Method: http.MethodGet, Pattern: pattern(p, ""), Configurer: staticOwner})
 	}
 
 	return out
@@ -217,36 +202,18 @@ func (ms *staticMounts) serve(c *gin.Context) {
 
 	m, rest := ms.find(c.Request.URL.Path)
 	if m == nil || state == nil || !state.Matched() {
-		routerAnswered(state)
+		engine.MarkRouterAnswered(c.Request.Context())
 
 		return
 	}
 
-	var err error
-
-	switch res := m.Resolve(c.Request.Method, rest, c.GetHeader("Accept")); res.Answer {
-	case engine.StaticFile:
+	res := m.Resolve(c.Request.Method, rest, c.GetHeader("Accept"))
+	if res.Answer == engine.StaticFile {
 		engine.ServeStaticFile(c.Writer, c.Request, res)
 
 		return
-	case engine.StaticNotFound:
-		routerAnswered(state)
-		err = prblm.ErrNotFound
-	case engine.StaticMethodNotAllowed:
-		routerAnswered(state)
-		err = prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", "GET, HEAD"))
-	default:
-		err = res.Err
 	}
 
-	_ = c.Error(err)
+	_ = c.Error(res.Failure(c.Request.Context(), "GET, HEAD"))
 	c.Abort()
-}
-
-// routerAnswered marks the request as answered by the router, when it
-// runs in srvr's pipeline.
-func routerAnswered(state *engine.RequestState) {
-	if state != nil {
-		state.MarkRouterAnswered()
-	}
 }

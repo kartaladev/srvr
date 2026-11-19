@@ -40,9 +40,11 @@ func TestFiberAccessRoute(t *testing.T) {
 			t.Parallel()
 
 			srv, logs := newServer(t)
-			serve(t, srv, routes(func(r fiber.Router) {
-				r.Group("/users", func(c fiber.Ctx) error { return c.Next() }).Get("/:id", ok)
-			}), tt.method, tt.path, nil, nil)
+			serve(t, srv,
+
+				tt.method, tt.path, nil, nil, routes(func(r fiber.Router) {
+					r.Group("/users", func(c fiber.Ctx) error { return c.Next() }).Get("/:id", ok)
+				}))
 
 			recs := logs.access(t)
 			if len(recs) != 1 {
@@ -63,7 +65,7 @@ func TestFiberAccessLocation(t *testing.T) {
 	t.Parallel()
 
 	srv, logs := newServer(t)
-	serve(t, srv, routes(func(r fiber.Router) { r.Get("/f", failingHandler) }), http.MethodGet, "/f", nil, nil)
+	serve(t, srv, http.MethodGet, "/f", nil, nil, routes(func(r fiber.Router) { r.Get("/f", failingHandler) }))
 
 	recs := logs.access(t)
 	if len(recs) != 1 || recs[0]["code.function.name"] != "github.com/kartaladev/srvr/fibersrvr_test.failingHandler" || recs[0]["code.line.number"] == nil {
@@ -141,7 +143,7 @@ func TestObserver(t *testing.T) {
 			obs := &recordingObserver{}
 			srv, _ := newServer(t, srvr.WithObserver(obs))
 			conf := routes(func(r fiber.Router) { r.Get("/users/:id", tt.handler) })
-			if got := serve(t, srv, conf, http.MethodGet, tt.path, nil, tt.header).status; got != tt.status {
+			if got := serve(t, srv, http.MethodGet, tt.path, nil, tt.header, conf).status; got != tt.status {
 				t.Fatalf("client status = %d, want %d", got, tt.status)
 			}
 
@@ -204,13 +206,15 @@ func TestFiberTraceAccess(t *testing.T) {
 			)
 
 			srv, logs := newServer(t)
-			serve(t, srv, routes(func(r fiber.Router) {
-				r.Get("/t", func(c fiber.Ctx) error {
-					gotID, gotOK = tt.read(c)
+			serve(t, srv,
 
-					return c.SendStatus(http.StatusOK)
-				})
-			}), http.MethodGet, "/t", nil, map[string]string{"traceparent": traceparent})
+				http.MethodGet, "/t", nil, map[string]string{"traceparent": traceparent}, routes(func(r fiber.Router) {
+					r.Get("/t", func(c fiber.Ctx) error {
+						gotID, gotOK = tt.read(c)
+
+						return c.SendStatus(http.StatusOK)
+					})
+				}))
 
 			if tt.logged {
 				notes := logs.withMsg(t, "handler.note")
@@ -371,7 +375,7 @@ func TestFiberAccessSuppressed(t *testing.T) {
 			})
 
 			header := map[string]string{"User-Agent": "probe/1.0"}
-			if got := serve(t, srv, conf, http.MethodGet, tt.path+"?verbose=1", nil, header).status; got != tt.status {
+			if got := serve(t, srv, http.MethodGet, tt.path+"?verbose=1", nil, header, conf).status; got != tt.status {
 				t.Fatalf("status = %d, want %d", got, tt.status)
 			}
 

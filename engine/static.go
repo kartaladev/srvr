@@ -2,6 +2,7 @@ package engine
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/kartaladev/prblm"
 )
 
 // StaticConfig configures a static mount, the files of an fs.FS served
@@ -39,11 +42,31 @@ type StaticConfig struct {
 	// IndexNames are the file names that answer a directory, the first
 	// existing one winning. Empty, the default, means "index.html".
 	IndexNames []string `json:"index_names" yaml:"index_names" env:"INDEX_NAMES"`
+	// FiberSendFileCache, when positive, turns on fiber's open-file cache
+	// for the mount with that cache duration (fibersrvr.WithSendFileCache
+	// says what it costs). 0, the default, keeps it off: a file replaced on
+	// disk is served fresh and no cache goroutine starts. A negative value
+	// fails Start, and so does any non-zero value on net/http and gin,
+	// which have no file cache, so the setting is never silently ignored.
+	FiberSendFileCache time.Duration `json:"fiber_send_file_cache" yaml:"fiber_send_file_cache" env:"FIBER_SEND_FILE_CACHE"`
 }
 
-// StaticOption sets fields of a [StaticConfig]; consumers use it as
+// StaticSettings is what the [StaticOption]s of one mount build: its
+// configuration and the mistakes the options detect while they are
+// applied. Only srvr's and the engine modules' option functions write it.
+type StaticSettings struct {
+	StaticConfig
+	// Errs collects the mistakes options detect while they are applied,
+	// such as fibersrvr.WithSendFileCache(0). [NewStatic] reports them even
+	// when a later option replaces the configuration
+	// (srvr.WithStaticConfig), because a refused argument is a programming
+	// error that no configuration hides.
+	Errs []error
+}
+
+// StaticOption sets fields of a [StaticSettings]; consumers use it as
 // srvr.StaticOption. Options apply in argument order.
-type StaticOption func(*StaticConfig)
+type StaticOption func(*StaticSettings)
 
 // Static is one static mount: a validated prefix, its file system and its
 // configuration, copied when it was created. The engines build it with
@@ -64,7 +87,10 @@ type Static struct {
 // option), Static.Prefix, Static.FS, Static.CacheControl and
 // Static.IndexCacheControl (a control character other than a tab, which
 // could inject a header), Static.IndexNames and Static.SPAFallback (not a
-// valid fs.FS name). It reads nothing from fsys: [Static.Check] does.
+// valid fs.FS name), Static.FiberSendFileCache (a negative value; an
+// engine without an open-file cache passes [RejectSendFileCache] last to
+// refuse a positive one too), and the errors options collected in
+// [StaticSettings.Errs]. It reads nothing from fsys: [Static.Check] does.
 //
 // A valid prefix starts with "/", has no empty, "." or ".." element, no
 // whitespace or control character, and none of { } * : % ? # \, which are
@@ -92,6 +118,7 @@ func NewStatic(prefix string, fsys fs.FS, opts ...StaticOption) (*Static, error)
 		validateHeaderValue("Static.IndexCacheControl", cfg.IndexCacheControl),
 		validateIndexNames(cfg.IndexNames),
 		validateFallbackName(cfg.SPAFallback),
+		validateSendFileCache(cfg.FiberSendFileCache),
 	} {
 		if err != nil {
 			errs = append(errs, err)
@@ -116,28 +143,47 @@ func NewStatic(prefix string, fsys fs.FS, opts ...StaticOption) (*Static, error)
 // trailing slash, such as "/assets".
 func (s *Static) Prefix() string { return s.prefix }
 
+// Patterns returns the route patterns serving the mount in an engine whose
+// catch-all element is wildcard, such as "{path...}", "*filepath" or "*":
+// the prefix itself unless it is "/", then the prefix followed by "/" and
+// wildcard.
+func (s *Static) Patterns(wildcard string) []string {
+	all := strings.TrimSuffix(s.prefix, "/") + "/" + wildcard
+	if s.prefix == "/" {
+		return []string{all}
+	}
+
+	return []string{s.prefix, all}
+}
+
+// SendFileCache returns the cache duration of the engine's open-file
+// cache for the mount, 0 for none.
+func (s *Static) SendFileCache() time.Duration { return s.cfg.FiberSendFileCache }
+
+// FS returns the mount's file system, for an engine whose file primitive
+// opens the names [Static.Resolve] chose itself (fiber's Ctx.SendFile).
+func (s *Static) FS() fs.FS { return s.fsys }
+
 // applyStaticOptions applies opts in order to a zero config and returns
 // it with its slices copied, so the caller changing a slice it passed
-// changes nothing; a nil option is an error naming its index.
+// changes nothing; a nil option is an error naming its index, joined
+// with the errors the options collected.
 func applyStaticOptions(opts []StaticOption) (StaticConfig, error) {
-	var (
-		cfg  StaticConfig
-		errs []error
-	)
+	var s StaticSettings
 
 	for i, opt := range opts {
 		if opt == nil {
-			errs = append(errs, NewConfigError("StaticOption", i, "is nil"))
+			s.Errs = append(s.Errs, NewConfigError("StaticOption", i, "is nil"))
 
 			continue
 		}
 
-		opt(&cfg)
+		opt(&s)
 	}
 
-	cfg.IndexNames = slices.Clone(cfg.IndexNames)
+	s.IndexNames = slices.Clone(s.IndexNames)
 
-	return cfg, errors.Join(errs...)
+	return s.StaticConfig, errors.Join(s.Errs...)
 }
 
 // staticPrefix returns prefix normalised, or an error naming
@@ -185,6 +231,57 @@ func CheckStatic(m *Static, err error) error {
 	return m.Check()
 }
 
+// StaticPrefixes records the static mounts of an engine's configure phase
+// by prefix, so two mounts never share one. The zero value is ready to
+// use.
+type StaticPrefixes struct {
+	// owners names the configurer of each mount, by normalised prefix.
+	owners map[string]string
+}
+
+// Add checks the static configurer c, registered with prefix, whose mount
+// NewStatic returned as m with err, at its position in the configure
+// phase: it returns a route error naming c for err, for [CheckStatic]'s
+// start-time check, or for a prefix an earlier mount took (naming that
+// mount), and otherwise records m's prefix and returns nil.
+func (p *StaticPrefixes) Add(c any, prefix string, m *Static, err error) error {
+	name := fmt.Sprintf("static %q (%T)", prefix, c)
+
+	// Reads the file system, which the consumer may fill until Start.
+	if err := CheckStatic(m, err); err != nil {
+		return RouteErrorf("%s: %w", name, err)
+	}
+
+	if err := p.Claim(m.Prefix(), name, prefix); err != nil {
+		return RouteErrorf("%s: %w", name, err)
+	}
+
+	return nil
+}
+
+// Claim records owner as the mount serving key, a mount's full
+// normalised prefix, and returns nil; when an earlier mount claimed key,
+// it returns a *ConfigError naming Static.Prefix with value prefix, the
+// prefix as the consumer passed it, and that mount's owner. The net/http
+// engine claims the prefix joined with its group's; Add claims the
+// mount's own.
+func (p *StaticPrefixes) Claim(key, owner, prefix string) error {
+	if earlier, dup := p.owners[key]; dup {
+		return NewConfigError("Static.Prefix", prefix, "is already served by another static mount ("+earlier+")")
+	}
+
+	if p.owners == nil {
+		p.owners = map[string]string{}
+	}
+
+	p.owners[key] = owner
+
+	return nil
+}
+
+// Len returns the number of mounts claimed so far.
+func (p *StaticPrefixes) Len() int { return len(p.owners) }
+
 // Check reads the file system for the settings that need it, during an
 // engine's configure phase: the SPA fallback must be a regular file. A
 // file system that panics or fails is reported, never raised. It returns
@@ -224,6 +321,28 @@ func validateHeaderValue(field, v string) error {
 	}
 
 	return nil
+}
+
+// validateSendFileCache returns nil or a *ConfigError naming
+// Static.FiberSendFileCache for a negative d.
+func validateSendFileCache(d time.Duration) error {
+	if d < 0 {
+		return NewConfigError("Static.FiberSendFileCache", d, "must not be negative; 0 keeps the file cache off")
+	}
+
+	return nil
+}
+
+// RejectSendFileCache is the option an engine without an open-file cache
+// (net/http, gin) passes last to [NewStatic]: it refuses a positive
+// StaticConfig.FiberSendFileCache, which only fiber serves, so the setting
+// fails Start instead of being silently ignored. Passed last, it sees the
+// configuration every other option built.
+func RejectSendFileCache(s *StaticSettings) {
+	if d := s.FiberSendFileCache; d > 0 {
+		s.Errs = append(s.Errs, NewConfigError("Static.FiberSendFileCache", d,
+			"is supported only by fibersrvr.Static; this engine has no file cache, so it must be 0"))
+	}
 }
 
 // validateFallbackName returns an error naming Static.SPAFallback when
@@ -310,6 +429,27 @@ type StaticResult struct {
 	Vary string
 	// Err is the file system's failure when Answer is StaticFailed.
 	Err error
+}
+
+// Failure returns the error an engine's handler answers res with, for
+// every answer but StaticFile, which the engine serves itself: for
+// StaticNotFound prblm.ErrNotFound and for StaticMethodNotAllowed the 405
+// problem with Allow header allow, both after marking the request of ctx
+// as answered by the router (static-files design D5), so neither has a
+// route; for StaticFailed the file system's error.
+func (res StaticResult) Failure(ctx context.Context, allow string) error {
+	switch res.Answer {
+	case StaticNotFound:
+		MarkRouterAnswered(ctx)
+
+		return prblm.ErrNotFound
+	case StaticMethodNotAllowed:
+		MarkRouterAnswered(ctx)
+
+		return prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", allow))
+	default:
+		return res.Err
+	}
 }
 
 // Resolve decides how the mount answers method for rest, the request path

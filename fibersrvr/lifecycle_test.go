@@ -389,7 +389,7 @@ func TestFiberContextReuse(t *testing.T) {
 			})
 
 			// Configure once before the concurrent requests.
-			serve(t, srv, conf, http.MethodGet, "/r0/warmup", nil, nil)
+			serve(t, srv, http.MethodGet, "/r0/warmup", nil, nil, conf)
 
 			want := map[string]string{} // trace id -> route
 			var wg sync.WaitGroup
@@ -400,8 +400,7 @@ func TestFiberContextReuse(t *testing.T) {
 				want[traceID] = route
 
 				wg.Go(func() {
-					serve(t, srv, conf, http.MethodGet, fmt.Sprintf("/r%d/%d", i%routeN, i), nil,
-						map[string]string{"traceparent": "00-" + traceID + "-00f067aa0ba902b7-01"})
+					serve(t, srv, http.MethodGet, fmt.Sprintf("/r%d/%d", i%routeN, i), nil, map[string]string{"traceparent": "00-" + traceID + "-00f067aa0ba902b7-01"}, conf)
 				})
 			}
 

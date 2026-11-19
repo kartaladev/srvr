@@ -68,6 +68,7 @@ A static configurer SHALL answer `GET` and `HEAD` below its prefix with the regu
 | `net/http` | 50 concurrent clients request `GET /assets/big.bin` and `GET /assets/app.js` | every response is `200` with the whole file; the test passes under `-race` |
 | `gin` | 50 concurrent clients request `GET /assets/big.bin` and `GET /assets/app.js` | every response is `200` with the whole file; the test passes under `-race` |
 | `fiber` | 50 concurrent clients request `GET /assets/big.bin` and `GET /assets/app.js` | every response is `200` with the whole file; the test passes under `-race` |
+| `fiber` | `site` keeps every name its `Open` receives, and 200 requests for distinct files follow one another (fiber reuses its request buffers) | every kept name still reads as it did when `Open` received it (a name never aliases a buffer fiber reuses) |
 
 ### Requirement: Static configuration is programmatic and by config struct
 A static configurer SHALL take `StaticOption` values applied in argument order and a plain `StaticConfig` (`json`/`yaml`/`env` tags) through `WithStaticConfig`, a zero field meaning its default. A later option wins over an earlier one. The configurer SHALL copy its configuration when it is created, so a caller changing a slice or struct afterwards changes nothing.
@@ -215,6 +216,7 @@ A static configurer SHALL resolve a request only to a name inside its `fs.FS`. A
 | `net/http` | `/assets//app.js` | `307` with `Location: /assets/app.js` (ServeMux redirects to the cleaned path; documented parity exception) |
 | `gin` | `/assets//app.js` | `404` |
 | `fiber` | `/assets//app.js` | `404` |
+| `fiber` with `UnescapePath` (set through `fibersrvr.WithFiberConfig`) | each `fiber` path above | `404` |
 
 #### Scenario: Symbolic links
 - **Given** a server on every engine with `Static("/assets", <fs>)`, `dir/link.txt` a symbolic link to `secret.txt` outside `dir`
@@ -429,7 +431,7 @@ Static requests SHALL pass through the whole pipeline (trace context, access rec
 #### Scenario: Static misses and the unmatched-record limit
 - **Given** a server on engine `<engine>` with `WithUnmatchedRecordLimit(1, time.Minute)`, `Static("/", site)` and `<middleware>`
 - **When** a client sends `GET /nope-1.js`, `GET /nope-2.js` and `GET /nope-3.js`
-- **Then** each response is a `<status>` problem and `<written>` access records with that status are written
+- **Then** each response has status `<status>`, a problem unless `<middleware>` answers it, and `<written>` access records with that status are written
 
 ##### Examples:
 | engine | middleware | status | written |
@@ -441,6 +443,8 @@ Static requests SHALL pass through the whole pipeline (trace context, access rec
 | `fiber` | `router.Use(mw)` on the root router, `mw` returning `prblm.ErrNotFound` without calling `c.Next()` | `404` | `3` |
 | `net/http` | a root-group middleware registered before the static configurer, writing the `404` problem of `prblm.ErrNotFound` itself without calling next (net/http middleware cannot return an error) | `404` | `3` |
 | `gin` | (none), with the requests sent as `PUT` | `405` | `1` |
+| `fiber` | `router.Use(mw)` on the root router, `mw` answering `200` itself when `c.Next()` returned an error | `200` | `3`; no record has `http.route` (a static miss is the router's answer) |
+| `gin` | a root-group middleware calling `c.Next()`, then clearing `c.Errors` and answering `200` itself | `200` | `3`; no record has `http.route` (a static miss is the router's answer) |
 
 #### Scenario: Observers see static requests
 - **Given** a server on engine `<engine>` observed by `otelsrvr` with `Static("/assets", site)`
@@ -489,3 +493,42 @@ Every engine SHALL list each static mount in `engine.Routes` with `Method` `GET`
 | `net/http` | `srvr.Static("/assets", site)` | `{GET /assets *srvr.staticConfigurer}`, `{GET /assets/{path...} *srvr.staticConfigurer}` |
 | `gin` | `ginsrvr.Static("/assets", site)` | `{GET /assets *ginsrvr.staticConfigurer}`, `{GET /assets/*filepath *ginsrvr.staticConfigurer}` |
 | `fiber` | `fibersrvr.Static("/assets", site)` | `{GET /assets *fibersrvr.staticConfigurer}`, `{GET /assets/* *fibersrvr.staticConfigurer}` |
+
+### Requirement: fiber's open-file cache is an explicit per-mount opt-in
+`fibersrvr.Static` SHALL keep fiber's open-file cache off by default. `fibersrvr.WithSendFileCache(d)` (one mount) and `StaticConfig.FiberSendFileCache` (`fiber_send_file_cache`; zero is off) SHALL turn it on with duration `d` (owner decision 2026-11-19, design D2). Godoc and README SHALL name the caveats: stale files for up to `d`, a cleaner goroutine outliving `Shutdown`, a loosened default.
+
+#### Scenario: fiber file cache on and off
+- **Given** a fiber server with `fibersrvr.Static("/", dir, <options>)`, `dir` an `os.DirFS` of a `t.TempDir()` holding `app.js` (`v1`)
+- **When** a client sends `GET /app.js`, `app.js` is then replaced on disk by a new file (`v2`, written next to it and renamed over it), the client sends `GET /app.js` again, and the server shuts down
+- **Then** the second response is `200` with body `<second body>`
+- **And** after `Shutdown` fasthttp's cache cleaner goroutine (`github.com/valyala/fasthttp.(*inMemoryCacheManager).handleCleanCache`) is `<cleaner>`
+
+##### Examples:
+| options | second body | cleaner |
+|---------|-------------|---------|
+| (none) | `v2` | not running |
+| `fibersrvr.WithSendFileCache(time.Hour)` | `v1` (served from the cache, stale for up to the duration) | still running |
+| `WithStaticConfig(StaticConfig{FiberSendFileCache: time.Hour})` | `v1` | still running |
+| a `StaticConfig` decoded from the JSON `{"fiber_send_file_cache":3600000000000}` | `v1` | still running |
+| `WithStaticConfig(StaticConfig{})` (zero: off) | `v2` | not running |
+| `fibersrvr.WithSendFileCache(time.Hour)`, then `WithStaticConfig(StaticConfig{})` | `v2` (the config struct replaces every field) | not running |
+
+### Requirement: An invalid or unsupported file cache setting fails Start
+`WithSendFileCache` with `d <= 0` and a negative `FiberSendFileCache` SHALL fail `Start` of a fiber mount, and `srvr.Static` and `ginsrvr.Static`, whose engines have no file cache, SHALL fail `Start` on a non-zero `FiberSendFileCache`, so the setting is never silently ignored. Each failure wraps `srvr.ErrRouteConfig` and a `*srvr.ConfigError` with `Field` `Static.FiberSendFileCache` and the offending `time.Duration` as `Value`.
+
+#### Scenario: Rejected file cache configuration
+- **Given** a server on engine `<engine>` with `<configurer>` registered
+- **When** the server starts
+- **Then** `Start` returns an error wrapping `srvr.ErrRouteConfig` whose `*srvr.ConfigError` has `Field` `Static.FiberSendFileCache` and `Value` `<value>`, and `Ready()` is never closed
+
+##### Examples:
+| engine | configurer | value |
+|--------|------------|-------|
+| `fiber` | `fibersrvr.Static("/", site, fibersrvr.WithSendFileCache(0))` | `0s` |
+| `fiber` | `fibersrvr.Static("/", site, fibersrvr.WithSendFileCache(-time.Second))` | `-1s` |
+| `fiber` | `fibersrvr.Static("/", site, fibersrvr.WithSendFileCache(0), WithStaticConfig(StaticConfig{}))` (a later config struct does not hide a refused option argument) | `0s` |
+| `fiber` | `fibersrvr.Static("/", site, WithStaticConfig(StaticConfig{FiberSendFileCache: -time.Second}))` | `-1s` |
+| `net/http` | `srvr.Static("/", site, WithStaticConfig(StaticConfig{FiberSendFileCache: time.Hour}))` | `1h0m0s` |
+| `net/http` | `srvr.Static("/", site, WithStaticConfig(StaticConfig{FiberSendFileCache: -time.Second}))` | `-1s` |
+| `gin` | `ginsrvr.Static("/", site, WithStaticConfig(StaticConfig{FiberSendFileCache: time.Hour}))` | `1h0m0s` |
+| `gin` | `ginsrvr.Static("/", site, WithStaticConfig(StaticConfig{FiberSendFileCache: -time.Second}))` | `-1s` |

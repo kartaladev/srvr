@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -29,14 +32,15 @@ func errorChain(n int) error {
 // unmatched-route answers, router) with logging to io.Discard: a success,
 // a handler error rendered as a 500 problem, an unmatched path answered
 // as a 404 problem, a panic recovered as a 500, a body over
-// MaxRequestBodyBytes answered 413, a 32-link error chain and a success
+// MaxRequestBodyBytes answered 413, a 32-link error chain, a success
 // from a client sending a User-Agent that WithoutAccessLogUserAgent
-// leaves out of the record. Each case
+// leaves out of the record, and a file a static mount serves from disk.
+// Each case
 // runs sequentially and, as "<case> parallel", from GOMAXPROCS goroutines
 // with b.RunParallel.
 func BenchmarkPipeline(b *testing.B) {
 	for _, bc := range pipelineCases {
-		h := pipelineHandler(b, bc.opts...)
+		h := pipelineHandler(b, bc.static, bc.opts...)
 
 		b.Run(bc.name, func(b *testing.B) {
 			req := bc.request(b)
@@ -66,8 +70,9 @@ func BenchmarkPipeline(b *testing.B) {
 
 // pipelineHandler returns the pipeline of a server built with opts that
 // logs to io.Discard and limits request bodies to benchBodyLimit, routing
-// the paths of pipelineCases.
-func pipelineHandler(b *testing.B, opts ...Option) http.Handler {
+// the paths of pipelineCases, and with static, serving benchSite at
+// /assets.
+func pipelineHandler(b *testing.B, static bool, opts ...Option) http.Handler {
 	b.Helper()
 
 	srv, err := New(append([]Option{WithLogOutput(io.Discard), WithMaxRequestBodyBytes(benchBodyLimit)}, opts...)...)
@@ -77,7 +82,7 @@ func pipelineHandler(b *testing.B, opts ...Option) http.Handler {
 
 	chain := errorChain(32)
 
-	mux, _, err := srv.router([]RouteConfigurer[*Group]{routes(func(g *Group) {
+	confs := []RouteConfigurer[*Group]{routes(func(g *Group) {
 		g.GET("/ok", func(w http.ResponseWriter, _ *http.Request) error {
 			w.WriteHeader(http.StatusOK)
 
@@ -91,12 +96,30 @@ func pipelineHandler(b *testing.B, opts ...Option) http.Handler {
 			return err
 		})
 		g.GET("/chain", func(http.ResponseWriter, *http.Request) error { return chain })
-	})})
+	})}
+	if static {
+		confs = append(confs, Static("/assets", benchSite(b)))
+	}
+
+	mux, _, err := srv.router(confs)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	return srv.pipeline(mux)
+}
+
+// benchSite returns a directory file system holding app.js, as a build
+// directory served from disk is.
+func benchSite(b *testing.B) fs.FS {
+	b.Helper()
+
+	dir := b.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	return os.DirFS(dir)
 }
 
 // pipelineCase is one request of BenchmarkPipeline.
@@ -106,6 +129,9 @@ type pipelineCase struct {
 	status             int
 	// userAgent is the request's User-Agent header, none when empty.
 	userAgent string
+	// static adds a static mount of benchSite at /assets, which only its
+	// case gets, so the others measure a server without one.
+	static bool
 	// opts are the case's server options besides the benchmark's own.
 	opts []Option
 }
@@ -125,6 +151,7 @@ var pipelineCases = []pipelineCase{
 		name: "user agent omitted", method: http.MethodGet, path: "/ok", status: http.StatusOK,
 		userAgent: "bench-client/1.0", opts: []Option{WithoutAccessLogUserAgent()},
 	},
+	{name: "static", method: http.MethodGet, path: "/assets/app.js", status: http.StatusOK, static: true},
 }
 
 // request returns the case's request. serve rewinds its body, so it is

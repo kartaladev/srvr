@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"reflect"
 	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 // staticSite is the test file tree of the static-files design ("Test
@@ -62,7 +64,7 @@ func TestNewStatic_Config(t *testing.T) {
 	var typedNil *embed.FS
 
 	indexNames := func(names ...string) StaticOption {
-		return func(c *StaticConfig) { c.IndexNames = names }
+		return func(c *StaticSettings) { c.IndexNames = names }
 	}
 
 	tests := []struct {
@@ -93,15 +95,21 @@ func TestNewStatic_Config(t *testing.T) {
 		{"hidden fallback", "/", staticSite(), []StaticOption{fallback(".env")}, []string{"Static.SPAFallback"}},
 		{"fallback with a backslash", "/", staticSite(), []StaticOption{fallback(`a\index.html`)}, []string{"Static.SPAFallback"}},
 		{"directory-only fallback", "/", staticSite(), []StaticOption{fallback("docs/")}, []string{"Static.SPAFallback"}},
-		{"header injection in CacheControl", "/", staticSite(), []StaticOption{func(c *StaticConfig) {
+		{"header injection in CacheControl", "/", staticSite(), []StaticOption{func(c *StaticSettings) {
 			c.CacheControl = "max-age=60\r\nSet-Cookie: a=b"
 		}}, []string{"Static.CacheControl"}},
-		{"NUL in IndexCacheControl", "/", staticSite(), []StaticOption{func(c *StaticConfig) {
+		{"NUL in IndexCacheControl", "/", staticSite(), []StaticOption{func(c *StaticSettings) {
 			c.IndexCacheControl = "no-cache\x00"
 		}}, []string{"Static.IndexCacheControl"}},
+		{"refused option argument, then the config replaced", "/", staticSite(), []StaticOption{
+			func(c *StaticSettings) {
+				c.Errs = append(c.Errs, NewConfigError("Static.FiberSendFileCache", time.Duration(0), "must be positive"))
+			},
+			func(c *StaticSettings) { c.StaticConfig = StaticConfig{} },
+		}, []string{"Static.FiberSendFileCache"}},
 		{
 			"several invalid settings", "assets", nil,
-			[]StaticOption{func(c *StaticConfig) { c.CacheControl = "a\nb" }},
+			[]StaticOption{func(c *StaticSettings) { c.CacheControl = "a\nb" }},
 			[]string{"Static.Prefix", "Static.FS", "Static.CacheControl"},
 		},
 	}
@@ -127,7 +135,7 @@ func TestNewStatic_Config(t *testing.T) {
 }
 
 // fallback returns an option setting SPAFallback.
-func fallback(name string) StaticOption { return func(c *StaticConfig) { c.SPAFallback = name } }
+func fallback(name string) StaticOption { return func(c *StaticSettings) { c.SPAFallback = name } }
 
 // TestStatic_Check covers the static-files / Scenario: Rejected static
 // configuration rows that read the file system: the fallback must be a
@@ -181,6 +189,81 @@ func TestStatic_Check(t *testing.T) {
 	}
 }
 
+// configurerA and configurerB are the static configurer types the
+// StaticPrefixes rows name.
+type (
+	configurerA struct{}
+	configurerB struct{}
+)
+
+// TestStaticPrefixes_Add covers the configure-phase check gin and fiber
+// run for each static configurer: its configuration error or start-time
+// check, and a second mount of a prefix, naming the earlier one; the zero
+// value is ready to use.
+func TestStaticPrefixes_Add(t *testing.T) {
+	t.Parallel()
+
+	site := staticSite()
+	mount := func(prefix string, opts ...StaticOption) func() (*Static, error) {
+		return func() (*Static, error) { return NewStatic(prefix, site, opts...) }
+	}
+
+	type add struct {
+		c      any
+		prefix string
+		mount  func() (*Static, error)
+	}
+
+	tests := []struct {
+		name string
+		adds []add
+		// want is the text the last Add's error ends with, "" for nil.
+		want string
+	}{
+		{"one mount", []add{{configurerA{}, "/assets", mount("/assets")}}, ""},
+		{"two prefixes", []add{{configurerA{}, "/assets", mount("/assets")}, {configurerB{}, "/", mount("/")}}, ""},
+		{
+			"invalid configuration",
+			[]add{{configurerA{}, "assets", mount("assets")}},
+			`static "assets" (engine.configurerA): srvr: invalid configuration: Static.Prefix assets: must start with "/"`,
+		},
+		{
+			"failing start-time check",
+			[]add{{configurerA{}, "/", mount("/", func(c *StaticSettings) { c.SPAFallback = "missing.html" })}},
+			`static "/" (engine.configurerA): srvr: invalid configuration: Static.SPAFallback missing.html: does not exist in the file system`,
+		},
+		{
+			"same prefix twice",
+			[]add{{configurerA{}, "/assets", mount("/assets")}, {configurerB{}, "/assets/", mount("/assets/")}},
+			`static "/assets/" (engine.configurerB): srvr: invalid configuration: Static.Prefix /assets/: ` +
+				`is already served by another static mount (static "/assets" (engine.configurerA))`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				p   StaticPrefixes
+				err error
+			)
+
+			for _, a := range tt.adds {
+				m, mErr := a.mount()
+				err = p.Add(a.c, a.prefix, m, mErr)
+			}
+
+			switch {
+			case tt.want == "" && err != nil:
+				t.Errorf("Add = %v, want nil", err)
+			case tt.want != "" && (!errors.Is(err, ErrRouteConfig) || !strings.HasSuffix(err.Error(), tt.want)):
+				t.Errorf("Add = %v, want a route error ending with %s", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewStatic_Valid(t *testing.T) {
 	t.Parallel()
 
@@ -198,13 +281,19 @@ func TestNewStatic_Valid(t *testing.T) {
 		t.Run(tt.prefix, func(t *testing.T) {
 			t.Parallel()
 
-			m, err := NewStatic(tt.prefix, staticSite())
+			site := staticSite()
+
+			m, err := NewStatic(tt.prefix, site)
 			if err != nil {
 				t.Fatalf("NewStatic(%q) = %v", tt.prefix, err)
 			}
 
 			if m.Prefix() != tt.want {
 				t.Errorf("Prefix() = %q, want %q", m.Prefix(), tt.want)
+			}
+
+			if got, ok := m.FS().(fstest.MapFS); !ok || reflect.ValueOf(got).Pointer() != reflect.ValueOf(site).Pointer() {
+				t.Errorf("FS() = %T, want the file system it was given", m.FS())
 			}
 		})
 	}
@@ -344,7 +433,7 @@ func TestStatic_Resolve(t *testing.T) {
 		{name: "below a file", method: "GET", rest: "index.html/x", want: notFound},
 		{
 			name: "index name missing", method: "GET", rest: "",
-			opts: []StaticOption{func(c *StaticConfig) { c.IndexNames = []string{"home.html"} }}, want: notFound,
+			opts: []StaticOption{func(c *StaticSettings) { c.IndexNames = []string{"home.html"} }}, want: notFound,
 		},
 		{name: "4096-character name", method: "GET", rest: strings.Repeat("a", 4096) + ".js", want: notFound},
 		// Hostile paths, as decoded.
@@ -384,7 +473,7 @@ func TestStatic_Resolve(t *testing.T) {
 		},
 		{
 			name: "fallback with its own cache", method: "GET", rest: "dashboard", accept: "text/html",
-			opts: slices.Concat(spa, []StaticOption{func(c *StaticConfig) { c.IndexCacheControl = "no-store" }}),
+			opts: slices.Concat(spa, []StaticOption{func(c *StaticSettings) { c.IndexCacheControl = "no-store" }}),
 			want: staticDecision{answer: StaticFile, name: "index.html", contentType: html, cacheControl: "no-store", vary: "Accept"},
 		},
 		{
@@ -643,4 +732,53 @@ func FuzzStaticResolve(f *testing.F) {
 			t.Errorf("served %q for %q, which has a .. element", res.Name, rest)
 		}
 	})
+}
+
+// TestNewStatic_SendFileCache checks FiberSendFileCache: a positive value
+// is kept, zero is off and a negative value is refused; an engine without
+// an open-file cache refuses a positive one with RejectSendFileCache.
+func TestNewStatic_SendFileCache(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cache   time.Duration
+		noCache bool   // RejectSendFileCache passed last, as net/http and gin do
+		field   string // the refused field; "" for a valid mount
+	}{
+		{"an hour", time.Hour, false, ""},
+		{"zero is off", 0, false, ""},
+		{"negative", -time.Second, false, "Static.FiberSendFileCache"},
+		{"an hour on an engine without a file cache", time.Hour, true, "Static.FiberSendFileCache"},
+		{"zero on an engine without a file cache", 0, true, ""},
+		{"negative on an engine without a file cache", -time.Second, true, "Static.FiberSendFileCache"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := []StaticOption{func(c *StaticSettings) { c.FiberSendFileCache = tt.cache }}
+			if tt.noCache {
+				opts = append(opts, RejectSendFileCache)
+			}
+
+			m, err := NewStatic("/", staticSite(), opts...)
+			if tt.field != "" {
+				if got := configFields(err); !slices.Equal(got, []string{tt.field}) {
+					t.Fatalf("fields = %v, want [%s] (error %v)", got, tt.field, err)
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("NewStatic = %v", err)
+			}
+
+			if got := m.SendFileCache(); got != tt.cache {
+				t.Errorf("SendFileCache() = %v, want %v", got, tt.cache)
+			}
+		})
+	}
 }

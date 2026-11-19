@@ -89,27 +89,31 @@
 
 ## 5. Slice: fiber serves static files with Ctx.SendFile
 
-- [ ] 5.1 Prove or drop H1 (design D10): fasthttp sends year-1 `Last-Modified` and answers `304` for an `embed.FS` file; verify `go test -race -run TestStatic_Conditional ./...` in `fibersrvr` passes after GREEN
+- [x] 5.1 Prove or drop H1 (design D10): fasthttp sends year-1 `Last-Modified` and answers `304` for an `embed.FS` file; verify `go test -race -run TestStatic_Conditional ./...` in `fibersrvr` passes after GREEN
   - RED: the `embed.FS` row of "Conditional and range requests" on fiber, with `SendFile` and no srvr header fix; record the failing output in `notes.md` (expected: `status 304, want 200` and a `Last-Modified: Mon, 01 Jan 0001 00:00:00 GMT`). If it passes, record "not confirmed", keep the row, and skip the fix in 5.3
   - GREEN: in 5.3
   - REFACTOR: none
-- [ ] 5.2 `fibersrvr.Static` validation, lifecycle and deferred installation (static-files / Scenarios: Rejected static configuration, Several invalid settings, Static configurer lifecycle misuse, Conflicts with other routes; fiber rows); verify `go test -race -run 'TestStatic_Config|TestStatic_Lifecycle|TestStatic_Conflicts' ./...` in `fibersrvr` passes
+- [x] 5.2 `fibersrvr.Static` validation, lifecycle and deferred installation (static-files / Scenarios: Rejected static configuration, Several invalid settings, Static configurer lifecycle misuse, Conflicts with other routes; fiber rows); verify `go test -race -run 'TestStatic_Config|TestStatic_Lifecycle|TestStatic_Conflicts' ./...` in `fibersrvr` passes
   - RED: `fibersrvr/static_test.go` rows with `app.Test`
   - GREEN: design D4 (fiber): `configure` sets static configurers aside, installs them after the loop longest prefix first (`app.Get(prefix)`, `app.Get(prefix+"/*")`) with their owner recorded, before `owners.duplicate`; `Configure` panics with the guidance message
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 5.3 fiber serves, misses and refuses like net/http (static-files / every serving, miss, hostile, fault, symlink, method, fallback, cache and configuration scenario; fiber rows); verify `go test -race -run 'TestStatic_' ./...` in `fibersrvr` passes
+- [x] 5.3 fiber serves, misses and refuses like net/http (static-files / every serving, miss, hostile, fault, symlink, method, fallback, cache and configuration scenario; fiber rows); verify `go test -race -run 'TestStatic_' ./...` in `fibersrvr` passes
   - RED: the fiber rows with `app.Test`; raw targets for the hostile rows
-  - GREEN: the handler: `rest` from `c.Params("*")` with `url.PathUnescape`, the resolver, `c.SendFile(name, mount's SendFile{FS, CacheDuration: -1})`, the zero-time fix (H1), `Content-Type` and `Cache-Control` after `SendFile`, `SendFile`'s 404 mapped to a miss, `prblm.ErrNotFound` and the `405` problem returned for srvr's renderer
+  - GREEN: the handler: `rest` from `c.Path()` without the mount prefix (not `c.Params("*")`, which loses a trailing slash), percent-decoded with `url.PathUnescape` unless fiber's `UnescapePath` already decoded it, and copied out of fiber's pooled buffer (slice 5 review), the resolver, `c.SendFile(name, mount's SendFile{FS, CacheDuration: -1})`, the zero-time fix (H1), `Content-Type` and `Cache-Control` after `SendFile`, `SendFile`'s 404 mapped to a miss, `prblm.ErrNotFound` and the `405` problem returned for srvr's renderer
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 5.4 Records, limit, observers, middleware and listing on fiber (static-files / Scenarios: Static access records, Static misses and the unmatched-record limit, Observers see static requests, Consumer middleware around static files, Static route listing, Precedence, Partial failure while serving; fiber rows); verify `go test -race -run 'TestStatic_' ./...` in `fibersrvr` passes
+- [x] 5.4 Records, limit, observers, middleware and listing on fiber (static-files / Scenarios: Static access records, Static misses and the unmatched-record limit, Observers see static requests, Consumer middleware around static files, Static route listing, Precedence, Partial failure while serving; fiber rows); verify `go test -race -run 'TestStatic_' ./...` in `fibersrvr` passes
   - RED: the fiber rows; expected failure before GREEN: the miss record has `http.route` `/*` because `requestStage` sets it from `c.Matched()`
   - GREEN: design D5: `requestStage` sets the route only when `c.Matched() && !state.RouterAnswered()`
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 5.5 Check where fasthttp's logger writes when a file vanishes between resolution and `SendFile` under fibersrvr (design Risks); verify by a test row or a recorded probe in `notes.md`, with a follow-up entry if it reaches stdout or stderr
-- [ ] 5.6 Add a `BenchmarkPipeline` static row on every engine (`GET /assets/app.js`); on fiber also compare `CacheDuration: -1` with fiber's default cache (`benchstat`, 10 runs) and record the numbers in `notes.md`, stopping for the owner if the cache gains 10% or more `ns/op` (owner decision 2026-11-19, D2); verify `go test -run '^$' -bench 'Pipeline/static' -benchmem -benchtime=1x ./...` passes in each touched module
-- [ ] 5.7 Documentation: `fibersrvr` godoc (`Static`, `SendFile` with `CacheDuration: -1`, no compression), README engine table, `CHANGELOG.md` entry; verify `go test -run Example ./...` in `fibersrvr` passes
-- [ ] 5.8 Verify the slice end to end: `make check MODULES=fibersrvr` passes; `make cover` shows the fiber handler, the deferred installation and `requestStage`'s new branch covered; `gopls` diagnostics clean
-- [ ] 5.9 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): serve static files and single-page apps`; verify with `git log -1 --stat`
+- [x] 5.5 Check where fasthttp's logger writes when a file vanishes between resolution and `SendFile` under fibersrvr (design Risks); verify by a test row or a recorded probe in `notes.md`, with a follow-up entry if it reaches stdout or stderr
+- [x] 5.6 Add a `BenchmarkPipeline` static row on every engine (`GET /assets/app.js`); on fiber also compare `CacheDuration: -1` with fiber's default cache (`benchstat`, 10 runs) and record the numbers in `notes.md`, stopping for the owner if the cache gains 10% or more `ns/op` (owner decision 2026-11-19, D2); verify `go test -run '^$' -bench 'Pipeline/static' -benchmem -benchtime=1x ./...` passes in each touched module
+- [x] 5.6.1 fiber's open-file cache as a per-mount opt-in (owner decision 2026-11-19, design D2; static-files / Scenarios: fiber file cache on and off, Rejected file cache configuration, every row; test-quality / Scenario: Each ignore is needed and narrow, the `handleCleanCache` row); verify `go test -race -run 'TestStatic_SendFileCache|TestStatic_ConfigErrors|TestLeakIgnores' ./...` in `fibersrvr`, `go test -race -run 'TestStatic_ConfigErrors' ./...` in `ginsrvr` and `go test -race -run 'TestStatic_ConfigErrors|TestNewStatic' .` (root and `engine`) pass, and `go test -run '^$' -bench 'Pipeline/static' -benchtime=1x ./...` in `fibersrvr` runs the `static cached` row
+  - RED: the rows on each engine; expected failures before GREEN: `undefined: fibersrvr.WithSendFileCache` and `unknown field FiberSendFileCache` (compile), then, with stubs, `v2` served where `v1` is expected and `Start` succeeding where a `Static.FiberSendFileCache` error is expected; the leak row proving `handleCleanCache` is still running after `Shutdown`
+  - GREEN: `engine.StaticConfig.FiberSendFileCache` with tags; an option-error slot `applyStaticOptions` collects after each option (`engine.InvalidStaticOption`); `engine.NewStatic` rejects a non-zero value, `engine.NewStaticWithSendFileCache` a negative one; `fibersrvr.Static` builds its mount with the latter and gives `SendFile` `CacheDuration` `d` or `-1`; the named goleak ignore in fibersrvr's `leakOptions`; a `static cached` `BenchmarkPipeline` row
+  - REFACTOR: none expected beyond `/simplify`; godoc of `WithSendFileCache`, `Static` and the field, fibersrvr README and `CHANGELOG.md` name the three caveats
+- [x] 5.7 Documentation: `fibersrvr` godoc (`Static`, `SendFile` with `CacheDuration: -1`, no compression), README engine table, `CHANGELOG.md` entry; verify `go test -run Example ./...` in `fibersrvr` passes
+- [x] 5.8 Verify the slice end to end: `make check MODULES=fibersrvr` passes; `make cover` shows the fiber handler, the deferred installation and `requestStage`'s new branch covered; `gopls` diagnostics clean
+- [x] 5.9 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): serve static files and single-page apps`; verify with `git log -1 --stat`
 
 ## 6. Slice: static parity and documented exceptions
 
@@ -117,7 +121,7 @@
   - RED: `TestStaticParity` (`internal/paritytest/static_test.go`) builds the fixture once and runs every row on the three engines from one table, comparing status, the headers named by the spec, the body, and the access record's key set against net/http's; any difference is a defect claim (rule 2): record the failing output in `notes.md` and fix it under that row
   - GREEN: fixes only where a row fails
   - REFACTOR: reuse `engines` and the harness helpers (no new helpers unless three call sites repeat)
-- [ ] 6.2 The three new documented differences (engine-parity / Scenario: Documented differences, the static rows); verify `go test -race -run TestParityExceptions .` (the existing test of this scenario, extended; name it in the task note) passes
+- [ ] 6.2 The four new documented differences (engine-parity / Scenario: Documented differences, the static rows; the `FiberSendFileCache` row is pinned by task 5.6.1's tests); verify `go test -race -run TestParityExceptions .` (the existing test of this scenario, extended; name it in the task note) passes
   - RED: the three rows pin each engine's actual behaviour
   - GREEN: godoc of `ginsrvr.Static` and `srvr.Static` names its exception
   - REFACTOR: none

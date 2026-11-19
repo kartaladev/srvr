@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/engine"
 )
 
@@ -25,7 +24,7 @@ type (
 // element is an index name is an index file for caching (see
 // [StaticConfig]).
 func WithStaticIndexNames(names ...string) StaticOption {
-	return func(c *StaticConfig) { c.IndexNames = names }
+	return func(c *engine.StaticSettings) { c.IndexNames = names }
 }
 
 // WithSPAFallback serves file, a name inside the file system such as
@@ -48,7 +47,7 @@ func WithStaticIndexNames(names ...string) StaticOption {
 // system; a fallback deleted after Start gives 404, and one that cannot be
 // read gives the 500 problem.
 func WithSPAFallback(file string) StaticOption {
-	return func(c *StaticConfig) { c.SPAFallback = file }
+	return func(c *engine.StaticSettings) { c.SPAFallback = file }
 }
 
 // WithStaticCacheControl sets the Cache-Control header of served files
@@ -58,7 +57,7 @@ func WithSPAFallback(file string) StaticOption {
 // never sent on a problem. A value with a control character other than a
 // tab fails Start.
 func WithStaticCacheControl(v string) StaticOption {
-	return func(c *StaticConfig) { c.CacheControl = v }
+	return func(c *engine.StaticSettings) { c.CacheControl = v }
 }
 
 // WithStaticIndexCacheControl sets the Cache-Control header of index files
@@ -68,7 +67,7 @@ func WithStaticCacheControl(v string) StaticOption {
 // Cache-Control. A value with a control character other than a tab fails
 // Start.
 func WithStaticIndexCacheControl(v string) StaticOption {
-	return func(c *StaticConfig) { c.IndexCacheControl = v }
+	return func(c *engine.StaticSettings) { c.IndexCacheControl = v }
 }
 
 // WithStaticConfig sets every field of [StaticConfig], a zero field
@@ -76,7 +75,7 @@ func WithStaticIndexCacheControl(v string) StaticOption {
 // change the fields they name. The configuration is copied when [Static]
 // returns, so changing c's slices afterwards changes nothing.
 func WithStaticConfig(c StaticConfig) StaticOption {
-	return func(dst *StaticConfig) { *dst = c }
+	return func(s *engine.StaticSettings) { s.StaticConfig = c }
 }
 
 // Static returns a configurer serving the files of fsys under prefix,
@@ -143,11 +142,14 @@ func WithStaticConfig(c StaticConfig) StaticOption {
 // an error wrapping [ErrRouteConfig] and, for each invalid setting, a
 // [*ConfigError] naming it (StaticOption, Static.Prefix, Static.FS,
 // Static.CacheControl, Static.IndexCacheControl, Static.IndexNames,
-// Static.SPAFallback). The fallback is checked at Start, when the file
+// Static.SPAFallback, and Static.FiberSendFileCache for any non-zero
+// value: net/http has no open-file cache, so the fiber-only setting fails
+// instead of being ignored). The fallback is checked at Start, when the file
 // system is read for the first time; a file system that blocks there
 // blocks Start.
 func Static(prefix string, fsys fs.FS, opts ...StaticOption) RouteConfigurer[*Group] {
-	m, err := engine.NewStatic(prefix, fsys, opts...)
+	// net/http has no open-file cache: a positive FiberSendFileCache fails.
+	m, err := engine.NewStatic(prefix, fsys, append(slices.Clip(opts), engine.RejectSendFileCache)...)
 
 	return &staticConfigurer{prefix: prefix, mount: m, err: err}
 }
@@ -177,18 +179,11 @@ func (c *staticConfigurer) Configure(g *Group) {
 		joined = strings.TrimSuffix(joined, "/")
 	}
 
-	if earlier, dup := g.b.statics[joined]; dup {
-		err := engine.NewConfigError("Static.Prefix", c.prefix, "is already served by another static mount ("+earlier+")")
+	if err := g.b.statics.Claim(joined, g.b.owner, c.prefix); err != nil {
 		g.b.errs = append(g.b.errs, engine.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
 
 		return
 	}
-
-	if g.b.statics == nil {
-		g.b.statics = map[string]string{}
-	}
-
-	g.b.statics[joined] = g.b.owner
 
 	// Every method, so that every other registered route, a Mount
 	// included, is more specific on ServeMux and wins (design D4); the
@@ -197,33 +192,24 @@ func (c *staticConfigurer) Configure(g *Group) {
 	sv := g.b.served
 	h := g.b.wrap(func(w http.ResponseWriter, r *http.Request) error { return c.serve(w, r, sv) })
 
-	if p := c.mount.Prefix(); p != "/" {
+	for _, p := range c.mount.Patterns("{path...}") {
 		g.addListed("", http.MethodGet, p, h, engine.Location{})
 	}
-
-	g.addListed("", http.MethodGet, c.mount.Prefix()+"/{path...}", h, engine.Location{})
 }
 
 // serve answers a request with the mount's decision; sv is what the
 // server's routes serve.
 func (c *staticConfigurer) serve(w http.ResponseWriter, r *http.Request, sv *served) error {
-	res := c.mount.Resolve(r.Method, r.PathValue("path"), r.Header.Get("Accept"))
-
-	switch res.Answer {
+	switch res := c.mount.Resolve(r.Method, r.PathValue("path"), r.Header.Get("Accept")); res.Answer {
 	case engine.StaticFile:
 		engine.ServeStaticFile(w, r, res)
 
 		return nil
-	case engine.StaticNotFound:
-		markRouterAnswered(r) // design D5: a static miss is the router's answer
-
-		return prblm.ErrNotFound
 	case engine.StaticMethodNotAllowed:
-		markRouterAnswered(r)
-
-		return prblm.New(http.StatusMethodNotAllowed, prblm.WithHeader("Allow", sv.allow(r)))
+		return res.Failure(r.Context(), sv.allow(r))
 	default:
-		return res.Err
+		// The Allow header is read only for a 405, whose probing costs.
+		return res.Failure(r.Context(), "")
 	}
 }
 

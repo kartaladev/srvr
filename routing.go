@@ -55,9 +55,9 @@ type builder struct {
 	errs   []error
 	// owner is the Go type of the configurer running Configure.
 	owner string
-	// statics maps the joined prefix of every static mount registered so
-	// far to the configurer that registered it.
-	statics map[string]string
+	// statics records the joined prefix of every static mount registered
+	// so far, with the configurer that registered it.
+	statics engine.StaticPrefixes
 	// served is what the installed routes serve, filled in by the
 	// server once they are installed; static mounts read it while
 	// serving.

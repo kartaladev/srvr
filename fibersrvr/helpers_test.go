@@ -227,8 +227,8 @@ func do(t *testing.T, method, url string, body io.Reader, header map[string]stri
 func ok(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }
 
 // serve answers one request through srv's app with app.Test, configuring
-// it with conf, and returns the response.
-func serve(t *testing.T, srv *fibersrvr.Server, conf srvr.RouteConfigurer[fiber.Router], method, path string, body io.Reader, header map[string]string) response {
+// it with confs, and returns the response.
+func serve(t *testing.T, srv *fibersrvr.Server, method, path string, body io.Reader, header map[string]string, confs ...srvr.RouteConfigurer[fiber.Router]) response {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), method, path, body)
@@ -240,25 +240,13 @@ func serve(t *testing.T, srv *fibersrvr.Server, conf srvr.RouteConfigurer[fiber.
 		req.Header.Set(k, v)
 	}
 
-	res, err := srv.Test(req, conf)
+	res, err := srv.Test(req, confs...)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer res.Body.Close()
 
-	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	out := response{status: res.StatusCode, header: res.Header, body: string(b)}
-
-	res.Body = io.NopCloser(bytes.NewReader(b))
-	if r, err := prblm.Parse(res); err == nil {
-		out.problem = &r.Problem
-	}
-
-	return out
+	return parseResponse(t, res)
 }
 
 // rawRequest writes a request to addr over its own TCP connection, in the
@@ -347,4 +335,48 @@ func clientFor(rawURL string) *http.Client {
 	}
 
 	return http.DefaultClient
+}
+
+// mustNil fails the test when err is not nil.
+func mustNil(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// String returns everything written so far, for failure messages.
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
+// eventually polls cond until it holds, failing with msg after a second.
+func eventually(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+
+	for deadline := time.Now().Add(time.Second); !cond(); time.Sleep(time.Millisecond) {
+		if !time.Now().Before(deadline) {
+			t.Fatal(msg)
+		}
+	}
+}
+
+// waitRecord waits for the one record with msg, which a server behind a
+// listener writes as the response finishes, just after the client may
+// have it; it fails when there are several.
+func (b *logBuffer) waitRecord(t *testing.T, msg string) map[string]any {
+	t.Helper()
+
+	var got []map[string]any
+	eventually(t, func() bool { got = b.withMsg(t, msg); return len(got) > 0 }, "no "+msg+" record in:\n"+b.String())
+
+	if len(got) != 1 {
+		t.Fatalf("%d %s records, want 1:\n%s", len(got), msg, b.String())
+	}
+
+	return got[0]
 }

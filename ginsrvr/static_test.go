@@ -184,7 +184,9 @@ func failingIndex(site fs.FS, open func() (fs.File, error)) fs.FS {
 type statics = []srvr.RouteConfigurer[*gin.RouterGroup]
 
 // TestStatic_ConfigErrors covers static-files / Scenario: Rejected static
-// configuration and Scenario: Several invalid settings on gin.
+// configuration, Scenario: Several invalid settings and Scenario: Rejected
+// file cache configuration on gin, which has no file cache: a non-zero
+// StaticConfig.FiberSendFileCache fails Start instead of being ignored.
 func TestStatic_ConfigErrors(t *testing.T) {
 	t.Parallel()
 
@@ -196,59 +198,77 @@ func TestStatic_ConfigErrors(t *testing.T) {
 		name        string
 		configurers statics
 		fields      []string
+		value       string // the first *ConfigError's Value; "" for any
 	}{
-		{"nil FS", statics{ginsrvr.Static("/", nil)}, []string{"Static.FS"}},
-		{"typed-nil *embed.FS", statics{ginsrvr.Static("/", typedNil)}, []string{"Static.FS"}},
-		{"empty prefix", statics{ginsrvr.Static("", site)}, []string{"Static.Prefix"}},
-		{"relative prefix", statics{ginsrvr.Static("assets", site)}, []string{"Static.Prefix"}},
-		{"wildcard prefix", statics{ginsrvr.Static("/assets/{name}", site)}, []string{"Static.Prefix"}},
-		{"star prefix", statics{ginsrvr.Static("/assets/*", site)}, []string{"Static.Prefix"}},
-		{"parameter prefix", statics{ginsrvr.Static("/assets/:id", site)}, []string{"Static.Prefix"}},
-		{"dot-dot prefix", statics{ginsrvr.Static("/a/../b", site)}, []string{"Static.Prefix"}},
-		{"empty element prefix", statics{ginsrvr.Static("/a//b", site)}, []string{"Static.Prefix"}},
-		{"NUL in prefix", statics{ginsrvr.Static("/a\x00", site)}, []string{"Static.Prefix"}},
-		{"nil option", statics{ginsrvr.Static("/", site, nil)}, []string{"StaticOption"}},
-		{"missing fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("missing.html"))}, []string{"Static.SPAFallback"}},
-		{"directory fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("docs"))}, []string{"Static.SPAFallback"}},
+		{"nil FS", statics{ginsrvr.Static("/", nil)}, []string{"Static.FS"}, ""},
+		{"typed-nil *embed.FS", statics{ginsrvr.Static("/", typedNil)}, []string{"Static.FS"}, ""},
+		{"empty prefix", statics{ginsrvr.Static("", site)}, []string{"Static.Prefix"}, ""},
+		{"relative prefix", statics{ginsrvr.Static("assets", site)}, []string{"Static.Prefix"}, ""},
+		{"wildcard prefix", statics{ginsrvr.Static("/assets/{name}", site)}, []string{"Static.Prefix"}, ""},
+		{"star prefix", statics{ginsrvr.Static("/assets/*", site)}, []string{"Static.Prefix"}, ""},
+		{"parameter prefix", statics{ginsrvr.Static("/assets/:id", site)}, []string{"Static.Prefix"}, ""},
+		{"dot-dot prefix", statics{ginsrvr.Static("/a/../b", site)}, []string{"Static.Prefix"}, ""},
+		{"empty element prefix", statics{ginsrvr.Static("/a//b", site)}, []string{"Static.Prefix"}, ""},
+		{"NUL in prefix", statics{ginsrvr.Static("/a\x00", site)}, []string{"Static.Prefix"}, ""},
+		{"nil option", statics{ginsrvr.Static("/", site, nil)}, []string{"StaticOption"}, ""},
+		{"missing fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("missing.html"))}, []string{"Static.SPAFallback"}, ""},
+		{"directory fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("docs"))}, []string{"Static.SPAFallback"}, ""},
 		{
 			"fallback leaving the file system",
 			statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("../index.html"))},
 			[]string{"Static.SPAFallback"},
+			"",
 		},
-		{"absolute fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("/index.html"))}, []string{"Static.SPAFallback"}},
+		{"absolute fallback", statics{ginsrvr.Static("/", site, srvr.WithSPAFallback("/index.html"))}, []string{"Static.SPAFallback"}, ""},
 		{
 			"header injection in CacheControl",
 			statics{ginsrvr.Static("/", site, srvr.WithStaticCacheControl("max-age=60\r\nSet-Cookie: a=b"))},
 			[]string{"Static.CacheControl"},
+			"",
 		},
 		{
 			"NUL in IndexCacheControl",
 			statics{ginsrvr.Static("/", site, srvr.WithStaticIndexCacheControl("no-cache\x00"))},
 			[]string{"Static.IndexCacheControl"},
+			"",
 		},
-		{"empty index name", statics{ginsrvr.Static("/", site, srvr.WithStaticIndexNames(""))}, []string{"Static.IndexNames"}},
+		{"empty index name", statics{ginsrvr.Static("/", site, srvr.WithStaticIndexNames(""))}, []string{"Static.IndexNames"}, ""},
 		{
 			"index name with a slash",
 			statics{ginsrvr.Static("/", site, srvr.WithStaticIndexNames("a/index.html"))},
 			[]string{"Static.IndexNames"},
+			"",
 		},
-		{"dot-dot index name", statics{ginsrvr.Static("/", site, srvr.WithStaticIndexNames(".."))}, []string{"Static.IndexNames"}},
+		{"dot-dot index name", statics{ginsrvr.Static("/", site, srvr.WithStaticIndexNames(".."))}, []string{"Static.IndexNames"}, ""},
 		{"fallback Open panics", statics{
 			ginsrvr.Static("/", failingIndex(site, func() (fs.File, error) { panic("boom") }), srvr.WithSPAFallback("index.html")),
-		}, []string{"Static.SPAFallback"}},
+		}, []string{"Static.SPAFallback"}, ""},
 		{"fallback Open permission denied", statics{
 			ginsrvr.Static("/", failingIndex(site, func() (fs.File, error) { return nil, fs.ErrPermission }), srvr.WithSPAFallback("index.html")),
-		}, []string{"Static.SPAFallback"}},
-		{"same prefix twice", statics{ginsrvr.Static("/assets", site), ginsrvr.Static("/assets", site)}, []string{"Static.Prefix"}},
+		}, []string{"Static.SPAFallback"}, ""},
+		{"same prefix twice", statics{ginsrvr.Static("/assets", site), ginsrvr.Static("/assets", site)}, []string{"Static.Prefix"}, ""},
 		{
 			"same prefix twice, one with a trailing slash",
 			statics{ginsrvr.Static("/assets", site), ginsrvr.Static("/assets/", site)},
 			[]string{"Static.Prefix"},
+			"",
 		},
-		{"root twice with other file systems", statics{ginsrvr.Static("/", site), ginsrvr.Static("/", fstest.MapFS{})}, []string{"Static.Prefix"}},
+		{"root twice with other file systems", statics{ginsrvr.Static("/", site), ginsrvr.Static("/", fstest.MapFS{})}, []string{"Static.Prefix"}, ""},
 		{"several invalid settings", statics{ginsrvr.Static("assets", nil, srvr.WithStaticCacheControl("a\nb"))}, []string{
 			"Static.Prefix", "Static.FS", "Static.CacheControl",
-		}},
+		}, ""},
+		{
+			"FiberSendFileCache 1h0m0s",
+			statics{ginsrvr.Static("/", site, srvr.WithStaticConfig(srvr.StaticConfig{FiberSendFileCache: time.Hour}))},
+			[]string{"Static.FiberSendFileCache"},
+			"1h0m0s",
+		},
+		{
+			"FiberSendFileCache -1s",
+			statics{ginsrvr.Static("/", site, srvr.WithStaticConfig(srvr.StaticConfig{FiberSendFileCache: -time.Second}))},
+			[]string{"Static.FiberSendFileCache"},
+			"-1s",
+		},
 	}
 
 	for _, tt := range tests {
@@ -265,8 +285,8 @@ func TestStatic_ConfigErrors(t *testing.T) {
 				t.Fatalf("Start = %v, want an error wrapping ErrRouteConfig and ErrConfig", err)
 			}
 
-			if _, ok := errors.AsType[*srvr.ConfigError](err); !ok {
-				t.Errorf("Start = %v, want a *ConfigError", err)
+			if ce, ok := errors.AsType[*srvr.ConfigError](err); !ok || (tt.value != "" && ce.Value != tt.value) {
+				t.Errorf("Start = %v, want a *ConfigError with Value %q", err, tt.value)
 			}
 
 			if got := configFields(err); !slices.Equal(got, tt.fields) {
@@ -391,11 +411,13 @@ func TestStatic_Serve(t *testing.T) {
 	}
 
 	for _, site := range sites {
+		fsys := site.build(t) // read only: built once for every row
+
 		for _, tt := range tests {
 			t.Run(site.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
 
-				base, _ := staticServer(t, ginsrvr.Static(tt.prefix, site.build(t)))
+				base, _ := staticServer(t, ginsrvr.Static(tt.prefix, fsys))
 				res := do(t, tt.method, base+tt.path, nil, nil)
 				checkServed(t, res, tt.ctype, siteFiles[tt.file], site.name == "DirFS")
 
@@ -921,12 +943,14 @@ func TestStatic_NotFound(t *testing.T) {
 	}
 
 	for _, site := range sites {
+		fsys := site.build(t) // read only: built once for every row
+
 		for _, tt := range tests {
 			t.Run(site.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
 
 				opts := append([]srvr.StaticOption{srvr.WithStaticCacheControl("public, max-age=60")}, tt.opts...)
-				base, _ := staticServer(t, ginsrvr.Static("/assets", site.build(t), opts...))
+				base, _ := staticServer(t, ginsrvr.Static("/assets", fsys, opts...))
 				checkNotFound(t, do(t, tt.method, base+tt.path, nil, nil), tt.path, tt.method == http.MethodHead)
 			})
 		}
@@ -956,11 +980,13 @@ func TestStatic_Hostile(t *testing.T) {
 		{name: "absolute-form target without a path, prefixed mount", target: "http://test"},
 	}
 
+	site := os.DirFS(dirSite(t)) // read only: built once for every row
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			base, _ := staticServer(t, ginsrvr.Static(cmp.Or(tt.prefix, "/assets"), os.DirFS(dirSite(t)), srvr.WithSPAFallback("index.html")))
+			base, _ := staticServer(t, ginsrvr.Static(cmp.Or(tt.prefix, "/assets"), site, srvr.WithSPAFallback("index.html")))
 			res := rawGet(t, base, tt.target, map[string]string{"Accept": "text/html"})
 
 			if res.status != http.StatusNotFound || res.header.Get("Location") != "" {
@@ -1423,7 +1449,7 @@ func TestStatic_Access(t *testing.T) {
 				t.Errorf("record %v, want level %s route %q status %v and the request's trace", rec, tt.level, tt.route, tt.status)
 			}
 
-			if _, ok := rec["code.function"]; ok {
+			if _, ok := rec["code.function.name"]; ok {
 				t.Errorf("record %v names a code location: the static mount is srvr's code", rec)
 			}
 
@@ -1458,6 +1484,8 @@ func TestStatic_Unmatched(t *testing.T) {
 		posts   bool
 		status  int
 		written int
+		// routeless says the records must have no http.route.
+		routeless bool
 	}{
 		{name: "static misses", method: "GET", status: 404, written: 1},
 		{name: "wrong method", method: "PUT", status: 405, written: 1},
@@ -1469,6 +1497,16 @@ func TestStatic_Unmatched(t *testing.T) {
 		{
 			name: "root-group middleware calling Next", method: "GET", status: 404, written: 1,
 			mw: func(c *gin.Context) { c.Next() },
+		},
+		{
+			name: "root-group middleware answering 200 itself after a static miss", method: "GET", status: 200, written: 3, routeless: true,
+			mw: func(c *gin.Context) {
+				c.Next()
+				if len(c.Errors) > 0 {
+					c.Errors = c.Errors[:0]
+					c.String(http.StatusOK, "custom")
+				}
+			},
 		},
 		{
 			name: "without a static mount, root-group middleware never runs", method: "GET", status: 404, written: 1, noStatic: true,
@@ -1504,8 +1542,8 @@ func TestStatic_Unmatched(t *testing.T) {
 
 			base := start(t, srv)
 			for _, p := range []string{"/nope-1.js", "/nope-2.js", "/nope-3.js"} {
-				if res := do(t, tt.method, base+p, nil, nil); res.status != tt.status || res.problem == nil {
-					t.Fatalf("%s %s = %d %q, want a %d problem", tt.method, p, res.status, res.body, tt.status)
+				if res := do(t, tt.method, base+p, nil, nil); res.status != tt.status || (tt.status >= 400) != (res.problem != nil) {
+					t.Fatalf("%s %s = %d %q, want %d, a problem when it fails", tt.method, p, res.status, res.body, tt.status)
 				}
 			}
 
@@ -1515,6 +1553,10 @@ func TestStatic_Unmatched(t *testing.T) {
 			for _, r := range logs.access(t) {
 				if r["http.response.status_code"] == float64(tt.status) {
 					written++
+				}
+
+				if route, ok := r["http.route"]; ok && tt.routeless {
+					t.Errorf("record has http.route %v, want none for a static miss:\n%s", route, logs.String())
 				}
 			}
 
