@@ -35,7 +35,7 @@ See proposal.md - Why. Each item comes from an open entry in `openspec/changes/a
 5. **Spec and test hygiene** (items 1, 2, RELEASING.md): the shortened requirements' new detail ("Re-exported names", "Level of a failure after the response started", the moved route-listing and hook-order steps) mapped to tests; `TestShutdownHooks_Faulty` made deterministic; RELEASING.md completed. It works on its own and changes no production code.
 6. **gin status-only classification** (item 7): `gin-engine` / "Consumer middleware behaviour" (the new rows). Hot path: gin's request stage (`classify`). The new rows land first and pass on today's code; `classify` changes only if D6's criteria hold.
 7. **Performance** (items 8, 9, 10): benchmark rows, measurement, and changes only at the gain (D7, D8, D9); `trace-context` / "Concurrent generation" guards any change of id source. Hot paths: trace context generation, the debug buffer, fiber's access stage, and the user-agent read in every engine.
-8. **Release**: precondition, preparation, owner stop, tags in RELEASING.md order, restoring `replace` with `internal/paritytest` tidied, and verification through the proxy.
+8. **Release**: precondition, preparation, owner stop, tags in RELEASING.md order, restoring `replace` with `internal/paritytest` tidied, the GitHub Release page, and verification through the proxy.
 
 Slices 2-4 are independent of each other; the order (smallest first) only keeps each RED step simple. No slice depends on a later one: slice 5's spec deltas already exist in this change, and its tests pin behaviour that is already merged.
 

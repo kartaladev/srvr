@@ -30,6 +30,12 @@ ignores `replace` in a dependency, so consumers would build against whatever cor
    commit, run `go mod tidy` in `internal/paritytest`: the modules it requires now require
    `vX.Y.Z`, so its own `require` of the core moves to `vX.Y.Z`.
    `make check` must pass after the restore.
+6. Publish one GitHub Release page for the version, on the core tag, listing every module tag.
+   Write the notes to a file: a short intro, a `## Modules` table (module, tag and
+   `go get <module>@vX.Y.Z` for each released module), then the version's `CHANGELOG.md` section.
+   Then run
+   `gh release create vX.Y.Z --verify-tag --title "srvr vX.Y.Z" --notes-file <file>`
+   (the v0.1.0 page follows this layout).
 
 While steps 3 and 4 are in progress, the `main` CI run is expected to fail with "updates to go.mod
 needed" in the modules not yet released and in `internal/paritytest`: the released modules
