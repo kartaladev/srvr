@@ -115,7 +115,7 @@ When a handler returns an error or panics after the response status has been wri
 | `500` | returns `prblm.ErrConflict` | `ERROR` |
 
 ### Requirement: Consumers extend error rendering
-The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types and prblm's own error hooks, `prblm.OnError` and `prblm.AddErrorHook`) and an error hook through `WithErrorHook`. srvr's own hook, which records the error for the request's access record, SHALL always run: srvr SHALL add it with `prblm.AddErrorHook`, so no consumer prblm option replaces or removes it, and a consumer's `prblm.OnError` SHALL run too. prblm calls the consumer's `prblm.OnError` first, then the hooks added with `prblm.AddErrorHook` in order, srvr's last; srvr's hook calls the `WithErrorHook` hook after recording. A panic in any consumer hook SHALL NOT affect the response or the access record.
+The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types, `prblm.OnError` and `prblm.AddErrorHook`) through `WithProblemOptions` and an error hook through `WithErrorHook`. srvr SHALL add its own hook, which records the error for the access record, with `prblm.AddErrorHook`, so no consumer option replaces or removes it. A panic in any consumer hook SHALL NOT affect the response or the access record.
 
 #### Scenario: Consumer mapper and hook
 - **Given** a server configured with `<option>`
@@ -139,6 +139,7 @@ The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace,
 - **Then** the response is a `404` problem
 - **And** `<hooks>`
 - **And** the access record is `http.request.failed` with `problem.status` `404`
+- **And** the hooks that run do so in this order: the consumer's `prblm.OnError`, the hooks added with `prblm.AddErrorHook` in order, srvr's own hook, then the `WithErrorHook` hook
 
 ##### Examples:
 | option | hooks |

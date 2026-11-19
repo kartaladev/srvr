@@ -217,7 +217,7 @@ The server SHALL write exactly one access record per request when the response f
 | `WithAccessLogDisabled()` then `WithAccessLogConfig(AccessLogConfig{})` | `GET /ping` | written |
 
 ### Requirement: Failed-request records are never suppressed
-An `http.request.failed` record SHALL be written whatever the access log configuration, except that an opt-in unmatched-record limit may suppress the record of a request no route matched (see "Unmatched failed records can be rate limited"); records of handler errors, panics and `5xx` responses are never suppressed. A recovered panic SHALL be logged at `ERROR`, and an error that arrived after the response started at the higher of the level of the status sent and of the status the error would have been answered with: a late 4xx error after a `2xx` is `WARN`, after a `5xx` it is `ERROR`.
+An `http.request.failed` record SHALL be written whatever the access log configuration; only the opt-in unmatched-record limit may suppress one (see "Unmatched failed records can be rate limited"). A recovered panic SHALL be logged at `ERROR`, and an error that arrived after the response started at the higher of the level of the status sent and of the status the error would have been answered with.
 
 #### Scenario: Failures while the access log is suppressed
 - **Given** a server configured with `<config>`
@@ -234,6 +234,20 @@ An `http.request.failed` record SHALL be written whatever the access log configu
 | `WithAccessLogDisabled()` | `GET /late` writing `200` and then returning `errors.New("late")` | written, at `ERROR` |
 | `WithAccessLogDisabled()` and `WithUnmatchedRecordLimit(1, time.Minute)` | `GET /a` returning `errors.New("boom")`, ten times within a minute | written, ten times |
 | `WithUnmatchedRecordLimit(1, time.Minute)` | `GET /a` panicking, ten times within a minute | written, ten times |
+
+#### Scenario: Level of a failure after the response started
+- **Given** a net/http route `GET /late` that writes status `<written>` and the body `partial`, then `<fails>`
+- **When** a client sends `GET /late`
+- **Then** the client receives status `<written>` and a body starting with `partial`
+- **And** the `http.request.failed` record has level `<level>`, `srvr.response.committed` `true` and no `problem`
+
+##### Examples:
+| written | fails | level |
+|---------|-------|-------|
+| `200` | returns `errors.New("late")` | `ERROR` |
+| `200` | panics with `"late"` | `ERROR` |
+| `201` | returns `prblm.ErrConflict` | `WARN` |
+| `500` | returns `prblm.ErrConflict` | `ERROR` |
 
 ### Requirement: Sensitive data is never logged by default
 Access and error records SHALL NOT contain request or response bodies, `Authorization`, `Cookie` or `Set-Cookie` values, query strings, the raw URL path or the client address, at any log level, unless the matching named opt-in is enabled.
@@ -446,7 +460,7 @@ The skip paths a consumer passes, through `WithAccessLogConfig` or `WithAccessLo
 | `WithAccessLogConfig(AccessLogConfig{SkipPaths: s})`, with the mutation running concurrently with 100 requests | not written for any, and `go test -race` reports no race |
 
 ### Requirement: Unmatched failed records can be rate limited
-When `AccessLogConfig.UnmatchedLimit` sets `Burst` above zero, the server SHALL write at most `Burst` `http.request.failed` records of requests no route matched per `Interval`, count the rest, and add the count as `srvr.unmatched.suppressed` to the next such record written and to `server.stopped`. The limit is per server and off by default. A negative `Burst`, or a positive `Burst` with an `Interval` not above zero, SHALL fail construction.
+When `AccessLogConfig.UnmatchedLimit` sets `Burst` above zero, the server SHALL write at most `Burst` `http.request.failed` records of requests no route matched per `Interval`, count the rest, and add the count as `srvr.unmatched.suppressed` to the next such record written and to `server.stopped`. Only a 404 or 405 the router answered SHALL count; an error consumer code reported is never limited. The limit is per server and off by default.
 
 #### Scenario: Limiting unmatched failed records
 - **Given** a server configured with `<config>`
@@ -474,6 +488,27 @@ When `AccessLogConfig.UnmatchedLimit` sets `Burst` above zero, the server SHALL 
 | `WithUnmatchedRecordLimit(10, 0)` | construction error wrapping `srvr.ErrConfig` naming `UnmatchedLimit.Interval` |
 | `WithUnmatchedRecordLimit(10, -time.Second)` | construction error wrapping `srvr.ErrConfig` naming `UnmatchedLimit.Interval` |
 | `WithUnmatchedRecordLimit(0, 0)` | a server without a limit |
+
+#### Scenario: Failures consumer middleware reports are not limited
+- **Given** engine `<engine>` configured with `WithUnmatchedRecordLimit(1, time.Minute)`, only route `GET /x`, and consumer middleware registered with `<registration>` that `<middleware>`
+- **When** a client sends `GET /nope-1`, `GET /nope-2` and `GET /nope-3`
+- **Then** each response is a `<status>` problem
+- **And** `<written>` `http.request.failed` records are written
+
+##### Examples: consumer-reported errors
+| engine | registration | middleware | status | written |
+|--------|--------------|------------|--------|---------|
+| `fiber` | `router.Use(mw)` on the root router | returns `prblm.ErrNotFound` | `404` | `3` |
+| `fiber` | `router.Use(mw)` on the root router | returns `fmt.Errorf("gate: %w", fiber.ErrNotFound)` | `404` | `3` |
+| `fiber` | `router.Use(mw)` on the root router | panics with `"boom"` (a panic is never limited) | `500` | `3` |
+
+##### Examples: answered by the router
+| engine | registration | middleware | status | written |
+|--------|--------------|------------|--------|---------|
+| `net/http` | `group.Use(mw)` on the root group (it runs only for matched routes) | returns `prblm.ErrNotFound` | `404` | `1` |
+| `gin` | `group.Use(mw)` on the root group (it runs only for matched routes) | calls `c.AbortWithError(404, prblm.ErrNotFound)` | `404` | `1` |
+| `fiber` | `router.Use(mw)` on the root router | returns `c.Next()` | `404` | `1` |
+| `fiber` | `router.Use(mw)` on the root router | returns `fiber.ErrNotFound`, the value fiber's router itself returns | `404` | `1` |
 
 ### Requirement: The user agent can be omitted from access records
 When `AccessLogConfig.OmitUserAgent` is true, access records SHALL NOT carry `user_agent.original`; by default they carry it.

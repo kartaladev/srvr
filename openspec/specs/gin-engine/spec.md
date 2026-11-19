@@ -177,6 +177,11 @@ srvr's pipeline (trace context, access record, recovery, problem rendering) SHAL
 | calls `c.AbortWithError(401, errAuth)` | `401` | `http.request.failed` |
 | panics | `500` | `http.request.failed` |
 | writes `200` then calls `c.Error(errors.New("late"))` | `200` | `http.request.failed` |
+| calls `c.AbortWithStatus(429)` | `429` | `http.request.completed` |
+| calls `c.AbortWithStatus(503)` | `503` | `http.request.completed` |
+| sets 401 and aborts without writing a body (`c.Status(401)`, then `c.Abort()`) | `401` | `http.request.completed` |
+| calls `c.Error(errAuth)` and then `c.AbortWithStatus(401)` | `401` | `http.request.failed` |
+| calls `c.AbortWithError(503, errors.New("db down"))` | `503` | `http.request.failed` |
 
 ### Requirement: Gin engine customisation cannot remove srvr's safety settings
 srvr SHALL set Gin's trusted proxies to none (gin trusts every proxy by default), then run `ginsrvr.WithGinEngine(func(*gin.Engine))` before installing its pipeline, then re-assert `ContextWithFallback`, `HandleMethodNotAllowed`, `RedirectTrailingSlash` off and its recovery. A hook that registers routes or middleware SHALL be rejected, because they would run outside srvr's pipeline.
