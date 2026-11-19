@@ -6,6 +6,12 @@ once tagged.
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `github.com/kartaladev/prblm` v0.2.1 (was v0.2.0) in every module, and `ginsrvr` requires
+  `prblm/adapters/ginprblm` v0.2.1: an error whose `As` or `Is` method panics, or a panic whose value
+  is such an error, now gets the safe 500 problem instead of escaping prblm.
+
 ## [v0.1.0] - 2026-11-19
 
 ### Added

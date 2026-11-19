@@ -31,3 +31,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   - The AGENTS.md and `openspec/config.yaml` change order now reads `... goroutine-leak-checks -> triage-debug-buffer -> followups-hardening -> scrty-integration` (owner ordering decision 2026-11-19; triage-debug-buffer had already been applied before scrty-integration).
 - **Evidence:** `openspec validate followups-hardening --strict` passes at planning; the dry run above.
 - **Suggested action:** none; consolidation rechecks the code facts in design Context.
+
+### prblm upgraded to v0.2.1 (owner request 2026-11-19)
+- **Status:** closed: done
+- **Target:** followups-hardening
+- **Context:** before slice 2, every module moved from `github.com/kartaladev/prblm` v0.2.0 to v0.2.1, and `ginsrvr` (with `internal/paritytest`) from `prblm/adapters/ginprblm` v0.2.0 to v0.2.1; `adapters/fiberprblm` has no newer release and stays v0.2.0. v0.2.1 only fixes panics escaping from an error's own `As`/`Is` methods (status-hint step, `Recover`, gin `Recovery`). No other dependency moved. The consolidation's design checks (D2 `newProblems`, D6 `ginprblm.ErrStatusOnly`) were made against v0.2.0; v0.2.1 changes neither API, so they hold.
+- **Evidence:** `make check` from the root passes in all six modules with `GOWORK=off` (golangci-lint 0 issues, `go test -race`, tidy, verify, govulncheck).
+- **Suggested action:** none.

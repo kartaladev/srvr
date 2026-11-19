@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/gofiber/fiber/v3 v3.7.0
-	github.com/kartaladev/prblm v0.2.0
+	github.com/kartaladev/prblm v0.2.1
 	github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0
 	github.com/kartaladev/srvr v0.1.0
 	github.com/valyala/fasthttp v1.78.0

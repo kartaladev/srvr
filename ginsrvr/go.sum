@@ -32,10 +32,10 @@ github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX
 github.com/google/gofuzz v1.0.0/go.mod h1:dBl0BpW6vV/+mYPU4Po3pmUjxk6FQPldtuIdl/M65Eg=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
-github.com/kartaladev/prblm v0.2.0 h1:fp99osWVOZqHG+6jun4dRWd3fOn2gTWqUWYLXVqVQ9Q=
-github.com/kartaladev/prblm v0.2.0/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
-github.com/kartaladev/prblm/adapters/ginprblm v0.2.0 h1:BgGSNjYQ8gpyqOUVr6DjIZ4HR5dgZl9geFZ1gXtkEXM=
-github.com/kartaladev/prblm/adapters/ginprblm v0.2.0/go.mod h1:mNx7iDQpoKofqm1CFRbLWYb0nDwCBPSxTpnzMFzyWf8=
+github.com/kartaladev/prblm v0.2.1 h1:vW8GV9X3po+69gEzvXZbl3ZRTvGHoyk7bj/UZONZj8Q=
+github.com/kartaladev/prblm v0.2.1/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
+github.com/kartaladev/prblm/adapters/ginprblm v0.2.1 h1:p5Oe8vTyd9rf2qO/gNgKDmOS4p81iP9exQS5SrrDiE8=
+github.com/kartaladev/prblm/adapters/ginprblm v0.2.1/go.mod h1:mNx7iDQpoKofqm1CFRbLWYb0nDwCBPSxTpnzMFzyWf8=
 github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
 github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/leodido/go-urn v1.4.0 h1:WT9HwE9SGECu3lg4d/dIA+jxlljEa1/ffXKmRjqdmIQ=
