@@ -2,12 +2,14 @@ package ginsrvr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/prblm/adapters/ginprblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
@@ -100,7 +102,7 @@ func newEngine(core *engine.Core, hooks []any, requestStage gin.HandlerFunc) (*g
 
 	assertSettings(e)
 
-	opts := core.ProblemOptions()
+	opts := append(core.ProblemOptions(), prblm.AddErrorHook(clearStatusOnly))
 	e.Use(requestStage, ginprblm.Middleware(opts...), guardErrors, ginprblm.Recovery(opts...))
 
 	return e, nil
@@ -172,10 +174,6 @@ func (s *Server) requestStage(c *gin.Context) {
 	}
 
 	c.Next()
-
-	if ok {
-		classify(c, state)
-	}
 }
 
 // guardErrors replaces every error recorded in c.Errors with its guarded
@@ -193,13 +191,15 @@ func guardErrors(c *gin.Context) {
 	}
 }
 
-// classify keeps the failure ginprblm reported only when it is one: an
-// error recorded with c.Error, a recovered panic, or no matched route.
-// ginprblm also reports a status-only abort such as c.AbortWithStatus(401)
-// to srvr's hook, with an error srvr cannot tell apart, and that request
-// did not fail (design D2).
-func classify(c *gin.Context, state *engine.RequestState) {
-	if state.Failed() && len(c.Errors) == 0 && state.Matched() && !state.Panicked() {
+// clearStatusOnly undoes the failure srvr's own prblm hook, which runs
+// just before it (engine.Core.ProblemOptions), recorded for a status-only abort such as
+// c.AbortWithStatus(401): ginprblm reports one to the hooks wrapped around
+// ginprblm.ErrStatusOnly, and that request did not fail (design D2). gin's
+// own 404 and 405 match ErrStatusOnly too, so a request no route matched
+// keeps its failure, as does a recovered panic.
+func clearStatusOnly(ctx context.Context, err error, _ *prblm.Problem) {
+	state, ok := engine.StateFrom(ctx)
+	if ok && state.Matched() && !state.Panicked() && errors.Is(err, ginprblm.ErrStatusOnly) {
 		state.ClearFailure()
 	}
 }

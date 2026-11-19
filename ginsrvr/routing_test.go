@@ -284,7 +284,7 @@ func TestRouteCheck(t *testing.T) {
 }
 
 // TestGinMiddleware covers gin-engine / Scenario: Consumer middleware
-// behaviour.
+// behaviour, all rows.
 func TestGinMiddleware(t *testing.T) {
 	t.Parallel()
 
@@ -305,6 +305,17 @@ func TestGinMiddleware(t *testing.T) {
 			_ = c.Error(errors.New("late"))
 			c.Abort()
 		}, 200, "http.request.failed"},
+		{"AbortWithStatus 429", func(c *gin.Context) { c.AbortWithStatus(http.StatusTooManyRequests) }, 429, "http.request.completed"},
+		{"AbortWithStatus 503", func(c *gin.Context) { c.AbortWithStatus(http.StatusServiceUnavailable) }, 503, "http.request.completed"},
+		{"sets 401 and aborts without a body", func(c *gin.Context) {
+			c.Status(http.StatusUnauthorized)
+			c.Abort()
+		}, 401, "http.request.completed"},
+		{"c.Error then AbortWithStatus 401", func(c *gin.Context) {
+			_ = c.Error(errAuth)
+			c.AbortWithStatus(http.StatusUnauthorized)
+		}, 401, "http.request.failed"},
+		{"AbortWithError 503", func(c *gin.Context) { _ = c.AbortWithError(http.StatusServiceUnavailable, errors.New("db down")) }, 503, "http.request.failed"},
 	}
 
 	for _, tt := range tests {

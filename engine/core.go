@@ -89,7 +89,9 @@ func (c *Core) Problems() *prblm.Handler { return c.problems }
 // request the client closed (after the consumer's mappers, which win), its
 // trace_id enricher (last, so that it wins) and its error hook, added with
 // prblm.AddErrorHook so that no consumer option replaces it (hook order:
-// srvr.WithProblemOptions).
+// srvr.WithProblemOptions). It returns a new slice; a hook an engine
+// appends with prblm.AddErrorHook runs after srvr's, with the request's
+// failure already recorded in its [RequestState].
 func (c *Core) ProblemOptions() []prblm.Option {
 	return slices.Concat(
 		c.settings.ProblemOptions,

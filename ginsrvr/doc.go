@@ -7,8 +7,10 @@
 // registered with [Server.Register]. Handlers stay plain gin.HandlerFunc
 // and report failures with c.Error(err) or c.AbortWithError: srvr renders
 // the last recorded error as a problem with the request's trace_id. A
-// status-only abort such as c.AbortWithStatus(401) is answered with a
-// problem too, but is not logged as a failed request.
+// status-only abort such as c.AbortWithStatus(401), which ginprblm reports
+// as ginprblm.ErrStatusOnly, is answered with a problem too, but is not
+// logged as a failed request (a status-only 5xx is logged as
+// http.request.completed at ERROR).
 //
 // srvr builds the engine with gin.New and installs its own pipeline before
 // any consumer group: trace context, access record, body limit

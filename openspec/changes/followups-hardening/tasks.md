@@ -66,13 +66,13 @@
 
 ## 6. Slice: gin status-only classification with ginprblm.ErrStatusOnly (item 7)
 
-- [ ] 6.1 Pin today's gin behaviour (gin-engine / Scenario: Consumer middleware behaviour, the five new rows); verify `go test -race -run TestMiddlewareOrder ./...` in `ginsrvr` passes (use the existing test of this scenario; name it in the task note)
+- [x] 6.1 Pin today's gin behaviour (gin-engine / Scenario: Consumer middleware behaviour, the five new rows); verify `go test -race -run TestGinMiddleware ./...` in `ginsrvr` passes (use the existing test of this scenario; name it in the task note)
   - RED: the rows are characterisation guards and must pass on current code; if one fails, that is a defect claim: record the failing output in `notes.md` and stop for the owner before changing the row or the code
   - GREEN: none
   - REFACTOR: none
-- [ ] 6.2 Evaluate `errors.Is(err, ginprblm.ErrStatusOnly)` in `classify` against design D6's three criteria; prototype it, run the ginsrvr suite and `internal/paritytest` with `-race`, and record the decision with the diff size in `notes.md`; verify the prototype is either kept with every test green or reverted (`git diff --stat ginsrvr` empty)
-- [ ] 6.3 If adopted: update the `classify` comment and the package overview in `ginsrvr/doc.go`; no CHANGELOG entry (no visible change); verify `make check MODULES=ginsrvr` passes and `go tool cover -func` covers both branches of `classify`
-- [ ] 6.4 Close the archived entry's target in this change's `notes.md` outcome; run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(ginsrvr): classify status-only aborts with ginprblm.ErrStatusOnly` if adopted, otherwise `test(ginsrvr): pin status-only abort records`; verify with `git log -1 --stat`
+- [x] 6.2 Evaluate `errors.Is(err, ginprblm.ErrStatusOnly)` in `classify` against design D6's three criteria; prototype it, run the ginsrvr suite and `internal/paritytest` with `-race`, and record the decision with the diff size in `notes.md`; verify the prototype is either kept with every test green or reverted (`git diff --stat ginsrvr` empty)
+- [x] 6.3 If adopted: update the `classify` comment and the package overview in `ginsrvr/doc.go`; no CHANGELOG entry (no visible change); verify `make check MODULES=ginsrvr` passes and `go tool cover -func` covers both branches of `classify`
+- [x] 6.4 Close the archived entry's target in this change's `notes.md` outcome; run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(ginsrvr): classify status-only aborts with ginprblm.ErrStatusOnly` if adopted, otherwise `test(ginsrvr): pin status-only abort records`; verify with `git log -1 --stat`
 
 ## 7. Slice: performance, measured (items 8, 9, 10)
 
