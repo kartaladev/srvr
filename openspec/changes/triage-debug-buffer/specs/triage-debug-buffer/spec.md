@@ -87,7 +87,7 @@ A request SHALL flush its buffer when its failure status is at or above the flus
 | `600` | (none) | construction error wrapping `srvr.ErrConfig` naming `FlushStatus` |
 
 #### Scenario: Suppressed access record
-- **Given** buffering enabled with flush threshold `<threshold>`, access logging configured with `<access>`, and a handler for `GET /healthz` that logs `DEBUG` `ctx` and ends with `<status>`
+- **Given** buffering enabled with flush threshold `<threshold>`, access logging configured with `<access>`, and a handler for `GET /healthz` that logs `DEBUG` `ctx` and writes `<status>` itself
 - **When** the request completes
 - **Then** the `ctx` record is `<written>` and the access record is `<record>`
 
@@ -97,8 +97,8 @@ A request SHALL flush its buffer when its failure status is at or above the flus
 | `400` | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `404` | not written | not written |
 | `400` | `AccessLogConfig{Disabled: true}` | `404` | not written | not written |
 | `400` | (none), with log level `ERROR` | `404` | not written | not written |
-| `400` | (none) | `404` | written | `http.request.failed` |
-| (default) | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `500` | written | `http.request.failed` |
+| `400` | (none) | `404` | written | `http.request.completed` |
+| (default) | `AccessLogConfig{SkipPaths: []string{"/healthz"}}` | `500` | written | `http.request.completed` |
 
 ### Requirement: Records at or above the log level are never duplicated
 Records at or above the effective log level SHALL be written immediately and SHALL NOT be buffered; records below the buffer level SHALL be dropped. Each record SHALL appear in the output at most once.
@@ -275,13 +275,13 @@ Once a request's outcome is decided, its buffer SHALL be sealed and released. Re
 | `INFO` | `errors.New("boom")` | written once, without `srvr.buffered` |
 
 ### Requirement: Flushing is fault tolerant
-A flushed record that fails to write, or whose handler panics, SHALL be counted in `srvr.LogWriteErrors()` and skipped; the remaining records and the `http.request.failed` record SHALL still be written, and the response SHALL be unaffected.
+A flushed record that fails to write, or whose handler panics, SHALL be counted in `srvr.LogRecordsLost()` and skipped; the remaining records and the `http.request.failed` record SHALL still be written, and the response SHALL be unaffected.
 
 #### Scenario: Faulty handler during flush
 - **Given** buffering enabled with a consumer `slog.Handler` that `<fault>` on the record `step two`, and a handler that logs `DEBUG` `step one`, `step two`, `step three` then returns `errors.New("boom")`
 - **When** the request fails
 - **Then** the response status is `500`
-- **And** the written records are `<written>` and `srvr.LogWriteErrors()` increases by `<errors>`
+- **And** the written records are `<written>` and `srvr.LogRecordsLost()` increases by `<errors>`
 
 ##### Examples:
 | fault | written | errors |
@@ -364,7 +364,7 @@ A hijacked connection or protocol upgrade SHALL discard its buffer unless a pani
 | is wrapped by `http.TimeoutHandler` with `10ms` and sleeps `100ms` | written |
 | streams 3 chunks with `200` and then returns `errors.New("broken")` | written |
 | streams 3 chunks with `200` and returns `nil` | not written |
-| the client disconnects and the handler returns `context.Canceled` | not written |
+| the client disconnects and the handler returns `context.Canceled` (answered `499`, error-responses / Scenario: Client closed request) | not written |
 
 #### Scenario: Aborted request flush order
 - **Given** buffering enabled on net/http and a handler that logs `DEBUG` `ctx` and then panics with `http.ErrAbortHandler`

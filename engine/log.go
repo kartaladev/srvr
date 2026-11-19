@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -38,6 +39,9 @@ type LogConfig struct {
 	// default. Error values still reach the handler as their guarded text,
 	// a plain string, whatever the cap.
 	MaxAttrBytes int `json:"max_attr_bytes" yaml:"max_attr_bytes" env:"MAX_ATTR_BYTES"`
+	// DebugBuffer configures per-request buffering of below-level
+	// records; see [DebugBufferConfig]. Default off.
+	DebugBuffer DebugBufferConfig `json:"debug_buffer" yaml:"debug_buffer" env:"DEBUG_BUFFER_"`
 }
 
 // defaultMaxAttrBytes keeps one hostile or careless value from flooding
@@ -64,30 +68,86 @@ type LogSettings struct {
 }
 
 // newLogHandler resolves the base handler (the consumer's, or JSON or text
-// to the output) and wraps it in srvr's handler.
-func newLogHandler(ls *LogSettings) (*logHandler, error) {
-	if ls.Handler != nil {
-		if err := ls.checkOwnHandler(); err != nil {
-			return nil, err
-		}
+// to the output) and the debug buffer policy, and wraps the base handler
+// in srvr's handler.
+func newLogHandler(ls *LogSettings) *logHandler {
+	base := ls.baseHandler()
 
-		return &logHandler{base: ls.Handler, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
+	var buffering *bufferPolicy // nil: buffering is off
+	if ls.DebugBuffer.Enabled {
+		buffering = newBufferPolicy(ls.DebugBuffer)
 	}
 
-	// Every invalid field is reported, Level first.
+	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), buffering: buffering, cache: &targetCache{}}
+}
+
+// parseLevel parses a log/slog level name, such as "debug" or "info-4",
+// set in field.
+func parseLevel(field, name string) (slog.Level, error) {
+	var l slog.Level
+	if err := l.UnmarshalText([]byte(name)); err != nil {
+		return l, NewConfigError(field, strconv.Quote(name), "is not a log/slog level such as debug, info, warn, error or info-4")
+	}
+
+	return l, nil
+}
+
+// staticLevel returns the log level when it is known at construction: set
+// by name, or the default INFO, and not a LevelVar, a consumer's handler
+// or an invalid name.
+func (ls *LogSettings) staticLevel() (slog.Level, bool) {
+	if ls.Handler != nil || ls.LevelVar != nil {
+		return 0, false
+	}
+
+	if ls.Level == "" {
+		return slog.LevelInfo, true
+	}
+
+	l, err := parseLevel("Level", ls.Level)
+
+	return l, err == nil
+}
+
+// validateLog reports every invalid log field: Level and Format, or the
+// fields a consumer's handler replaces.
+func validateLog(s *Settings) error {
+	ls := &s.Log
+	if ls.Handler != nil {
+		return ls.checkOwnHandler()
+	}
+
 	var errs []error
 
-	var leveler slog.Leveler = slog.LevelInfo
+	if ls.LevelVar == nil && ls.Level != "" {
+		if _, err := parseLevel("Level", ls.Level); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if ls.Format != "" && !strings.EqualFold(ls.Format, "json") && !isText(ls.Format) {
+		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+	}
+
+	return errors.Join(errs...)
+}
+
+// isText reports whether format names the text format; anything else
+// validateLog accepts is JSON.
+func isText(format string) bool { return strings.EqualFold(format, "text") }
+
+// baseHandler returns the consumer's handler, or srvr's JSON or text
+// handler to the output. The settings were validated (validateLog).
+func (ls *LogSettings) baseHandler() slog.Handler {
+	if ls.Handler != nil {
+		return ls.Handler
+	}
+
+	var leveler slog.Leveler
 	if ls.LevelVar != nil {
 		leveler = ls.LevelVar
-	} else if ls.Level != "" {
-		var l slog.Level
-		if err := l.UnmarshalText([]byte(ls.Level)); err != nil {
-			errs = append(errs, NewConfigError("Level", strconv.Quote(ls.Level),
-				"is not a log/slog level such as debug, info, warn, error or info-4"))
-		}
-
-		leveler = l
+	} else {
+		leveler, _ = ls.staticLevel() // validated: Level is empty (INFO) or valid
 	}
 
 	out := io.Writer(os.Stdout)
@@ -98,26 +158,18 @@ func newLogHandler(ls *LogSettings) (*logHandler, error) {
 	out = &guardedWriter{w: out}
 	opts := &slog.HandlerOptions{Level: leveler, AddSource: ls.AddSource}
 
-	var base slog.Handler
-
-	switch strings.ToLower(ls.Format) {
-	case "", "json":
-		base = slog.NewJSONHandler(out, opts)
-	case "text":
-		base = slog.NewTextHandler(out, opts)
-	default:
-		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+	if isText(ls.Format) {
+		return slog.NewTextHandler(out, opts)
 	}
 
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
-	}
-
-	return &logHandler{base: base, maxBytes: ls.maxAttrBytes(), cache: &targetCache{}}, nil
+	return slog.NewJSONHandler(out, opts)
 }
 
-// checkOwnHandler rejects settings that belong to a consumer's handler.
+// checkOwnHandler rejects every setting that belongs to a consumer's
+// handler, one error per field.
 func (ls *LogSettings) checkOwnHandler() error {
+	var errs []error
+
 	for _, c := range []struct {
 		field string
 		set   bool
@@ -128,11 +180,11 @@ func (ls *LogSettings) checkOwnHandler() error {
 		{"Output", ls.Output != nil},
 	} {
 		if c.set {
-			return NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler")
+			errs = append(errs, NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler"))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // maxAttrBytes returns the effective string attribute cap; negative
@@ -143,15 +195,26 @@ func (ls *LogSettings) maxAttrBytes() int {
 
 // LoggerFromContext returns the request-scoped logger of a request handled
 // by the server: every record it writes carries the request's trace_id
-// and span_id as top-level keys. For any other context, including nil, it
-// returns slog.Default().
+// and span_id as top-level keys. Every call for one request returns the
+// logger the first call built, so taking it for each record costs nothing
+// and its records reuse one target. For any other context, including nil,
+// it returns slog.Default().
 func LoggerFromContext(ctx context.Context) *slog.Logger {
 	req := requestFrom(ctx)
 	if req == nil {
 		return slog.Default()
 	}
 
-	return slog.New(req.core.log.bind(&req.trace))
+	if l := req.logger.Load(); l != nil {
+		return l
+	}
+
+	// Concurrent first calls agree on the logger stored first.
+	if l := slog.New(req.core.log.bind(req)); req.logger.CompareAndSwap(nil, l) {
+		return l
+	}
+
+	return req.logger.Load()
 }
 
 // logHandler is the handler srvr wraps around the configured one. It adds
@@ -163,8 +226,10 @@ func LoggerFromContext(ctx context.Context) *slog.Logger {
 type logHandler struct {
 	base  slog.Handler
 	steps []step
-	// trace is the trace a request logger is bound to, or nil.
-	trace *Trace
+	// req is the request a request logger is bound to, or nil.
+	req *RequestState
+	// buffering is the server's debug buffer policy, nil when off.
+	buffering *bufferPolicy
 	// maxBytes caps string attributes; negative disables the cap.
 	maxBytes int
 	// truncated is set when a recorded With attribute was cut.
@@ -181,10 +246,10 @@ type logHandler struct {
 type targetCache struct{ last atomic.Pointer[cachedTarget] }
 
 // targetKey is the top attributes a target is built with: the trace, when
-// traced, and the truncation flag.
+// traced, the truncation flag and the flushed-record marker.
 type targetKey struct {
-	traceID, spanID string
-	traced, cut     bool
+	traceID, spanID       string
+	traced, cut, buffered bool
 }
 
 // cachedTarget is a target and the key it was built for.
@@ -200,12 +265,49 @@ type step struct {
 	attrs []slog.Attr
 }
 
-// Enabled asks the base handler; a panic there is counted like a failed
-// write and the record is skipped.
-func (h *logHandler) Enabled(ctx context.Context, l slog.Level) (enabled bool) {
+// Enabled reports whether a record at l is written or buffered: the base
+// handler enables it, or the request of ctx has an open debug buffer and l
+// is at or above the buffer level.
+func (h *logHandler) Enabled(ctx context.Context, l slog.Level) bool {
+	if h.baseEnabled(ctx, l) {
+		return true
+	}
+
+	b := h.bufferFor(ctx, l)
+
+	return b != nil && b.open()
+}
+
+// bufferFor returns the debug buffer, open or sealed, a record at l logged
+// with ctx goes to, or nil.
+func (h *logHandler) bufferFor(ctx context.Context, l slog.Level) *requestBuffer {
+	if h.buffering == nil || l < h.buffering.level {
+		return nil
+	}
+
+	if req := h.requestOf(ctx); req != nil {
+		return req.buffer
+	}
+
+	return nil
+}
+
+// requestOf returns the request a request logger is bound to, or the
+// request of ctx, or nil.
+func (h *logHandler) requestOf(ctx context.Context) *RequestState {
+	if h.req != nil {
+		return h.req
+	}
+
+	return requestFrom(ctx)
+}
+
+// baseEnabled asks the base handler; a panic there is counted like a
+// failed write and the record is skipped.
+func (h *logHandler) baseEnabled(ctx context.Context, l slog.Level) (enabled bool) {
 	defer func() {
 		if recover() != nil {
-			logWriteErrors.Add(1)
+			logRecordsLost.Add(1)
 
 			enabled = false
 		}
@@ -243,10 +345,10 @@ func (h *logHandler) with(st step) *logHandler {
 	return c
 }
 
-// bind returns h bound to tr, for a request logger.
-func (h *logHandler) bind(tr *Trace) *logHandler {
+// bind returns h bound to req, for a request logger.
+func (h *logHandler) bind(req *RequestState) *logHandler {
 	c := h.clone()
-	c.trace = tr
+	c.req = req
 
 	return c
 }
@@ -261,10 +363,33 @@ func (h *logHandler) clone() *logHandler {
 	return &c
 }
 
+// Handle writes r when the base handler enables its level now, which may
+// differ from when Enabled was asked; otherwise it buffers r in the
+// request's open debug buffer, or drops it.
 func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
-	h.handle(ctx, r, false)
+	if h.buffering == nil || h.baseEnabled(ctx, r.Level) {
+		h.handle(ctx, r, false)
+
+		return nil
+	}
+
+	// A sealed buffer takes nothing: the record is dropped.
+	if b := h.bufferFor(ctx, r.Level); b != nil {
+		rec, cut := h.cut(r.Clone(), false)
+		b.add(newEntry(ctx, h, rec, cut))
+	}
 
 	return nil
+}
+
+// cut returns r with its values cut to the attribute limit, and whether
+// anything was cut. It cannot panic: it resolves LogValuers with slog's
+// recovering Resolve and reads error and value text guarded.
+func (h *logHandler) cut(r slog.Record, own bool) (slog.Record, bool) {
+	t := truncator{maxBytes: h.maxBytes}
+	r = t.record(r, own)
+
+	return r, t.cut
 }
 
 // handle writes r; own marks a record srvr built itself, whose message is
@@ -272,23 +397,28 @@ func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
 // handler, while the recorded steps are replayed or in Handle, is counted
 // instead of passed on, and the record is skipped.
 func (h *logHandler) handle(ctx context.Context, r slog.Record, own bool) {
+	r, cut := h.cut(r, own)
+	h.write(ctx, r, cut, false)
+}
+
+// write writes r, already cut (cut reports whether anything was), with the
+// correlation keys and, for a flushed record (buffered), srvr.buffered. An
+// error or a panic in the base handler is counted and the record skipped.
+func (h *logHandler) write(ctx context.Context, r slog.Record, cut, buffered bool) {
 	defer func() {
 		if recover() != nil {
-			logWriteErrors.Add(1)
+			logRecordsLost.Add(1)
 		}
 	}()
 
-	t := truncator{maxBytes: h.maxBytes}
-	r = t.record(r, own)
-
 	tr, traced := h.traceOf(ctx)
-	key := targetKey{traced: traced, cut: t.cut || h.truncated}
+	key := targetKey{traced: traced, cut: cut || h.truncated, buffered: buffered}
 	if traced {
 		key.traceID, key.spanID = tr.TraceID, tr.SpanID
 	}
 
 	if err := h.cachedTarget(key).Handle(ctx, r); err != nil {
-		logWriteErrors.Add(1)
+		logRecordsLost.Add(1)
 	}
 }
 
@@ -308,6 +438,10 @@ func (h *logHandler) cachedTarget(key targetKey) slog.Handler {
 
 	if key.cut {
 		top = append(top, slog.Bool(keyAttrTruncated, true))
+	}
+
+	if key.buffered {
+		top = append(top, slog.Bool(keyBuffered, true))
 	}
 
 	target := h.target(top)
@@ -339,11 +473,11 @@ func (h *logHandler) target(top []slog.Attr) slog.Handler {
 
 // traceOf returns the bound trace, or the trace of ctx.
 func (h *logHandler) traceOf(ctx context.Context) (Trace, bool) {
-	if h.trace != nil {
-		return *h.trace, true
+	if req := h.requestOf(ctx); req != nil {
+		return req.trace, true
 	}
 
-	return TraceFromContext(ctx)
+	return Trace{}, false
 }
 
 // LogSchemaVersion is the srvr.log.schema value of every record srvr and
@@ -405,14 +539,22 @@ const (
 	keyDuration      = "duration_ms"
 	keyUserAgent     = "user_agent.original"
 	keyAttrTruncated = "srvr.attr.truncated"
-	keyCommitted     = "srvr.response.committed"
-	keyURLPath       = "url.path"
-	keyURLQuery      = "url.query"
-	keyClientAddress = "client.address"
-	keyProblem       = "problem"
-	keyProblemStatus = "status"
-	keyProblemType   = "type"
-	keyProblemTitle  = "title"
+	keyBuffered      = "srvr.buffered"
+
+	keyBufferFlushed   = "srvr.debug_buffer.flushed"
+	keyBufferDropped   = "srvr.debug_buffer.dropped"
+	keyBufferTruncated = "srvr.debug_buffer.truncated"
+	keyCommitted       = "srvr.response.committed"
+	keyURLPath         = "url.path"
+	keyURLQuery        = "url.query"
+	keyClientAddress   = "client.address"
+	keyProblem         = "problem"
+	keyProblemStatus   = "status"
+	keyProblemType     = "type"
+	keyProblemTitle    = "title"
+
+	// keyUnmatchedSuppressed is additive (srvr.log.schema unchanged).
+	keyUnmatchedSuppressed = "srvr.unmatched.suppressed"
 )
 
 // WarningCode is the srvr.warning.code of a server.config.warning record:
@@ -429,18 +571,13 @@ const (
 	WarnFiberHeaderLimitCapped WarningCode = "fiber_header_limit_capped"
 )
 
-// logWriteErrors counts records srvr could not write.
-var logWriteErrors atomic.Uint64
+// logRecordsLost counts records srvr could not write.
+var logRecordsLost atomic.Uint64
 
-// LogWriteErrors returns how many log records srvr's handlers failed to
-// write: the output or a consumer handler returned an error, wrote short, or
-// panicked (in Enabled, WithAttrs, WithGroup or Handle; the record is then
-// skipped). The count is process-wide: one counter, shared by every server
-// in the process and never reset, because loggers derived from
-// slog.Default() do not know which server they belong to. srvr counts these failures instead of
-// logging them, because the log is what failed, and a request never fails
-// because its log record could not be written.
-func LogWriteErrors() uint64 { return logWriteErrors.Load() }
+// LogRecordsLost returns how many log records srvr's handlers skipped
+// because the output or a consumer handler failed or panicked; the count is
+// process-wide and never reset. See srvr.LogRecordsLost.
+func LogRecordsLost() uint64 { return logRecordsLost.Load() }
 
 // guardedWriter reports a short write without an error as
 // io.ErrShortWrite, so it is counted like any other write failure.
@@ -533,6 +670,13 @@ func (t *truncator) capAny(key string, v slog.Value) slog.Attr {
 		return slog.Attr{Key: key, Value: v}
 	}
 
+	// Most values fit: measuring the formatted length first spares
+	// building a text only the cut needs (task 8.5: -15% B/op for a
+	// two-key http.Header).
+	if n, ok := formattedLen(v.Any()); ok && !exceeds(n, t.maxBytes) {
+		return slog.Attr{Key: key, Value: v}
+	}
+
 	text, panicked := valueText(v.Any())
 	if panicked {
 		return slog.String(key, text)
@@ -619,4 +763,35 @@ func mayNeedRewrite(v slog.Value, maxBytes int) bool {
 	default:
 		return false
 	}
+}
+
+// formattedLen returns the length of v formatted as fmt.Sprint would,
+// without building the text. It reports false for an error or a
+// fmt.Stringer, whose text valueText reads its own way, and for a value
+// whose formatting panics, which valueText then guards.
+func formattedLen(v any) (n int, ok bool) {
+	switch v.(type) {
+	case error, fmt.Stringer:
+		return 0, false
+	}
+
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+
+	var c byteCounter
+	_, _ = fmt.Fprint(&c, v)
+
+	return int(c), true
+}
+
+// byteCounter is an io.Writer that only counts the bytes written to it.
+type byteCounter int
+
+func (c *byteCounter) Write(p []byte) (int, error) {
+	*c += byteCounter(len(p))
+
+	return len(p), nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
@@ -26,8 +27,66 @@ import (
 const ScopeName = "github.com/kartaladev/srvr/otelsrvr"
 
 // ErrConfig is wrapped by every error New returns for invalid
-// configuration.
+// configuration, through one [ConfigError] per invalid field naming the
+// field and value.
 var ErrConfig = errors.New("otelsrvr: invalid configuration")
+
+// ConfigError is the error New returns for one invalid field: errors.As
+// reads Field, Value and Reason, and errors.Is matches [ErrConfig] and,
+// through Cause, the underlying error when there is one. When several
+// fields are invalid, New joins one ConfigError per field.
+type ConfigError struct {
+	// Field names the setting, such as "DurationBuckets".
+	Field string
+	// Value is the offending value's text; empty when the field is unset.
+	Value string
+	// Reason says what is wrong with it.
+	Reason string
+	// Cause is the underlying error, such as a parse error, whose text
+	// Reason already holds; nil when there is none.
+	Cause error
+
+	// text is the message after the prefix when it is not Field, Value
+	// and Reason joined by spaces.
+	text string
+}
+
+func (e *ConfigError) Error() string {
+	if e.text != "" {
+		return ErrConfig.Error() + ": " + e.text
+	}
+
+	parts := make([]string, 0, 3)
+	for _, p := range []string{e.Field, e.Value, e.Reason} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+
+	return ErrConfig.Error() + ": " + strings.Join(parts, " ")
+}
+
+// Unwrap returns [ErrConfig] and, when it is not nil, Cause, so errors.Is
+// and errors.As reach both.
+func (e *ConfigError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrConfig}
+	}
+
+	return []error{ErrConfig, e.Cause}
+}
+
+// configError returns a *ConfigError whose message is field, value and
+// reason joined by spaces.
+func configError(field, value, reason string) error {
+	return &ConfigError{Field: field, Value: value, Reason: reason}
+}
+
+// configErrorColon returns a *ConfigError whose message is "field value:
+// reason".
+func configErrorColon(field, value, reason string) error {
+	return &ConfigError{Field: field, Value: value, Reason: reason, text: field + " " + value + ": " + reason}
+}
 
 // Option configures an [Observer]. Options apply in argument order, so a
 // later option wins over an earlier one.
@@ -111,11 +170,11 @@ func (s *settings) validate() error {
 	var errs []error
 
 	if engine.IsNil(s.meterProvider) {
-		errs = append(errs, fmt.Errorf("%w: MeterProvider %T is nil", ErrConfig, s.meterProvider))
+		errs = append(errs, configError("MeterProvider", engine.TypeName(s.meterProvider), "is nil"))
 	}
 
 	if engine.IsNil(s.tracerProvider) {
-		errs = append(errs, fmt.Errorf("%w: TracerProvider %T is nil", ErrConfig, s.tracerProvider))
+		errs = append(errs, configError("TracerProvider", engine.TypeName(s.tracerProvider), "is nil"))
 	}
 
 	if s.propagatorErr != nil {
@@ -133,12 +192,12 @@ func (s *settings) validate() error {
 // Fields panics.
 func validatePropagator(p propagation.TextMapPropagator) (err error) {
 	if engine.IsNil(p) {
-		return fmt.Errorf("%w: Propagator %T is nil", ErrConfig, p)
+		return configError("Propagator", engine.TypeName(p), "is nil")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("%w: Propagator %T panicked: %s", ErrConfig, p, engine.ValueText(v))
+			err = configError("Propagator", engine.TypeName(p), "panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -155,15 +214,15 @@ func validateBuckets(b []float64) error {
 	}
 
 	if len(b) == 0 {
-		return fmt.Errorf("%w: DurationBuckets is empty", ErrConfig)
+		return configError("DurationBuckets", "", "is empty")
 	}
 
 	for i, v := range b {
 		switch {
 		case math.IsNaN(v) || math.IsInf(v, 0) || v <= 0:
-			return fmt.Errorf("%w: DurationBuckets %v: boundary %v is not positive and finite", ErrConfig, b, v)
+			return configErrorColon("DurationBuckets", fmt.Sprint(b), fmt.Sprintf("boundary %v is not positive and finite", v))
 		case i > 0 && v <= b[i-1]:
-			return fmt.Errorf("%w: DurationBuckets %v: boundaries are not strictly increasing", ErrConfig, b)
+			return configErrorColon("DurationBuckets", fmt.Sprint(b), "boundaries are not strictly increasing")
 		}
 	}
 
@@ -242,7 +301,7 @@ func New(opts ...Option) (*Observer, error) {
 	var nilOpts []error
 	for i, opt := range opts {
 		if opt == nil {
-			nilOpts = append(nilOpts, fmt.Errorf("%w: Option %d is nil", ErrConfig, i))
+			nilOpts = append(nilOpts, configError("Option", strconv.Itoa(i), "is nil"))
 
 			continue
 		}
@@ -279,7 +338,7 @@ func New(opts ...Option) (*Observer, error) {
 func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("%w: TracerProvider %T panicked: %s", ErrConfig, tp, engine.ValueText(v))
+			err = configError("TracerProvider", engine.TypeName(tp), "panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -291,7 +350,7 @@ func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 func newObserver(mp metric.MeterProvider, cfg Config) (o *Observer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			o, err = nil, fmt.Errorf("%w: MeterProvider %T panicked: %s", ErrConfig, mp, engine.ValueText(v))
+			o, err = nil, configError("MeterProvider", engine.TypeName(mp), "panicked: "+engine.ValueText(v))
 		}
 	}()
 
@@ -336,9 +395,13 @@ func newObserver(mp metric.MeterProvider, cfg Config) (o *Observer, err error) {
 	return o, nil
 }
 
-// instrumentError wraps the failure to create instrument name.
+// instrumentError reports the meter's failure to create instrument name,
+// naming MeterProvider.
 func instrumentError(name string, err error) error {
-	return fmt.Errorf("%w: creating %s: %w", ErrConfig, name, err)
+	return &ConfigError{
+		Field: "MeterProvider", Value: name, Reason: "creating the instrument: " + err.Error(), Cause: err,
+		text: "creating " + name + ": " + err.Error(),
+	}
 }
 
 // Begin implements srvr.Observer.

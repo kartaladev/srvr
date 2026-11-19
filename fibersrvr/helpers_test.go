@@ -68,10 +68,17 @@ func (b *logBuffer) records(t *testing.T) []map[string]any {
 func (b *logBuffer) withMsg(t *testing.T, msg string) []map[string]any {
 	t.Helper()
 
+	return b.where(t, "msg", msg)
+}
+
+// where returns the records whose key holds value.
+func (b *logBuffer) where(t *testing.T, key string, value any) []map[string]any {
+	t.Helper()
+
 	var out []map[string]any
 
 	for _, r := range b.records(t) {
-		if r["msg"] == msg {
+		if r[key] == value {
 			out = append(out, r)
 		}
 	}
@@ -210,8 +217,8 @@ func do(t *testing.T, method, url string, body io.Reader, header map[string]stri
 	out := response{status: res.StatusCode, header: res.Header, body: string(b)}
 
 	res.Body = io.NopCloser(bytes.NewReader(b))
-	if p, err := prblm.Parse(res); err == nil {
-		out.problem = p
+	if r, err := prblm.Parse(res); err == nil {
+		out.problem = &r.Problem
 	}
 
 	return out
@@ -247,8 +254,8 @@ func serve(t *testing.T, srv *fibersrvr.Server, conf srvr.RouteConfigurer[fiber.
 	out := response{status: res.StatusCode, header: res.Header, body: string(b)}
 
 	res.Body = io.NopCloser(bytes.NewReader(b))
-	if p, err := prblm.Parse(res); err == nil {
-		out.problem = p
+	if r, err := prblm.Parse(res); err == nil {
+		out.problem = &r.Problem
 	}
 
 	return out
@@ -291,8 +298,8 @@ func parseResponse(t *testing.T, res *http.Response) response {
 	out := response{status: res.StatusCode, header: res.Header, body: string(b)}
 
 	res.Body = io.NopCloser(bytes.NewReader(b))
-	if p, err := prblm.Parse(res); err == nil {
-		out.problem = p
+	if r, err := prblm.Parse(res); err == nil {
+		out.problem = &r.Problem
 	}
 
 	return out

@@ -82,14 +82,15 @@ engine does not compile.
 | Module | Purpose | Dependencies |
 |--------|---------|--------------|
 | `github.com/kartaladev/srvr` | core and the net/http engine | standard library and prblm only |
-| [`ginsrvr`](ginsrvr) | Gin engine | gin, ginprblm |
-| [`fibersrvr`](fibersrvr) | Fiber v3 engine | fiber, fiberprblm, fasthttp |
+| [`ginsrvr`](ginsrvr) | Gin engine | gin, prblm/adapters/ginprblm |
+| [`fibersrvr`](fibersrvr) | Fiber v3 engine | fiber, prblm/adapters/fiberprblm, fasthttp |
 | [`otelsrvr`](otelsrvr) | OpenTelemetry metrics and tracing | OpenTelemetry API (its tests also require the SDK) |
 | `otelsetup` | OpenTelemetry SDK and exporter wiring (Prometheus, OTLP) for applications | OpenTelemetry SDK, OTLP exporters (HTTP and gRPC), Prometheus client |
 
 ## More
 
 - [LOGGING.md](LOGGING.md): the log schema, redaction and triage records.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): running the benchmarks and profiles, comparing results, and the CI allocation gate.
 - [CHANGELOG.md](CHANGELOG.md): changes per release.
 - [RELEASING.md](RELEASING.md): how the modules are tagged.
 

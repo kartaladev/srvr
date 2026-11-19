@@ -218,8 +218,8 @@ func do(t *testing.T, method, url string, body io.Reader, header map[string]stri
 	out := response{status: res.StatusCode, header: res.Header, body: string(b)}
 
 	res.Body = io.NopCloser(bytes.NewReader(b))
-	if p, err := prblm.Parse(res); err == nil {
-		out.problem = p
+	if r, err := prblm.Parse(res); err == nil {
+		out.problem = &r.Problem
 	}
 
 	return out

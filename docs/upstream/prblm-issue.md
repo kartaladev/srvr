@@ -1,5 +1,7 @@
 # Draft issue for kartaladev/prblm
 
+**Status (2026-11-19):** answered by prblm v0.2.0. (1) `prblm.AddErrorHook` adds hooks `OnError` never replaces; srvr now uses it. (2) `ginprblm.ErrStatusOnly` is exported; srvr does not use it yet (see `openspec/changes/triage-debug-buffer/notes.md`).
+
 **Title:** Composable `OnError` hooks and an exported sentinel for ginprblm status-only aborts
 
 **Labels:** enhancement

@@ -54,6 +54,19 @@ func (o *resultObserver) only(t *testing.T) srvr.ResultInfo {
 func durationPoint(t *testing.T, reader sdkmetric.Reader) metricdata.HistogramDataPoint[float64] {
 	t.Helper()
 
+	points := durationPoints(t, reader)
+	if len(points) != 1 || points[0].Count != 1 {
+		t.Fatalf("data points = %+v, want one with count 1", points)
+	}
+
+	return points[0]
+}
+
+// durationPoints returns the http.server.request.duration data points,
+// failing when the histogram is missing or not in seconds.
+func durationPoints(t *testing.T, reader sdkmetric.Reader) []metricdata.HistogramDataPoint[float64] {
+	t.Helper()
+
 	var rm metricdata.ResourceMetrics
 	must(t, reader.Collect(t.Context(), &rm))
 
@@ -72,18 +85,13 @@ func durationPoint(t *testing.T, reader sdkmetric.Reader) metricdata.HistogramDa
 				t.Fatalf("%s data is %T, want metricdata.Histogram[float64]", m.Name, m.Data)
 			}
 
-			points := hist.DataPoints
-			if len(points) != 1 || points[0].Count != 1 {
-				t.Fatalf("data points = %+v, want one with count 1", points)
-			}
-
-			return points[0]
+			return hist.DataPoints
 		}
 	}
 
 	t.Fatal("no http.server.request.duration collected")
 
-	return metricdata.HistogramDataPoint[float64]{}
+	return nil
 }
 
 // observedRun is what one engine reported for one request.

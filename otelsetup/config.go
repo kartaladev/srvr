@@ -2,7 +2,6 @@ package otelsetup
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -16,8 +15,75 @@ import (
 )
 
 // ErrConfig is wrapped by every error New returns for invalid
-// configuration; the message names the offending field and value.
+// configuration, through one [ConfigError] per invalid field naming the
+// field and value.
 var ErrConfig = errors.New("otelsetup: invalid configuration")
+
+// ConfigError is the error New returns for one invalid field: errors.As
+// reads Field, Value and Reason, and errors.Is matches [ErrConfig] and,
+// through Cause, the underlying error when there is one. When several
+// fields are invalid, New joins one ConfigError per field.
+type ConfigError struct {
+	// Field names the setting, such as "Prometheus.Path".
+	Field string
+	// Value is the offending value's text; empty when the field is unset.
+	Value string
+	// Reason says what is wrong with it.
+	Reason string
+	// Cause is the underlying error, such as a parse error, whose text
+	// Reason already holds; nil when there is none.
+	Cause error
+
+	// text is the message after the prefix when it is not Field, Value
+	// and Reason joined by spaces.
+	text string
+}
+
+func (e *ConfigError) Error() string {
+	if e.text != "" {
+		return ErrConfig.Error() + ": " + e.text
+	}
+
+	parts := make([]string, 0, 3)
+	for _, p := range []string{e.Field, e.Value, e.Reason} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+
+	return ErrConfig.Error() + ": " + strings.Join(parts, " ")
+}
+
+// Unwrap returns [ErrConfig] and, when it is not nil, Cause, so errors.Is
+// and errors.As reach both.
+func (e *ConfigError) Unwrap() []error {
+	if e.Cause == nil {
+		return []error{ErrConfig}
+	}
+
+	return []error{ErrConfig, e.Cause}
+}
+
+// configError returns a *ConfigError whose message is field, value and
+// reason joined by spaces.
+func configError(field, value, reason string) error {
+	return &ConfigError{Field: field, Value: value, Reason: reason}
+}
+
+// configErrorColon returns a *ConfigError whose message is "field value:
+// reason".
+func configErrorColon(field, value, reason string) *ConfigError {
+	return &ConfigError{Field: field, Value: value, Reason: reason, text: field + " " + value + ": " + reason}
+}
+
+// causeError returns a *ConfigError caused by cause, whose message is
+// "field value: cause".
+func causeError(field, value string, cause error) error {
+	e := configErrorColon(field, value, cause.Error())
+	e.Cause = cause
+
+	return e
+}
 
 // Default values of the configuration.
 const (
@@ -208,28 +274,28 @@ func (c Config) validate() error {
 	var errs []error
 
 	if !c.Prometheus.Enabled && !c.OTLP.enabled() {
-		errs = append(errs, fmt.Errorf("%w: no exporter is enabled (Prometheus.Enabled, OTLP)", ErrConfig))
+		errs = append(errs, &ConfigError{Field: "Exporters", Reason: "none is enabled", text: "no exporter is enabled (Prometheus.Enabled, OTLP)"})
 	}
 
 	if c.OTLP.enabled() {
 		if p := c.OTLP.Protocol; p != ProtocolHTTPProtobuf && p != ProtocolGRPC {
-			errs = append(errs, fmt.Errorf("%w: OTLP.Protocol %q must be %q or %q",
-				ErrConfig, p, ProtocolHTTPProtobuf, ProtocolGRPC))
+			errs = append(errs, configError("OTLP.Protocol", strconv.Quote(p),
+				"must be "+strconv.Quote(ProtocolHTTPProtobuf)+" or "+strconv.Quote(ProtocolGRPC)))
 		}
 
 		if !c.OTLP.Metrics && !c.OTLP.Traces {
-			errs = append(errs, fmt.Errorf("%w: OTLP enables neither Metrics nor Traces", ErrConfig))
+			errs = append(errs, configError("OTLP", "", "enables neither Metrics nor Traces"))
 		}
 
 		if ep := c.OTLP.Endpoint; ep != "" {
 			if err := checkEndpoint(ep); err != nil {
-				errs = append(errs, fmt.Errorf("%w: OTLP.Endpoint %q: %w", ErrConfig, ep, err))
+				errs = append(errs, causeError("OTLP.Endpoint", strconv.Quote(ep), err))
 			}
 		}
 	}
 
 	if c.FlushTimeout < 0 {
-		errs = append(errs, fmt.Errorf("%w: FlushTimeout %v must not be negative", ErrConfig, c.FlushTimeout))
+		errs = append(errs, configError("FlushTimeout", c.FlushTimeout.String(), "must not be negative"))
 	}
 
 	if c.Prometheus.Enabled {
@@ -249,7 +315,7 @@ func (c Config) validate() error {
 // may be empty (all interfaces).
 func validateAddr(addr string) error {
 	if _, err := splitHostPort(addr); err != nil {
-		return fmt.Errorf("%w: Prometheus.Addr %q: %w", ErrConfig, addr, err)
+		return causeError("Prometheus.Addr", strconv.Quote(addr), err)
 	}
 
 	return nil
@@ -264,11 +330,24 @@ func splitHostPort(addr string) (string, error) {
 	}
 
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return "", fmt.Errorf("port %q is not a number in 0-65535", port)
+		return "", &portError{port: port, err: err}
 	}
 
 	return host, nil
 }
+
+// portError reports a port that is not a number in 0-65535; it unwraps to
+// the *strconv.NumError, which its text leaves out.
+type portError struct {
+	port string
+	err  error
+}
+
+func (e *portError) Error() string {
+	return "port " + strconv.Quote(e.port) + " is not a number in 0-65535"
+}
+
+func (e *portError) Unwrap() error { return e.err }
 
 // validatePath checks that path starts with / and is a pattern
 // http.ServeMux accepts. ServeMux panics on a pattern it rejects, so the
@@ -276,12 +355,12 @@ func splitHostPort(addr string) (string, error) {
 // built or bound.
 func validatePath(path string) (err error) {
 	if !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("%w: Prometheus.Path %q must start with /", ErrConfig, path)
+		return configError("Prometheus.Path", strconv.Quote(path), "must start with /")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("%w: Prometheus.Path %q: %s", ErrConfig, path, engine.ValueText(v))
+			err = configErrorColon("Prometheus.Path", strconv.Quote(path), engine.ValueText(v))
 		}
 	}()
 

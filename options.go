@@ -238,8 +238,33 @@ func WithAccessLogIncludeClientAddress() Option {
 	return func(s *engine.Settings) { s.Access.IncludeClientAddress = true }
 }
 
-// WithLogConfig sets every field of [LogConfig], replacing what earlier
-// level options set.
+// WithoutAccessLogUserAgent leaves user_agent.original out of access
+// records (AccessLogConfig.OmitUserAgent). By default it is written: it
+// tells clients and scanners apart in triage.
+func WithoutAccessLogUserAgent() Option {
+	return func(s *engine.Settings) { s.Access.OmitUserAgent = true }
+}
+
+// WithUnmatchedRecordLimit writes at most burst http.request.failed records
+// of requests no route matched (404 and 405 answered by the router) per
+// interval and counts the rest, reported as srvr.unmatched.suppressed on
+// the next such record written and on server.stopped
+// (AccessLogConfig.UnmatchedLimit). It loosens a triage default: by
+// default every failed record is written, so a path scanner controls the
+// log volume but nothing is lost. Handler errors, panics and 5xx records
+// are never limited, and observers still see every request. A burst of 0
+// means no limit; a negative burst, or a positive one with an interval not
+// above zero, fails construction.
+func WithUnmatchedRecordLimit(burst int, interval time.Duration) Option {
+	return func(s *engine.Settings) {
+		s.Access.UnmatchedLimit = engine.UnmatchedLimitConfig{Burst: burst, Interval: interval}
+	}
+}
+
+// WithLogConfig sets every field of [LogConfig], replacing what any
+// earlier log option set, LogConfig.DebugBuffer included: a
+// [WithDebugBuffer] or [WithDebugBufferConfig] before it has no effect.
+// Pass it first, or set its DebugBuffer field.
 func WithLogConfig(c LogConfig) Option {
 	return func(s *engine.Settings) {
 		s.Log.LogConfig = c
@@ -356,16 +381,33 @@ func setLogHandler(s *engine.Settings, field, from string, h slog.Handler) {
 // types) to the problem handler that renders every error response. Later
 // calls add to earlier ones.
 //
-// Do not pass [prblm.OnError]: prblm keeps a single hook and srvr installs
-// its own last, which records the error for the request's log record, so a
-// consumer OnError would never run. Use [WithErrorHook] instead.
+// prblm's error hooks may be passed here too: a [prblm.OnError] or
+// [prblm.AddErrorHook] hook runs for every error the server answers. srvr
+// adds its own hook, which records the error for the request's log record,
+// with prblm.AddErrorHook, so no option passed here replaces or removes it
+// (prblm.OnError(nil) removes only the consumer's OnError hook). prblm calls
+// the OnError hook first, then the added hooks in order, srvr's last; a
+// hook that panics is ignored and the later hooks still run.
+// [WithErrorHook] is the srvr-native alternative.
+//
+// srvr adds one mapper after these: an error matching context.Canceled
+// returned while the request context is cancelled (the client went away)
+// is answered 499 "Client Closed Request" instead of prblm's 500, so a
+// disconnect is not logged or counted as a server fault. A mapper passed
+// here, prblm's built-in mappers and a prblm.WithStatus hint other than
+// 500 take precedence; a cancellation while the request is live, or past
+// its deadline (a server-side timeout), stays 500. The built-ins are
+// consulted even when prblm.WithoutBuiltins is passed here.
 func WithProblemOptions(opts ...prblm.Option) Option {
 	return func(s *engine.Settings) { s.ProblemOptions = slices.Concat(s.ProblemOptions, opts) }
 }
 
 // WithErrorHook sets a hook called for every error the server answers,
-// after srvr's own hook. A hook that panics does not affect the response.
-// fn must not be nil.
+// from srvr's own hook once it has recorded the error, so it runs after a
+// [prblm.OnError] or [prblm.AddErrorHook] hook passed to
+// [WithProblemOptions]. Either way of observing answered errors works; this
+// one is validated at construction and typed as [ErrorHook]. A hook that
+// panics does not affect the response. fn must not be nil.
 func WithErrorHook(fn ErrorHook) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {
@@ -414,4 +456,96 @@ func WithErrorRedactor(fn func(string) string) Option {
 // this, and this replaces an earlier one.
 func WithoutErrorRedaction() Option {
 	return func(s *engine.Settings) { s.Redactor = func(text string) string { return text } }
+}
+
+// DebugBufferOption sets one field of the debug buffer configuration; pass
+// it to [WithDebugBuffer].
+type DebugBufferOption func(*DebugBufferConfig)
+
+// WithDebugBuffer turns per-request debug buffering on. Records logged
+// with a request's context (or through [LoggerFromContext]) below the log
+// level, at DEBUG or above, are kept in memory for that request instead of
+// being dropped. When the request fails with status 500 or above, or
+// panics, they are written just before its access record, in logging
+// order, with their original time and trace_id and srvr.buffered true;
+// on any other outcome they are discarded unwritten. Records at or above
+// the log level are written immediately as always, never twice.
+// A handler that returns context.Canceled after its client went away is
+// answered 499, so a disconnect does not flush (on fiber, which cannot
+// detect a disconnect, it stays a 500 and flushes).
+//
+// Default off, because it has costs a consumer should choose knowingly:
+// every below-level call made with a request context builds a full record
+// (slog's Enabled short-circuit no longer applies to it), each request
+// holds up to 100 records and 64 KiB, and on failure the log stream gets
+// DEBUG content, which may be more detailed than INFO. Buffered records
+// go through the same truncation (when buffered, so the limits count the
+// cut sizes), redaction and ReplaceAttr as every other record.
+//
+// Flushed records reach the base handler's Handle without its Enabled
+// being asked again: a consumer handler that filters by level inside
+// Handle drops them. A slog.Any value holding a pointer is rendered when
+// the record is flushed, so it shows changes made after it was logged.
+// Records logged without the request's context, such as with
+// context.Background() in a goroutine, follow the level rule unbuffered.
+//
+// opts change the defaults (see [DebugBufferConfig]) in argument order. A
+// nil opt fails New. A later [WithLogConfig] replaces the whole
+// configuration.
+func WithDebugBuffer(opts ...DebugBufferOption) Option {
+	return func(s *engine.Settings) {
+		s.Log.DebugBuffer.Enabled = true
+
+		for i, opt := range opts {
+			if opt == nil {
+				s.Errs = append(s.Errs, engine.NewConfigError("DebugBufferOption", i, "is nil"))
+
+				continue
+			}
+
+			opt(&s.Log.DebugBuffer)
+		}
+	}
+}
+
+// BufferLevel sets the lowest level buffered (default DEBUG). It must not
+// be above a log level set with a level option or LogConfig; equal to it,
+// nothing is buffered.
+func BufferLevel(l slog.Level) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.Level = l.String() }
+}
+
+// FlushAtStatus sets [DebugBufferConfig].FlushStatus: requests failing with
+// status n or above flush their buffer. A threshold below the default
+// 500, such as 400, logs more client-error context.
+func FlushAtStatus(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.FlushStatus = n }
+}
+
+// MaxRecords caps the records one request buffers (default 100); the
+// oldest are evicted and counted as dropped.
+func MaxRecords(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.MaxRecords = n }
+}
+
+// MaxBytes caps the estimated bytes one request buffers (default 64 KiB);
+// the oldest records are evicted and counted as dropped, and a single
+// record larger than n is dropped.
+func MaxBytes(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.MaxBytes = n }
+}
+
+// TotalBytes caps the estimated bytes all requests of the server buffer
+// together (default 16 MiB); a record that does not fit is dropped and the
+// request's buffer counts as truncated.
+func TotalBytes(n int) DebugBufferOption {
+	return func(c *DebugBufferConfig) { c.TotalBytes = n }
+}
+
+// WithDebugBufferConfig sets every field of [DebugBufferConfig], a zero
+// field meaning its default, replacing what earlier [WithDebugBuffer]
+// options set; a later WithDebugBuffer changes the fields its options
+// name. A later [WithLogConfig] replaces the whole configuration.
+func WithDebugBufferConfig(c DebugBufferConfig) Option {
+	return func(s *engine.Settings) { s.Log.DebugBuffer = c }
 }

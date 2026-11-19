@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"slices"
@@ -426,3 +427,95 @@ func TestFiberContextReuse(t *testing.T) {
 		})
 	}
 }
+
+// TestShutdown_StuckListener covers server-lifecycle / Scenario: Stuck
+// listener on every engine, the fiber row.
+func TestShutdown_StuckListener(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ engine string }{{"fiber"}}
+
+	for _, tt := range tests {
+		t.Run(tt.engine, func(t *testing.T) {
+			t.Parallel()
+
+			ln := loopback(t)
+			t.Cleanup(func() { _ = ln.Close() })
+			stuck := &stuckListener{Listener: ln, accepting: make(chan struct{}), release: make(chan struct{})}
+			release := sync.OnceFunc(func() { close(stuck.release) })
+			t.Cleanup(release)
+
+			srv, err := fibersrvr.New(srvr.WithListener(stuck), srvr.WithShutdownTimeout(200*time.Millisecond), srvr.WithLogOutput(io.Discard))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := srv.Register(routes(func(r fiber.Router) { r.Get("/ok", ok) })); err != nil {
+				t.Fatal(err)
+			}
+
+			started := make(chan error, 1)
+			go func() { started <- srv.Start(context.Background()) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
+
+			select {
+			case <-stuck.accepting:
+			case err := <-started:
+				t.Fatalf("Start returned before Accept: %v", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("Serve never called Accept")
+			}
+
+			stopped := make(chan error, 1)
+			go func() { stopped <- srv.Shutdown(context.Background()) }() //nolint:usetesting // the scenario's context has no deadline
+
+			select {
+			case err := <-stopped:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("Shutdown = %v, want the forced drain's context.DeadlineExceeded", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Shutdown did not return within 1s")
+			}
+
+			later := make(chan error, 1)
+			go func() { later <- srv.Shutdown(context.Background()) }() //nolint:usetesting // as above
+
+			select {
+			case err := <-later:
+				if err != nil {
+					t.Fatalf("later Shutdown = %v, want nil", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("later Shutdown did not return within 1s")
+			}
+
+			release()
+
+			select {
+			case err := <-started:
+				if err != nil {
+					t.Fatalf("Start = %v after the stop, want nil", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Start did not return after Accept was released")
+			}
+		})
+	}
+}
+
+// stuckListener is a listener whose Close does not unblock Accept: Accept
+// signals accepting once, then blocks until release is closed.
+type stuckListener struct {
+	net.Listener
+	once      sync.Once
+	accepting chan struct{}
+	release   chan struct{}
+}
+
+func (l *stuckListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.accepting) })
+	<-l.release
+
+	return nil, net.ErrClosed
+}
+
+func (l *stuckListener) Close() error { return nil }

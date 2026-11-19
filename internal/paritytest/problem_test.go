@@ -436,3 +436,168 @@ func TestParity_Exceptions(t *testing.T) {
 		}
 	})
 }
+
+// TestClientClosedRequest_Parity covers error-responses / Scenario: Client
+// closed request on every engine: a handler that returns context.Canceled
+// after its client went away. fiber cannot observe the disconnect, so its
+// request context stays live and the error stays a 500 (engine-parity /
+// Scenario: Documented differences).
+func TestClientClosedRequest_Parity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		engine string
+		// start registers GET /x, which closes entered and returns once its
+		// client is gone: net/http and gin see their request context end,
+		// fiber (blind to the disconnect) waits for the test to close gone.
+		start  func(t *testing.T, entered, gone chan struct{}) (string, *logBuffer)
+		status float64
+		level  string
+	}{
+		{"net/http", func(t *testing.T, entered, _ chan struct{}) (string, *logBuffer) {
+			t.Helper()
+
+			return netServer(t, func(g *srvr.Group) {
+				g.GET("/x", func(_ http.ResponseWriter, r *http.Request) error {
+					close(entered)
+					<-r.Context().Done()
+
+					return fmt.Errorf("query: %w", context.Canceled)
+				})
+			})
+		}, 499, "WARN"},
+		{"gin", func(t *testing.T, entered, _ chan struct{}) (string, *logBuffer) {
+			t.Helper()
+
+			return ginServer(t, func(g *gin.RouterGroup) {
+				g.GET("/x", func(c *gin.Context) {
+					close(entered)
+					<-c.Request.Context().Done()
+					_ = c.Error(fmt.Errorf("query: %w", context.Canceled))
+				})
+			})
+		}, 499, "WARN"},
+		{"fiber", func(t *testing.T, entered, gone chan struct{}) (string, *logBuffer) {
+			t.Helper()
+
+			return fiberServer(t, func(r fiber.Router) {
+				r.Get("/x", func(fiber.Ctx) error {
+					close(entered)
+					// fasthttp never cancels: the handler gives up itself.
+					<-gone
+
+					return fmt.Errorf("query: %w", context.Canceled)
+				})
+			})
+		}, 500, "ERROR"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.engine, func(t *testing.T) {
+			t.Parallel()
+
+			entered, gone := make(chan struct{}), make(chan struct{})
+			base, logs := tt.start(t, entered, gone)
+			disconnecting(t, base, "/x", entered)
+			close(gone)
+
+			r := one(t, logs)
+			problem, _ := r["problem"].(map[string]any)
+			if r["msg"] != "http.request.failed" || r["level"] != tt.level || problem["status"] != tt.status {
+				t.Fatalf("record %v, want http.request.failed at %s with problem.status %v", r, tt.level, tt.status)
+			}
+		})
+	}
+}
+
+// TestClientClosedRequest_ForcedDrain pins design D11 / Forced drain: a
+// handler still running when the drain deadline passes sees its request
+// context cancelled (net/http and gin by the closed connection, fiber by
+// srvr's cancelled base context) and returns context.Canceled, which is
+// answered 499 at WARN on every engine.
+func TestClientClosedRequest_ForcedDrain(t *testing.T) {
+	t.Parallel()
+
+	canceled := fmt.Errorf("query: %w", context.Canceled)
+	drain := srvr.WithShutdownTimeout(50 * time.Millisecond)
+
+	tests := []struct {
+		engine string
+		// build registers GET /x, which closes entered and returns canceled
+		// once its request context ends.
+		build func(t *testing.T, logs *logBuffer, entered chan struct{}) server
+	}{
+		{"net/http", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
+			t.Helper()
+
+			return newNetServer(t, logs, func(g *srvr.Group) {
+				g.GET("/x", func(_ http.ResponseWriter, r *http.Request) error {
+					close(entered)
+					<-r.Context().Done()
+
+					return canceled
+				})
+			}, drain)
+		}},
+		{"gin", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
+			t.Helper()
+
+			return newGinServer(t, logs, func(g *gin.RouterGroup) {
+				g.GET("/x", func(c *gin.Context) {
+					close(entered)
+					<-c.Request.Context().Done()
+					_ = c.Error(canceled)
+				})
+			}, drain)
+		}},
+		{"fiber", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
+			t.Helper()
+
+			return newFiberServer(t, logs, idleWorkerDuration, func(r fiber.Router) {
+				r.Get("/x", func(c fiber.Ctx) error {
+					close(entered)
+					<-c.Context().Done()
+
+					return canceled
+				})
+			}, drain)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.engine, func(t *testing.T) {
+			t.Parallel()
+
+			logs, entered := &logBuffer{}, make(chan struct{})
+			base, stop := start(t, tt.build(t, logs, entered))
+
+			sent := make(chan struct{})
+			go func() {
+				defer close(sent)
+				_, _, _ = send(t, http.MethodGet, base+"/x", nil)
+			}()
+
+			receiveWithin(t, entered, "the handler did not start")
+			stop()
+
+			r := one(t, logs)
+			problem, _ := r["problem"].(map[string]any)
+			if r["msg"] != "http.request.failed" || r["level"] != "WARN" || problem["status"] != float64(499) {
+				t.Errorf("record %v, want http.request.failed at WARN with problem.status 499", r)
+			}
+
+			receiveWithin(t, sent, "the client did not return")
+		})
+	}
+}
+
+// receiveWithin waits up to 5s for ch to be closed, failing with msg.
+func receiveWithin(t *testing.T, ch <-chan struct{}, msg string) {
+	t.Helper()
+
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal(msg)
+	}
+}

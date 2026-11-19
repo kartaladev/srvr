@@ -65,6 +65,53 @@ jobs:
       - name: cover
         run: make cover
 
+  # Allocation regression gate (docs/PERFORMANCE.md): the pull request's
+  # base and head are benchmarked one after the other in this job, on one
+  # runner, and compared. benchstat's table goes to the job summary;
+  # benchgate fails the job when a benchmark's allocs/op or B/op rises more
+  # than 10%. Timings are reported and never gate: shared runners vary too
+  # much. -benchtime is short because allocation counts are averages over
+  # thousands of iterations; -count=6 (make bench) gives benchgate medians.
+  bench:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BENCH_FLAGS: -benchtime=200ms
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: branch
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: main
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: branch/go.mod
+          cache-dependency-path: branch/**/go.sum
+      # The branch's Makefile runs in the base tree, so a base without the
+      # bench target, or without a module the branch adds, still works.
+      - name: benchmark main
+        run: make -C main -f "$GITHUB_WORKSPACE/branch/Makefile" bench BENCH_DIR="$RUNNER_TEMP/bench/main"
+      - name: benchmark the branch
+        run: make -C branch bench BENCH_DIR="$RUNNER_TEMP/bench/branch"
+      - name: benchstat
+        run: |
+          cat "$RUNNER_TEMP"/bench/main/*.txt > "$RUNNER_TEMP/main.txt"
+          cat "$RUNNER_TEMP"/bench/branch/*.txt > "$RUNNER_TEMP/branch.txt"
+          {
+            echo '```'
+            go run golang.org/x/perf/cmd/benchstat@v0.0.0-20261009192801-be2c69fb417e \
+              main="$RUNNER_TEMP/main.txt" branch="$RUNNER_TEMP/branch.txt"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: allocation gate
+        working-directory: branch
+        env:
+          GOWORK: "off"
+        run: go run ./internal/benchgate "$RUNNER_TEMP/main.txt" "$RUNNER_TEMP/branch.txt"
+
   # A released module must not keep a replace directive: go ignores replace
   # in a dependency, so consumers would build against another core.
   release:

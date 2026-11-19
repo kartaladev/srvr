@@ -372,8 +372,6 @@ func isLibraryFrame(fn string) bool {
 const (
 	// redactedValue replaces every masked value.
 	redactedValue = "***"
-	// secretKey is a key containing a secret-looking word.
-	secretKey = `[\w.-]*(?:token|key|secret|password|passwd|authorization|cookie|session|credential)[\w.-]*`
 	// secretSeparator is "=" or ":" between a key and its value, with
 	// optional quotes and spaces. A colon needs a space or a quote after
 	// it, so "session.go:42" in a stack trace and "host:port" stay
@@ -394,6 +392,13 @@ var (
 	secretPair = regexp.MustCompile(`(?i)(` + secretKey + secretSeparator + `)` + secretValue)
 )
 
+// secretWords are the words a secret-looking key contains, in lower case.
+var secretWords = []string{"token", "key", "secret", "password", "passwd", "authorization", "cookie", "session", "credential"}
+
+// secretKey is a key containing one of secretWords. \w is ASCII-only in
+// RE2, so only the words' letters can match a non-ASCII rune.
+var secretKey = `[\w.-]*(?:` + strings.Join(secretWords, "|") + `)[\w.-]*`
+
 // RedactSecrets returns text with the values of URL query parameters and
 // of secret-looking key=value or "key: value" pairs (keys containing
 // token, key, secret, password, passwd, authorization, cookie, session or
@@ -407,7 +412,39 @@ func RedactSecrets(text string) string {
 		text = queryValue.ReplaceAllString(text, "${1}"+redactedValue)
 	}
 
+	if !mayHoldSecretKey(text) {
+		return text // secretPair cannot match: skip its scan, the costly part
+	}
+
 	return secretPair.ReplaceAllString(text, "${1}"+redactedValue)
+}
+
+// foldedLetters are the only non-ASCII runes (?i) folds onto a letter of
+// secretWords: the Kelvin sign onto k and the long s onto s.
+var foldedLetters = []string{"\u212A", "\u017F"}
+
+// mayHoldSecretKey reports whether secretPair may match text: text holds
+// one of secretWords in any ASCII case, or a rune (?i) folds onto one of
+// their letters.
+func mayHoldSecretKey(text string) bool {
+	for _, r := range foldedLetters {
+		if strings.Contains(text, r) {
+			return true
+		}
+	}
+
+	for i := range len(text) {
+		c := text[i]
+
+		lower := c | 0x20 // an ASCII letter in lower case
+		for _, w := range secretWords {
+			if w[0] == lower && len(text)-i >= len(w) && strings.EqualFold(text[i:i+len(w)], w) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // redact applies the configured redactor (RedactSecrets by default) to

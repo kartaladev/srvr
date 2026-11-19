@@ -3,6 +3,9 @@
 *.test
 coverage.*
 
+# Benchmark results and profiles (make bench, make profile)
+/bench/
+
 # Local, per-developer Claude Code settings
 .claude/settings.local.json
 

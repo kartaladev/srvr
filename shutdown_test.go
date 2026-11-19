@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"runtime"
@@ -867,4 +868,49 @@ func startThenShutdown(srv *srvr.Server) error {
 	}
 
 	return err
+}
+
+// TestShutdown_StuckListener covers server-lifecycle / Scenario: Stuck
+// listener on every engine, the net/http row.
+func TestShutdown_StuckListener(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct{ engine string }{{"net/http"}}
+
+	for _, tt := range tests {
+		t.Run(tt.engine, func(t *testing.T) {
+			t.Parallel()
+
+			stuck := &stuckListener{Listener: listen(t), accepting: make(chan struct{}), release: make(chan struct{})}
+			release := sync.OnceFunc(func() { close(stuck.release) })
+			t.Cleanup(release)
+
+			srv, err := srvr.New(srvr.WithListener(stuck), srvr.WithShutdownTimeout(200*time.Millisecond), srvr.WithLogOutput(io.Discard))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustNil(t, srv.Register(okRoute("/ok")))
+
+			started := make(chan error, 1)
+			go func() { started <- recoverPanic(func() error { return srv.Start(context.Background()) }) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
+			receive(t, stuck.accepting, "Serve never called Accept")
+
+			shutdown := func() <-chan error {
+				done := make(chan error, 1)
+				go func() { done <- recoverPanic(func() error { return srv.Shutdown(context.Background()) }) }() //nolint:usetesting // the scenario's context has no deadline
+
+				return done
+			}
+
+			if err := receiveWithin(t, shutdown(), time.Second, "Shutdown did not return within 1s"); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("Shutdown = %v, want the forced drain's context.DeadlineExceeded", err)
+			}
+			if err := receiveWithin(t, shutdown(), time.Second, "later Shutdown did not return within 1s"); err != nil {
+				t.Fatalf("later Shutdown = %v, want nil", err)
+			}
+
+			release()
+			mustNil(t, receive(t, started, "Start did not return after Accept was released"))
+		})
+	}
 }

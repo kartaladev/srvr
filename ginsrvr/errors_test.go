@@ -398,7 +398,7 @@ func TestGinConsumerFaults(t *testing.T) {
 	t.Run("log handler Enabled panics", func(t *testing.T) {
 		t.Parallel()
 
-		before := srvr.LogWriteErrors()
+		before := srvr.LogRecordsLost()
 
 		srv, err := ginsrvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogHandler(panicHandler{inEnabled: true}))
 		if err != nil {
@@ -411,8 +411,8 @@ func TestGinConsumerFaults(t *testing.T) {
 		if res := do(t, http.MethodGet, start(t, srv)+"/f", nil, nil); res.status != 200 {
 			t.Fatalf("status %d", res.status)
 		}
-		if srvr.LogWriteErrors() <= before {
-			t.Fatal("LogWriteErrors did not increase")
+		if srvr.LogRecordsLost() <= before {
+			t.Fatal("LogRecordsLost did not increase")
 		}
 	})
 

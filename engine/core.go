@@ -29,6 +29,9 @@ type Core struct {
 	serviceAttrs []slog.Attr
 	// observers are the server's observers, guarded.
 	observers []*guardedObserver
+	// unmatched limits the failed records of unmatched requests; nil
+	// without a limit.
+	unmatched *unmatchedLimiter
 }
 
 // ResolveConfig applies opts in argument order, fills the defaults and
@@ -41,12 +44,12 @@ func ResolveConfig(opts []Option) (*Core, error) {
 		return nil, err
 	}
 
-	c := &Core{settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers)}
-
-	if c.log, err = newLogHandler(&c.settings.Log); err != nil {
-		return nil, err
+	c := &Core{
+		settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers),
+		unmatched: newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now),
 	}
 
+	c.log = newLogHandler(&c.settings.Log)
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
 
 	if c.problems, err = newProblems(c.ProblemOptions()); err != nil {
@@ -79,12 +82,19 @@ func (c *Core) Config() Config { return c.cfg }
 func (c *Core) Problems() *prblm.Handler { return c.problems }
 
 // ProblemOptions returns the prblm options every problem renderer of the
-// server must be built from: the consumer's, then srvr's trace_id enricher
-// and its OnError hook, last so that they win.
+// server must be built from: the consumer's, then srvr's mapper for a
+// request the client closed (after the consumer's mappers, which win), its
+// trace_id enricher (last, so that it wins) and its error hook, added with
+// prblm.AddErrorHook so that no consumer option replaces it (hook order:
+// srvr.WithProblemOptions).
 func (c *Core) ProblemOptions() []prblm.Option {
 	return slices.Concat(
 		c.settings.ProblemOptions,
-		[]prblm.Option{prblm.WithEnrichers(traceIDEnricher), prblm.OnError(c.onError)},
+		[]prblm.Option{
+			prblm.WithMappers(clientClosedMapper),
+			prblm.WithEnrichers(traceIDEnricher),
+			prblm.AddErrorHook(c.onError),
+		},
 	)
 }
 

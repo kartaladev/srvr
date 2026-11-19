@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -56,7 +57,7 @@ func New(ctx context.Context, opts ...Option) (*Setup, error) {
 	)
 	for i, opt := range opts {
 		if opt == nil {
-			nilOpts = append(nilOpts, fmt.Errorf("%w: Option %d is nil", ErrConfig, i))
+			nilOpts = append(nilOpts, configError("Option", strconv.Itoa(i), "is nil"))
 
 			continue
 		}

@@ -65,8 +65,13 @@ func (b *logBuffer) find(t *testing.T, msg string) []map[string]any {
 func (b *logBuffer) where(t *testing.T, key string, value any) []map[string]any {
 	t.Helper()
 
+	return where(b.records(t), key, value)
+}
+
+// where returns the records whose key holds value.
+func where(records []map[string]any, key string, value any) []map[string]any {
 	var out []map[string]any
-	for _, r := range b.records(t) {
+	for _, r := range records {
 		if r[key] == value {
 			out = append(out, r)
 		}
@@ -332,16 +337,7 @@ func TestAccessRecord_Streaming(t *testing.T) {
 
 			return http.NewResponseController(w).Flush()
 		})
-		g.GET("/hijack", func(w http.ResponseWriter, _ *http.Request) error {
-			conn, buf, err := http.NewResponseController(w).Hijack()
-			if err != nil {
-				return err
-			}
-			defer conn.Close()
-			_, _ = buf.WriteString("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
-
-			return buf.Flush()
-		})
+		g.GET("/hijack", func(w http.ResponseWriter, _ *http.Request) error { return hijack(w) })
 		g.GET("/flush-first", func(w http.ResponseWriter, _ *http.Request) error {
 			return http.NewResponseController(w).Flush()
 		})

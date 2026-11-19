@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // logBoth registers GET /log writing a DEBUG and an INFO record through
@@ -406,11 +408,11 @@ func TestOwnHandler_FaultyMethods(t *testing.T) {
 			})))
 			base := startServer(t, srv)
 
-			before := srvr.LogWriteErrors()
+			before := srvr.LogRecordsLost()
 			if got := get(t, base+"/log").status; got != http.StatusOK {
 				t.Fatalf("status = %d, want 200", got)
 			}
-			eventually(t, func() bool { return srvr.LogWriteErrors() > before }, "the failure was not counted")
+			eventually(t, func() bool { return srvr.LogRecordsLost() > before }, "the failure was not counted")
 			for _, msg := range tt.skipped {
 				if _, ok := h.record(msg); ok {
 					t.Fatalf("record %q was written through a failing handler", msg)
@@ -629,6 +631,106 @@ func TestLogSchemaGolden_ObserverFault(t *testing.T) {
 	}
 }
 
+// goldenDebugBufferKeys pins the additive debug buffer keys
+// (srvr.log.schema unchanged): a flushed record of a handler that logs a
+// plain DEBUG message, and the summary on the failed record.
+var (
+	goldenFlushedKeys       = []string{"level", "msg", "span_id", "srvr.buffered", "time", "trace_id"}
+	goldenBufferSummaryKeys = []string{"srvr.debug_buffer.dropped", "srvr.debug_buffer.flushed", "srvr.debug_buffer.truncated"}
+)
+
+// TestLogSchemaGolden_DebugBuffer pins the keys a failed request writes
+// with debug buffering on.
+func TestLogSchemaGolden_DebugBuffer(t *testing.T) {
+	t.Parallel()
+
+	base, out := loggedServer(t, func(g *srvr.Group) {
+		g.GET("/fail", func(_ http.ResponseWriter, r *http.Request) error {
+			srvr.LoggerFromContext(r.Context()).DebugContext(r.Context(), "step")
+
+			return errors.New("boom")
+		})
+	}, srvr.WithServiceVersion("1.4.2"), srvr.WithDebugBuffer())
+	do(t, http.MethodGet, base+"/fail", nil, map[string]string{"User-Agent": "golden"})
+
+	failed := out.waitRecord(t, "http.request.failed")
+	want := slices.Sorted(slices.Values(slices.Concat(goldenKeys["http.request.failed"], goldenBufferSummaryKeys)))
+	if got := flatKeys(failed, ""); !slices.Equal(got, want) {
+		t.Errorf("failed keys = %v\nwant %v", got, want)
+	}
+
+	if got := flatKeys(out.waitRecord(t, "step"), ""); !slices.Equal(got, goldenFlushedKeys) {
+		t.Errorf("flushed keys = %v\nwant %v", got, goldenFlushedKeys)
+	}
+
+	if failed["srvr.log.schema"] != float64(goldenSchemaVersion) {
+		t.Errorf("srvr.log.schema = %v", failed["srvr.log.schema"])
+	}
+}
+
+// goldenUnmatchedKeys pins the record of an unmatched request that
+// reports suppressed records; srvr.unmatched.suppressed is additive
+// (srvr.log.schema unchanged), also on server.stopped.
+var goldenUnmatchedKeys = []string{
+	"duration_ms", "error.chain", "error.fingerprint", "error.type", "exception.message", "http.request.method",
+	"http.response.body.size", "http.response.status_code", "level", "msg", "problem.status", "problem.title",
+	"problem.type", "service.name", "service.version", "span_id", "srvr.log.schema", "srvr.unmatched.suppressed",
+	"time", "trace_id", "user_agent.original",
+}
+
+// TestLogSchemaGolden_UnmatchedLimit pins the keys a server with an
+// unmatched-record limit writes: the record reporting suppressed records
+// and server.stopped reporting the rest.
+func TestLogSchemaGolden_UnmatchedLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu  sync.Mutex
+		now = time.Unix(0, 0)
+	)
+	clock := func(s *engine.Settings) {
+		s.Now = func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+
+			return now
+		}
+	}
+
+	out := &logBuffer{}
+	srv := newServer(t, srvr.WithLogOutput(out), srvr.WithServiceVersion("1.4.2"),
+		srvr.WithUnmatchedRecordLimit(1, time.Minute), clock)
+	base := startServer(t, srv)
+
+	for _, path := range []string{"/nope-1", "/nope-2"} {
+		get(t, base+path)
+	}
+
+	mu.Lock()
+	now = now.Add(time.Minute)
+	mu.Unlock()
+
+	for _, path := range []string{"/nope-3", "/nope-4"} {
+		get(t, base+path)
+	}
+
+	mustNil(t, srv.Shutdown(t.Context()))
+
+	failed := out.find(t, "http.request.failed")
+	if len(failed) != 2 {
+		t.Fatalf("%d failed records, want 2:\n%s", len(failed), out.String())
+	}
+
+	if got := flatKeys(failed[1], ""); !slices.Equal(got, goldenUnmatchedKeys) {
+		t.Errorf("unmatched keys = %v\nwant %v", got, goldenUnmatchedKeys)
+	}
+
+	stopped := out.find(t, "server.stopped")
+	if len(stopped) != 1 || stopped[0]["srvr.unmatched.suppressed"] != float64(1) || stopped[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
+		t.Errorf("server.stopped = %v, want srvr.unmatched.suppressed 1 and schema %d", stopped, goldenSchemaVersion)
+	}
+}
+
 // TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
 func TestLogSchemaDocumented(t *testing.T) {
 	t.Parallel()
@@ -636,7 +738,8 @@ func TestLogSchemaDocumented(t *testing.T) {
 	doc, err := os.ReadFile("LOGGING.md")
 	mustNil(t, err)
 
-	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"})
+	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"},
+		goldenFlushedKeys, goldenBufferSummaryKeys, goldenUnmatchedKeys)
 	for event, k := range goldenKeys {
 		keys = append(keys, event)
 		keys = append(keys, k...)
@@ -651,5 +754,57 @@ func TestLogSchemaDocumented(t *testing.T) {
 		if !strings.Contains(string(doc), "`"+k+"`") && !strings.Contains(string(doc), "`"+name+"`") {
 			t.Errorf("LOGGING.md does not list %q", k)
 		}
+	}
+}
+
+// TestLogSchemaDocumented_DebugBufferSample checks that the sample flushed
+// sequence in LOGGING.md has the pinned keys: every flushed record the
+// golden flushed keys, the failed record exactly the golden failed and
+// summary keys, written last.
+func TestLogSchemaDocumented_DebugBufferSample(t *testing.T) {
+	t.Parallel()
+
+	doc, err := os.ReadFile("LOGGING.md")
+	mustNil(t, err)
+
+	_, sample, found := strings.Cut(string(doc), "**Sample flushed sequence**")
+	if !found {
+		t.Fatal("LOGGING.md has no sample flushed sequence")
+	}
+	_, sample, _ = strings.Cut(sample, "```json\n")
+	sample, _, _ = strings.Cut(sample, "```")
+
+	var records []map[string]any
+	for line := range strings.Lines(sample) {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("sample line %q: %v", line, err)
+		}
+		records = append(records, rec)
+	}
+	if len(records) < 2 {
+		t.Fatalf("sample has %d records, want flushed records and the failed record", len(records))
+	}
+
+	failed := records[len(records)-1]
+	want := slices.Sorted(slices.Values(slices.Concat(goldenKeys["http.request.failed"], goldenBufferSummaryKeys)))
+	if got := flatKeys(failed, ""); failed["msg"] != "http.request.failed" || !slices.Equal(got, want) {
+		t.Errorf("sample failed record keys = %v\nwant %v", got, want)
+	}
+
+	flushed := 0
+	for _, rec := range records[:len(records)-1] {
+		if rec["srvr.buffered"] != true {
+			continue
+		}
+		flushed++
+		for _, k := range goldenFlushedKeys {
+			if _, ok := rec[k]; !ok {
+				t.Errorf("sample flushed record %v lacks %q", rec, k)
+			}
+		}
+	}
+	if failed["srvr.debug_buffer.flushed"] != float64(flushed) {
+		t.Errorf("sample srvr.debug_buffer.flushed = %v, want %d", failed["srvr.debug_buffer.flushed"], flushed)
 	}
 }

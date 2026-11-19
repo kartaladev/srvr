@@ -20,6 +20,7 @@ type faultyMeter struct {
 	noop.Meter
 
 	fail                     string
+	err                      error // returned for fail; "meter refused" when nil
 	panicCreate, panicRecord bool
 }
 
@@ -30,6 +31,10 @@ func (m faultyMeter) create(name string) error {
 	}
 
 	if name == m.fail {
+		if m.err != nil {
+			return m.err
+		}
+
 		return errors.New("meter refused")
 	}
 

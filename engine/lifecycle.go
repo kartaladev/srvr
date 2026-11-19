@@ -363,15 +363,22 @@ func (l *Lifecycle[C]) serveOn(r *run) {
 	r.err = r.runner.Serve(r.ln)
 }
 
-// serveWait bounds how long the stop sequence waits for serveOn to return
-// after the listener was closed: a consumer listener whose Close does not
-// unblock Accept would otherwise hang the stop.
-const serveWait = time.Second
+// serveGrace bounds how long the stop sequence waits for serveOn to return
+// once the drain deadline has passed: a consumer listener whose Close does
+// not unblock Accept would otherwise hang the stop. The grace only lets a
+// Serve that is already returning (an Accept that unblocks late) finish.
+const serveGrace = 100 * time.Millisecond
 
-// joinServe waits until r's serveOn returned, for at most serveWait, after
-// which it is abandoned.
-func joinServe(r *run) {
-	t := time.NewTimer(serveWait)
+// joinServe waits until r's serveOn returned, at most until drainCtx is done
+// and serveGrace after that, after which serveOn is abandoned.
+func joinServe(drainCtx context.Context, r *run) {
+	select {
+	case <-r.done:
+		return
+	case <-drainCtx.Done():
+	}
+
+	t := time.NewTimer(serveGrace)
 	defer t.Stop()
 
 	select {
@@ -409,7 +416,7 @@ func (l *Lifecycle[C]) stopRun(drainCtx context.Context, r *run) {
 	drainErr := r.runner.Drain(drainCtx)
 	l.core.logStopped(drainCtx, time.Since(begin), drainErr)
 	afterErr := l.core.runAfterDrain(drainCtx)
-	joinServe(r)
+	joinServe(drainCtx, r)
 
 	l.finish(errors.Join(beforeErr, afterErr), drainErr)
 }
@@ -527,7 +534,9 @@ func closeListener(ln net.Listener) {
 }
 
 // logStopped writes server.stopped: INFO, or WARN with srvr.drain.forced
-// when the drain deadline passed and connections were closed.
+// when the drain deadline passed and connections were closed, with
+// srvr.unmatched.suppressed when unmatched records were suppressed since
+// the last one written.
 func (c *Core) logStopped(ctx context.Context, d time.Duration, drainErr error) {
 	attrs := []slog.Attr{slog.Float64(keyDrainDuration, millis(d))}
 	level := slog.LevelInfo
@@ -535,6 +544,10 @@ func (c *Core) logStopped(ctx context.Context, d time.Duration, drainErr error) 
 	if drainErr != nil {
 		level = slog.LevelWarn
 		attrs = append(attrs, slog.Bool(keyDrainForced, true))
+	}
+
+	if n := c.unmatched.report(); n > 0 {
+		attrs = append(attrs, slog.Int64(keyUnmatchedSuppressed, n))
 	}
 
 	c.logEvent(ctx, level, eventStopped, attrs...)
@@ -606,10 +619,11 @@ func (r *httpRunner) Drain(ctx context.Context) error {
 	return err
 }
 
-// logEvent writes one of srvr's own records, outside any request:
-// schema version, the event's attributes, then the service attributes.
+// logEvent writes one of srvr's own records: schema version, the event's
+// attributes, then the service attributes. Own records are never
+// buffered, so only the base handler's level decides.
 func (c *Core) logEvent(ctx context.Context, level slog.Level, event string, attrs ...slog.Attr) {
-	if !c.log.Enabled(ctx, level) {
+	if !c.log.baseEnabled(ctx, level) {
 		return
 	}
 

@@ -1,6 +1,6 @@
 // Package fibersrvr runs srvr servers on the Fiber v3 engine: the same
 // lifecycle, configuration (every srvr option and config struct), RFC 9457
-// problems rendered by github.com/kartaladev/prblm/fiberprblm, trace
+// problems rendered by github.com/kartaladev/prblm/adapters/fiberprblm, trace
 // context and log records as srvr's net/http engine.
 //
 // Routes are contributed by srvr.RouteConfigurer[fiber.Router] values
@@ -31,7 +31,10 @@
 // # Documented differences from net/http
 //
 //   - fasthttp does not notice a client that disconnects mid-request; the
-//     handler is not told.
+//     handler is not told, and the request context stays live. So a
+//     handler that returns context.Canceled after a disconnect gets a 500
+//     problem and an ERROR record, where net/http and gin answer 499
+//     (Client Closed Request) at WARN.
 //   - The header limit is fiber's ReadBufferSize, allocated per
 //     connection: MaxHeaderBytes is capped at 64 KiB (a larger configured
 //     value writes one fiber_header_limit_capped warning), so headers

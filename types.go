@@ -38,10 +38,18 @@ type (
 	// LogConfig configures srvr's logger; see [engine.LogConfig]. Pass it
 	// with [WithLogConfig].
 	LogConfig = engine.LogConfig
+	// DebugBufferConfig configures per-request debug buffering; see
+	// [engine.DebugBufferConfig]. Pass it with [WithDebugBufferConfig] or
+	// in [LogConfig].
+	DebugBufferConfig = engine.DebugBufferConfig
 	// AccessLogConfig configures the access record written for every
 	// request; see [engine.AccessLogConfig]. Pass it with
 	// [WithAccessLogConfig].
 	AccessLogConfig = engine.AccessLogConfig
+	// UnmatchedLimitConfig limits the failed records of requests no route
+	// matched; see [engine.UnmatchedLimitConfig]. Set it as
+	// AccessLogConfig.UnmatchedLimit or with [WithUnmatchedRecordLimit].
+	UnmatchedLimitConfig = engine.UnmatchedLimitConfig
 	// TraceConfig configures trace context handling; see
 	// [engine.TraceConfig]. Pass it with [WithTraceConfig].
 	TraceConfig = engine.TraceConfig
@@ -101,15 +109,16 @@ func TraceFromContext(ctx context.Context) (Trace, bool) { return engine.TraceFr
 // returns slog.Default().
 func LoggerFromContext(ctx context.Context) *slog.Logger { return engine.LoggerFromContext(ctx) }
 
-// LogWriteErrors returns how many log records srvr's handlers failed to
-// write: the output or a consumer handler returned an error, wrote short, or
-// panicked (in Enabled, WithAttrs, WithGroup or Handle; the record is then
-// skipped). The count is process-wide: one counter, shared by every server
-// of every engine in the process and never reset, because loggers derived
-// from slog.Default() do not know which server they belong to. srvr counts
-// these failures instead of logging them, because the log is what failed,
-// and a request never fails because its log record could not be written.
-func LogWriteErrors() uint64 { return engine.LogWriteErrors() }
+// LogRecordsLost returns how many log records were lost: srvr's handlers
+// skipped them because the output or a consumer handler returned an error,
+// wrote short, or panicked (in Enabled, WithAttrs, WithGroup or Handle). It
+// counts every lost record, not only failed writes. The count is
+// process-wide: one counter, shared by every server of every engine in the
+// process and never reset, because loggers derived from slog.Default() do
+// not know which server they belong to. srvr counts these failures instead
+// of logging them, because the log is what failed, and a request never fails
+// because its log record could not be written.
+func LogRecordsLost() uint64 { return engine.LogRecordsLost() }
 
 type (
 	// Observer is told about every request the server handles; see

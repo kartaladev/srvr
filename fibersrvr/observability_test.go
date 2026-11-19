@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -329,6 +330,75 @@ func TestDefaultLoggerAfterConstruction(t *testing.T) {
 			reached := strings.Contains(buf.String(), "probe")
 			if reached != wantOK {
 				t.Fatalf("a record through slog.Default() reached the server's handler: %v; New error: %v", reached, err)
+			}
+		})
+	}
+}
+
+// TestFiberAccessSuppressed: a suppressed access record (SkipPaths,
+// Disabled) is not written, yet the observers still see the status and
+// body size; a record that is written keeps every value copied out of
+// fiber's buffers, here the path, query, user agent and client address.
+func TestFiberAccessSuppressed(t *testing.T) {
+	t.Parallel()
+
+	optIns := []srvr.Option{
+		srvr.WithAccessLogIncludePath(), srvr.WithAccessLogIncludeQuery(), srvr.WithAccessLogIncludeClientAddress(),
+	}
+
+	tests := []struct {
+		name   string
+		opts   []srvr.Option
+		path   string
+		status int
+		record bool
+	}{
+		{"skip path", []srvr.Option{srvr.WithAccessLogSkipPaths("/health")}, "/health", 200, false},
+		{"skip path failing", []srvr.Option{srvr.WithAccessLogSkipPaths("/fail")}, "/fail", 500, true},
+		{"disabled", []srvr.Option{srvr.WithAccessLogDisabled()}, "/health", 200, false},
+		{"written", []srvr.Option{srvr.WithAccessLogSkipPaths("/other")}, "/health", 200, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			obs := &recordingObserver{}
+			srv, logs := newServer(t, append(slices.Clone(optIns), append(tt.opts, srvr.WithObserver(obs))...)...)
+			conf := routes(func(r fiber.Router) {
+				r.Get("/health", func(c fiber.Ctx) error { return c.SendString("up") })
+				r.Get("/fail", failingHandler)
+			})
+
+			header := map[string]string{"User-Agent": "probe/1.0"}
+			if got := serve(t, srv, conf, http.MethodGet, tt.path+"?verbose=1", nil, header).status; got != tt.status {
+				t.Fatalf("status = %d, want %d", got, tt.status)
+			}
+
+			if _, results := obs.seen(); len(results) != 1 || results[0].Status != tt.status ||
+				(tt.status == 200 && results[0].ResponseBodySize != 2) {
+				t.Fatalf("observer results = %+v, want one with status %d", results, tt.status)
+			}
+
+			recs := logs.access(t)
+			if !tt.record {
+				if len(recs) != 0 {
+					t.Fatalf("access records = %v, want none", recs)
+				}
+
+				return
+			}
+
+			if len(recs) != 1 {
+				t.Fatalf("access records = %v, want one", recs)
+			}
+
+			for key, want := range map[string]any{
+				"url.path": tt.path, "url.query": "verbose=1", "user_agent.original": "probe/1.0", "client.address": "0.0.0.0",
+			} {
+				if recs[0][key] != want {
+					t.Errorf("record %s = %v, want %v", key, recs[0][key], want)
+				}
 			}
 		})
 	}

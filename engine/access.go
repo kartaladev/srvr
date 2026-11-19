@@ -131,7 +131,9 @@ func (c *Core) LogAccess(next http.Handler) http.Handler {
 
 // AccessInfo is what the access record of a request reports about it,
 // besides the request state. An engine copies every value out of buffers
-// it reuses before passing it.
+// it reuses before passing it, except for a record AccessSuppressed
+// reports suppressed: WriteAccess then reads Path only to decide and keeps
+// no string of info past its return.
 type AccessInfo struct {
 	// Method is the request method.
 	Method string
@@ -172,6 +174,28 @@ func (c *Core) WriteAccess(ctx context.Context, info AccessInfo) {
 	}
 }
 
+// AccessSuppressed reports whether the access record of the request of
+// ctx, ending now with status on path, is suppressed (Disabled,
+// SkipPaths), so an engine can skip copying the values only the record
+// reports. It is false outside a request.
+func (c *Core) AccessSuppressed(ctx context.Context, path string, status int) bool {
+	req := requestFrom(ctx)
+	if req == nil {
+		return false
+	}
+
+	msg, _ := outcome(status, req.aborted, req.failure)
+
+	return c.accessSuppressed(msg, path, status)
+}
+
+// accessSuppressed reports whether an access record with event msg is
+// suppressed. Failed records are the triage record: suppression never
+// applies.
+func (c *Core) accessSuppressed(msg, path string, status int) bool {
+	return msg == eventRequestCompleted && c.settings.Access.suppressed(path, status)
+}
+
 // writeAccess runs the request's observer end functions, then writes its
 // access record; a zero info.Status, an aborted request whose response
 // never started, omits the status.
@@ -183,9 +207,16 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 	fail := req.failure
 
 	msg, level := outcome(status, aborted, fail)
+	written := !c.accessSuppressed(msg, info.Path, status) && c.log.baseEnabled(ctx, level)
 
-	// Failed records are the triage record: suppression never applies.
-	if (msg == eventRequestCompleted && c.settings.Access.suppressed(info.Path, status)) || !c.log.Enabled(ctx, level) {
+	var unreported int64
+	if written && req.unmatched(status) {
+		written, unreported = c.unmatched.admit()
+	}
+
+	summary := c.flushBuffer(req, status, written)
+
+	if !written {
 		return
 	}
 
@@ -205,7 +236,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 		slog.Float64(keyDuration, millis(info.Duration)),
 	)
 
-	if info.UserAgent != "" {
+	if info.UserAgent != "" && !c.settings.Access.OmitUserAgent {
 		record.AddAttrs(slog.String(keyUserAgent, info.UserAgent))
 	}
 
@@ -219,6 +250,11 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 		record.AddAttrs(c.triageAttrs(info.Method, req, fail)...)
 	}
 
+	if unreported > 0 {
+		record.AddAttrs(slog.Int64(keyUnmatchedSuppressed, unreported))
+	}
+
+	record.AddAttrs(summary...)
 	c.log.handle(ctx, record, true)
 }
 
@@ -386,7 +422,8 @@ func (c *Core) addOptIns(record *slog.Record, info AccessInfo) {
 // Suppression (Disabled, SkipPaths) applies only to http.request.completed
 // records with a status below 500: http.request.failed records (a returned
 // error, a recovered panic, an aborted or unmatched request) are the triage
-// record and are always written, whatever their status. The
+// record and are always written, whatever their status, except that an
+// opt-in UnmatchedLimit may limit those of requests no route matched. The
 // Include fields each loosen a privacy default: by default the access
 // record holds the route pattern but not the path, the query string or the
 // client address, which may carry personal data or credentials.
@@ -403,6 +440,15 @@ type AccessLogConfig struct {
 	IncludeQuery bool `json:"include_query" yaml:"include_query" env:"INCLUDE_QUERY"`
 	// IncludeClientAddress adds the client's IP address as client.address.
 	IncludeClientAddress bool `json:"include_client_address" yaml:"include_client_address" env:"INCLUDE_CLIENT_ADDRESS"`
+	// OmitUserAgent leaves user_agent.original out of access records.
+	// Default false: the user agent tells clients and scanners apart in
+	// triage; omit it when it may identify a person, such as an app build
+	// that embeds a device or account name.
+	OmitUserAgent bool `json:"omit_user_agent" yaml:"omit_user_agent" env:"OMIT_USER_AGENT"`
+	// UnmatchedLimit limits the http.request.failed records of requests no
+	// route matched. Default no limit; setting one loosens a triage
+	// default (see [UnmatchedLimitConfig]).
+	UnmatchedLimit UnmatchedLimitConfig `json:"unmatched_limit" yaml:"unmatched_limit" env:"UNMATCHED_LIMIT"`
 }
 
 // suppressed reports whether the http.request.completed record of a

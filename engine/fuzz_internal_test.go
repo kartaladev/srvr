@@ -71,10 +71,7 @@ func FuzzLogLine(f *testing.F) {
 	f.Fuzz(func(t *testing.T, s string) {
 		var buf bytes.Buffer
 
-		h, err := newLogHandler(&LogSettings{Output: &buf})
-		if err != nil {
-			t.Fatal(err)
-		}
+		h := newLogHandler(&LogSettings{Output: &buf})
 
 		slog.New(h).Info(s, "value", s)
 
@@ -97,6 +94,31 @@ func FuzzLogLine(f *testing.F) {
 		want, _ := cutString(s, defaultMaxAttrBytes)
 		if rec["msg"] != want || rec["value"] != want {
 			t.Fatalf("logging %q decoded msg %q value %q, want %q", s, rec["msg"], rec["value"], want)
+		}
+	})
+}
+
+// FuzzRedactSecrets: the keyword pre-scan never changes what RedactSecrets
+// returns, which equals both patterns applied without it, including for
+// text whose non-ASCII runes (?i) folds onto the key words.
+func FuzzRedactSecrets(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		"password=hunter2",
+		"Key=v",
+		"ſession: abc",
+		"Get \"https://x.test/?api_key=abc&page=2\": timeout",
+		"TOKEN:\"x\"",
+		"no secret at all",
+		"pass word=x",
+	} {
+		f.Add(seed)
+	}
+
+	f.Fuzz(func(t *testing.T, text string) {
+		want := secretPair.ReplaceAllString(queryValue.ReplaceAllString(text, "${1}"+redactedValue), "${1}"+redactedValue)
+		if got := RedactSecrets(text); got != want {
+			t.Fatalf("RedactSecrets(%q) = %q, want %q", text, got, want)
 		}
 	})
 }

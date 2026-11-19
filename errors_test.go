@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
-	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -173,18 +172,6 @@ func TestErrorExtension(t *testing.T) {
 			},
 			err: prblm.ErrNotFound, status: http.StatusNotFound,
 		},
-		{
-			name: "consumer prblm.OnError does not replace srvr's hook",
-			opts: func(got *atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{
-					srvr.WithProblemOptions(prblm.OnError(func(context.Context, error, *prblm.Problem) { panic("replaced") })),
-					srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
-						got.Store(&seen{err: err, status: p.Status})
-					}),
-				}
-			},
-			err: prblm.ErrNotFound, status: http.StatusNotFound, hook: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +193,102 @@ func TestErrorExtension(t *testing.T) {
 				if s == nil || !errors.Is(s.err, tt.err) || s.status != tt.status {
 					t.Fatalf("hook saw %+v, want %v with status %d", s, tt.err, tt.status)
 				}
+			}
+		})
+	}
+}
+
+// reportHook returns an error hook adding name to log, marked when the
+// report is not prblm.ErrNotFound with a 404 problem, and then panicking
+// when panics is set.
+func reportHook(log *callLog, name string, panics bool) func(context.Context, error, *prblm.Problem) {
+	return func(_ context.Context, err error, p *prblm.Problem) {
+		call := name
+		if !errors.Is(err, prblm.ErrNotFound) || p == nil || p.Status != http.StatusNotFound {
+			call += " (unexpected report)"
+		}
+		log.add(call)
+
+		if panics {
+			panic(name + " panics")
+		}
+	}
+}
+
+// TestConsumerPrblmHooks covers error-responses / Scenario: Consumer prblm
+// error hooks: srvr adds its hook with prblm.AddErrorHook, so a consumer's
+// prblm hooks run and srvr still records the failure.
+func TestConsumerPrblmHooks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		opts  func(log *callLog) []srvr.Option
+		calls []string // consumer hooks called, in order
+	}{
+		{
+			name: "no option",
+			opts: func(*callLog) []srvr.Option { return nil },
+		},
+		{
+			name: "prblm.OnError",
+			opts: func(log *callLog) []srvr.Option {
+				return []srvr.Option{srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", false)))}
+			},
+			calls: []string{"fn"},
+		},
+		{
+			name: "prblm.OnError that panics",
+			opts: func(log *callLog) []srvr.Option {
+				return []srvr.Option{srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", true)))}
+			},
+			calls: []string{"fn"},
+		},
+		{
+			name: "prblm.OnError and WithErrorHook",
+			opts: func(log *callLog) []srvr.Option {
+				return []srvr.Option{
+					srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", false))),
+					srvr.WithErrorHook(reportHook(log, "gn", false)),
+				}
+			},
+			calls: []string{"fn", "gn"},
+		},
+		{
+			name: "prblm.AddErrorHook",
+			opts: func(log *callLog) []srvr.Option {
+				return []srvr.Option{srvr.WithProblemOptions(prblm.AddErrorHook(reportHook(log, "fn", false)))}
+			},
+			calls: []string{"fn"},
+		},
+		{
+			name: "prblm.OnError then prblm.OnError(nil)",
+			opts: func(log *callLog) []srvr.Option {
+				return []srvr.Option{srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", false)), prblm.OnError(nil))}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var log callLog
+			base, out := loggedServer(t, configFunc(func(g *srvr.Group) {
+				g.GET("/x", func(http.ResponseWriter, *http.Request) error { return prblm.ErrNotFound })
+			}), tt.opts(&log)...)
+
+			if res := get(t, base+"/x"); res.status != http.StatusNotFound || res.problem == nil || res.problem.Status != http.StatusNotFound {
+				t.Fatalf("response = %d %+v, want a 404 problem", res.status, res.problem)
+			}
+
+			rec := out.waitRecord(t, "http.request.failed")
+			if problem, _ := rec["problem"].(map[string]any); problem["status"] != float64(http.StatusNotFound) {
+				t.Fatalf("access record problem = %v, want status 404", rec["problem"])
+			}
+
+			if got := log.get(); !slices.Equal(got, tt.calls) {
+				t.Fatalf("consumer hooks called %q, want %q, each with prblm.ErrNotFound and a 404 problem", got, tt.calls)
 			}
 		})
 	}
@@ -408,32 +491,6 @@ func TestUnmatched_Redirect(t *testing.T) {
 	}
 }
 
-// TestUpstream_PrblmOnErrorComposes reproduces the prblm limitation srvr
-// works around with WithErrorHook: prblm.OnError keeps a single hook, so of
-// two OnError options only the last one runs. It is the RED step of the
-// upstream fix (openspec/changes/core-server/notes.md, "Ask prblm for a
-// composable OnError ...") and runs only with SRVR_UPSTREAM_TESTS=1, since
-// it fails against prblm v0.1.0 by design.
-func TestUpstream_PrblmOnErrorComposes(t *testing.T) {
-	t.Parallel()
-
-	if os.Getenv("SRVR_UPSTREAM_TESTS") != "1" {
-		t.Skip("upstream reproduction; set SRVR_UPSTREAM_TESTS=1 to run")
-	}
-
-	var first, second bool
-	h := prblm.NewHandler(
-		prblm.OnError(func(context.Context, error, *prblm.Problem) { first = true }),
-		prblm.OnError(func(context.Context, error, *prblm.Problem) { second = true }),
-	)
-
-	h.Write(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil), errors.New("boom"))
-
-	if !first || !second {
-		t.Fatalf("OnError hooks called: first=%v second=%v, want both", first, second)
-	}
-}
-
 // TestConfigError covers engine-support / Scenario: Configuration errors
 // name their field.
 func TestConfigError(t *testing.T) {
@@ -470,6 +527,85 @@ func TestConfigError(t *testing.T) {
 				if !strings.Contains(err.Error(), text) {
 					t.Fatalf("error %q does not name %s", err, text)
 				}
+			}
+		})
+	}
+}
+
+// disconnectWhile sends GET url, waits until entered is closed by the
+// handler, then cancels the request, so the client goes away while the
+// handler runs, and waits for the client to return.
+func disconnectWhile(t *testing.T, url string, entered <-chan struct{}) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); try(ctx, url) }()
+	receive(t, entered, "the handler did not start")
+	cancel()
+	receive(t, done, "the client did not return")
+}
+
+// TestClientClosedRequest covers error-responses / Scenario: Client
+// closed request.
+func TestClientClosedRequest(t *testing.T) {
+	t.Parallel()
+
+	quietCanceled := srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(context.Canceled, http.StatusServiceUnavailable)))
+
+	tests := []struct {
+		name string
+		// gone makes the client go away before the handler returns err.
+		gone    bool
+		err     error
+		opts    []srvr.Option
+		status  int
+		level   string
+		flushed bool
+	}{
+		{"client gone, context.Canceled", true, context.Canceled, nil, 499, "WARN", false},
+		{"client gone, wrapped context.Canceled", true, fmt.Errorf("query users: %w", context.Canceled), nil, 499, "WARN", false},
+		{"context live, context.Canceled", false, context.Canceled, nil, 500, "ERROR", true},
+		{"client gone, another error", true, errors.New("boom"), nil, 500, "ERROR", true},
+		{"client gone, consumer mapper for context.Canceled", true, context.Canceled, []srvr.Option{quietCanceled}, 503, "ERROR", true},
+		{"client gone, sentinel wrapping context.Canceled", true, fmt.Errorf("%w: %w", prblm.ErrUnavailable, context.Canceled), nil, 503, "ERROR", true},
+		{"client gone, status hint on context.Canceled", true, prblm.WithStatus(context.Canceled, http.StatusConflict), nil, 409, "WARN", false},
+		{"client gone, context.DeadlineExceeded", true, context.DeadlineExceeded, nil, 504, "ERROR", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			entered := make(chan struct{})
+			h := logDebug(func(_ http.ResponseWriter, r *http.Request) error {
+				close(entered)
+				if tt.gone {
+					<-r.Context().Done()
+				}
+
+				return tt.err
+			}, "ctx")
+			base, out := loggedServer(t, func(g *srvr.Group) { g.GET("/x", h) },
+				append([]srvr.Option{srvr.WithDebugBuffer()}, tt.opts...)...)
+
+			if tt.gone {
+				disconnectWhile(t, base+"/x", entered)
+			} else if res := get(t, base+"/x"); res.status != tt.status || res.problem == nil || res.problem.Status != tt.status {
+				t.Fatalf("response %d, problem %+v, want %d", res.status, res.problem, tt.status)
+			}
+
+			trail := requestTrail(t, out)
+			access := trail[len(trail)-1]
+			problem, _ := access["problem"].(map[string]any)
+			if access["msg"] != "http.request.failed" || access["level"] != tt.level ||
+				access["http.response.status_code"] != float64(tt.status) || problem["status"] != float64(tt.status) {
+				t.Errorf("access record %v, want http.request.failed at %s with status %d", access, tt.level, tt.status)
+			}
+			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.flushed {
+				t.Errorf("ctx flushed = %v, want %v: %v", got, tt.flushed, messages(trail))
 			}
 		})
 	}

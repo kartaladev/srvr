@@ -106,11 +106,20 @@ func ginServer(t *testing.T, conf func(*gin.RouterGroup), opts ...srvr.Option) (
 	t.Helper()
 
 	logs := &logBuffer{}
+
+	return run(t, newGinServer(t, logs, conf, opts...)), logs
+}
+
+// newGinServer, newFiberServer and newNetServer build one engine with conf,
+// logging to logs, without starting it.
+func newGinServer(t *testing.T, logs *logBuffer, conf func(*gin.RouterGroup), opts ...srvr.Option) server {
+	t.Helper()
+
 	srv, err := ginsrvr.New(options(logs, opts)...)
 	must(t, err)
 	must(t, srv.Register(ginConfig(conf)))
 
-	return run(t, srv), logs
+	return srv
 }
 
 // idleWorkerDuration is the fasthttp MaxIdleWorkerDuration of fiberServer's
@@ -133,6 +142,13 @@ func fiberServerIdle(t *testing.T, idle time.Duration, conf func(fiber.Router), 
 	t.Helper()
 
 	logs := &logBuffer{}
+
+	return run(t, newFiberServer(t, logs, idle, conf, opts...)), logs
+}
+
+func newFiberServer(t *testing.T, logs *logBuffer, idle time.Duration, conf func(fiber.Router), opts ...srvr.Option) server {
+	t.Helper()
+
 	srv, err := fibersrvr.New(options(logs, opts)...)
 	must(t, err)
 	// Set while configuring, before fasthttp's Serve reads the value.
@@ -145,18 +161,25 @@ func fiberServerIdle(t *testing.T, idle time.Duration, conf func(fiber.Router), 
 		conf(r)
 	})))
 
-	return run(t, srv), logs
+	return srv
 }
 
 func netServer(t *testing.T, conf func(*srvr.Group), opts ...srvr.Option) (string, *logBuffer) {
 	t.Helper()
 
 	logs := &logBuffer{}
+
+	return run(t, newNetServer(t, logs, conf, opts...)), logs
+}
+
+func newNetServer(t *testing.T, logs *logBuffer, conf func(*srvr.Group), opts ...srvr.Option) server {
+	t.Helper()
+
 	srv, err := srvr.New(options(logs, opts)...)
 	must(t, err)
 	must(t, srv.Register(groupConfig(conf)))
 
-	return run(t, srv), logs
+	return srv
 }
 
 func startNetHTTP(t *testing.T, o outcome, opts ...srvr.Option) (string, *logBuffer) {
@@ -218,12 +241,23 @@ func startFiber(t *testing.T, o outcome, opts ...srvr.Option) (string, *logBuffe
 func run(t *testing.T, srv server) string {
 	t.Helper()
 
+	base, _ := start(t, srv)
+
+	return base
+}
+
+// start starts srv and returns its base URL and stop, which cancels the
+// Start context (a drain bounded by the server's ShutdownTimeout) and
+// waits for Start to return; the test's cleanup calls stop too.
+func start(t *testing.T, srv server) (string, func()) {
+	t.Helper()
+
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must serve until its cleanup cancels it; t.Context() is cancelled before cleanups run
 	done := make(chan error, 1)
 
 	go func() { done <- srv.Start(ctx) }()
 
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		cancel()
 		select {
 		case err := <-done:
@@ -234,6 +268,7 @@ func run(t *testing.T, srv server) string {
 			t.Error("Start did not return")
 		}
 	})
+	t.Cleanup(stop)
 
 	select {
 	case <-srv.Ready():
@@ -243,7 +278,7 @@ func run(t *testing.T, srv server) string {
 
 	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
-	return "http://" + srv.Addr()
+	return "http://" + srv.Addr(), stop
 }
 
 func must(t *testing.T, err error) {
@@ -313,28 +348,48 @@ func (b *logBuffer) access(t *testing.T) []map[string]any {
 func (b *logBuffer) accessWithin(t *testing.T, wait time.Duration) []map[string]any {
 	t.Helper()
 
+	return b.recordsWithin(t, wait, 1, func(msg string) bool { return strings.HasPrefix(msg, "http.request.") })
+}
+
+// recordsWithin returns the records whose message keep accepts, waiting
+// up to wait for want of them.
+func (b *logBuffer) recordsWithin(t *testing.T, wait time.Duration, want int, keep func(msg string) bool) []map[string]any {
+	t.Helper()
+
 	for deadline := time.Now().Add(wait); ; time.Sleep(5 * time.Millisecond) {
 		var out []map[string]any
 
-		b.mu.Lock()
-		sc := bufio.NewScanner(bytes.NewReader(b.buf.Bytes()))
-		b.mu.Unlock()
-		sc.Buffer(nil, 1<<20)
-
-		for sc.Scan() {
-			var m map[string]any
-			if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-				t.Fatalf("log line %q: %v", sc.Text(), err)
-			}
-			if msg, _ := m["msg"].(string); strings.HasPrefix(msg, "http.request.") {
+		for _, m := range b.parse(t) {
+			if msg, _ := m["msg"].(string); keep(msg) {
 				out = append(out, m)
 			}
 		}
 
-		if len(out) > 0 || time.Now().After(deadline) {
+		if len(out) >= want || time.Now().After(deadline) {
 			return out
 		}
 	}
+}
+
+// parse decodes every log record written so far.
+func (b *logBuffer) parse(t *testing.T) []map[string]any {
+	t.Helper()
+
+	b.mu.Lock()
+	sc := bufio.NewScanner(bytes.NewReader(b.buf.Bytes()))
+	b.mu.Unlock()
+	sc.Buffer(nil, 1<<20)
+
+	var out []map[string]any
+	for sc.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			t.Fatalf("log line %q: %v", sc.Text(), err)
+		}
+		out = append(out, m)
+	}
+
+	return out
 }
 
 // clients holds the HTTP client of every server the helpers started, by

@@ -9,6 +9,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -544,4 +547,128 @@ func TestNew_NilOption(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestConfigError covers telemetry-setup / Scenario: Typed configuration
+// errors.
+func TestConfigError(t *testing.T) {
+	t.Parallel()
+
+	with := func(c otelsetup.Config) []otelsetup.Option { return []otelsetup.Option{otelsetup.WithConfig(c)} }
+	prometheus := func(addr, path string) otelsetup.PrometheusConfig {
+		return otelsetup.PrometheusConfig{Enabled: true, Addr: addr, Path: path}
+	}
+	endpoint := func(ep string) []otelsetup.Option {
+		return with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Endpoint: ep, Metrics: true}})
+	}
+
+	// Each cause reports whether err reaches the expected cause; nil means
+	// every *ConfigError has a nil Cause.
+	urlError := func(err error) bool { _, ok := errors.AsType[*url.Error](err); return ok }
+	addrError := func(err error) bool { _, ok := errors.AsType[*net.AddrError](err); return ok }
+	numError := func(err error) bool { _, ok := errors.AsType[*strconv.NumError](err); return ok }
+
+	tests := []struct {
+		name   string
+		opts   []otelsetup.Option
+		fields []string
+		cause  func(error) bool
+	}{
+		{"a nil Option", []otelsetup.Option{nil}, []string{"Option"}, nil},
+		{"no exporter enabled", with(otelsetup.Config{}), []string{"Exporters"}, nil},
+		{"OTLP.Protocol udp", with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Protocol: "udp", Metrics: true}}), []string{"OTLP.Protocol"}, nil},
+		{"OTLP enabling neither metrics nor traces", with(otelsetup.Config{OTLP: otelsetup.OTLPConfig{Protocol: otelsetup.ProtocolGRPC}}), []string{"OTLP"}, nil},
+		{"OTLP.Endpoint http://[::1", endpoint("http://[::1"), []string{"OTLP.Endpoint"}, urlError},
+		{"FlushTimeout -1s", with(otelsetup.Config{FlushTimeout: -time.Second, Prometheus: local}), []string{"FlushTimeout"}, nil},
+		{"Prometheus.Addr localhost:99999", with(otelsetup.Config{Prometheus: prometheus("localhost:99999", "")}), []string{"Prometheus.Addr"}, numError},
+		{"Prometheus.Addr localhost", with(otelsetup.Config{Prometheus: prometheus("localhost", "")}), []string{"Prometheus.Addr"}, addrError},
+		{"OTLP.Endpoint localhost", endpoint("localhost"), []string{"OTLP.Endpoint"}, addrError},
+		{"Prometheus.Path metrics", with(otelsetup.Config{Prometheus: prometheus("127.0.0.1:0", "metrics")}), []string{"Prometheus.Path"}, nil},
+		{
+			"FlushTimeout -1s and Prometheus.Path metrics",
+			with(otelsetup.Config{FlushTimeout: -time.Second, Prometheus: prometheus("127.0.0.1:0", "metrics")}),
+			[]string{"FlushTimeout", "Prometheus.Path"},
+			nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			s, err := otelsetup.New(t.Context(), tt.opts...)
+			if s != nil {
+				shutdown(t, s)
+			}
+
+			if !errors.Is(err, otelsetup.ErrConfig) {
+				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig", s, err)
+			}
+
+			got := configFields(err)
+			for _, field := range tt.fields {
+				if !slices.Contains(got, field) {
+					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
+				}
+			}
+
+			if tt.cause == nil {
+				if causes := configCauses(err); len(causes) > 0 {
+					t.Errorf("New error has *ConfigError causes %v, want none; error: %v", causes, err)
+				}
+			} else if !tt.cause(err) {
+				t.Errorf("New error does not reach the expected cause; error: %v", err)
+			}
+		})
+	}
+}
+
+// configCauses returns the non-nil Cause of every *otelsetup.ConfigError
+// a joined error holds, in order.
+func configCauses(err error) []error {
+	var causes []error
+	for _, ce := range configErrors(err) {
+		if ce.Cause != nil {
+			causes = append(causes, ce.Cause)
+		}
+	}
+
+	return causes
+}
+
+// configFields returns the Field of every *otelsetup.ConfigError a joined
+// error holds, in order.
+func configFields(err error) []string {
+	ces := configErrors(err)
+	fields := make([]string, 0, len(ces))
+	for _, ce := range ces {
+		fields = append(fields, ce.Field)
+	}
+
+	return fields
+}
+
+// configErrors returns every *otelsetup.ConfigError a joined error holds,
+// in order.
+func configErrors(err error) []*otelsetup.ConfigError {
+	// A *ConfigError also has Unwrap() []error (ErrConfig and its cause), so
+	// it is matched before the join it may sit in.
+	if ce, ok := err.(*otelsetup.ConfigError); ok { //nolint:errorlint // only this error, not one it wraps
+		return []*otelsetup.ConfigError{ce}
+	}
+
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var all []*otelsetup.ConfigError
+		for _, e := range joined.Unwrap() {
+			all = append(all, configErrors(e)...)
+		}
+
+		return all
+	}
+
+	if ce, ok := errors.AsType[*otelsetup.ConfigError](err); ok {
+		return []*otelsetup.ConfigError{ce}
+	}
+
+	return nil
 }

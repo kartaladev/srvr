@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,7 +29,8 @@ func TestNew_Config(t *testing.T) {
 	tests := []struct {
 		name    string
 		opts    []srvr.Option
-		message string // empty: a server is returned
+		message string   // empty: a server is returned
+		fields  []string // every field one joined error names, read with errors.As
 	}{
 		// accepted
 		{name: "none"},
@@ -59,6 +61,28 @@ func TestNew_Config(t *testing.T) {
 		{name: "nil option", opts: []srvr.Option{nil}, message: "Option"},
 		{name: "WithLogger zero Logger", opts: []srvr.Option{srvr.WithLogger(&slog.Logger{})}, message: "Logger"},
 		{name: "WithLogger typed-nil handler", opts: []srvr.Option{srvr.WithLogger(slog.New((*slog.JSONHandler)(nil)))}, message: "Logger"},
+		{
+			name:    "Level and MaxHeaderBytes joined",
+			opts:    []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "loud"}), srvr.WithMaxHeaderBytes(-1)},
+			message: "Level", fields: []string{"Level", "MaxHeaderBytes"},
+		},
+		{
+			name:    "Format and ShutdownTimeout joined",
+			opts:    []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Format: "xml"}), srvr.WithConfig(srvr.Config{ShutdownTimeout: -time.Second})},
+			message: "Format", fields: []string{"Format", "ShutdownTimeout"},
+		},
+		{
+			name: "WithLogHandler with Level and Output joined",
+			opts: []srvr.Option{
+				srvr.WithLogHandler(slog.DiscardHandler), srvr.WithLogLevel(slog.LevelDebug), srvr.WithLogOutput(io.Discard),
+			},
+			message: "Level", fields: []string{"Level", "Output"},
+		},
+		{
+			name:    "Level and Format joined",
+			opts:    []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "loud", Format: "xml"})},
+			message: "Level", fields: []string{"Level", "Format"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -77,8 +101,35 @@ func TestNew_Config(t *testing.T) {
 			if srv != nil || !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), tt.message) {
 				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig naming %q", srv, err, tt.message)
 			}
+
+			got := configFields(err)
+			for _, field := range tt.fields {
+				if !slices.Contains(got, field) {
+					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
+				}
+			}
 		})
 	}
+}
+
+// configFields returns the Field of every *srvr.ConfigError a joined
+// construction error holds, in order.
+func configFields(err error) []string {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs := joined.Unwrap()
+		fields := make([]string, 0, len(errs))
+		for _, e := range errs {
+			fields = append(fields, configFields(e)...)
+		}
+
+		return fields
+	}
+
+	if ce, ok := errors.AsType[*srvr.ConfigError](err); ok {
+		return []string{ce.Field}
+	}
+
+	return nil
 }
 
 // TestBodyLimit covers error-responses / Scenario: Body limit.

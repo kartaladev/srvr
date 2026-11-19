@@ -11,10 +11,11 @@ context: |
   schema are commitments.
 
   Sibling libraries (same organisation, pre-1.0, consumed through their released modules):
-  - github.com/kartaladev/prblm renders errors as RFC 9457 problem details (core, ginprblm,
-    fiberprblm). srvr MUST use it for every error response. Each prblm adapter builds its own
+  - github.com/kartaladev/prblm renders errors as RFC 9457 problem details (core, adapters/ginprblm,
+    adapters/fiberprblm; v0.2.0). srvr MUST use it for every error response. Each prblm adapter builds its own
     handler from options, so srvr keeps one shared []prblm.Option per server. prblm never logs;
-    its OnError hook is where srvr logs and counts answered errors.
+    its error hooks are where srvr logs and counts answered errors (srvr adds its own with
+    AddErrorHook, so a consumer's OnError still runs).
   - github.com/kartaladev/scrty is the security library (httpsec chain, ginsec, fibersec). Its
     chain must run outside the router; it answers its own built-in endpoints and renders refusals
     as a bare status. srvr supports it through an opt-in bridge module.
