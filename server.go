@@ -193,14 +193,24 @@ func (s *Server) answerUnmatched(mux *http.ServeMux) http.Handler {
 
 		switch rec.status {
 		case http.StatusNotFound:
+			markRouterAnswered(r)
 			s.core.Problems().Write(w, r, prblm.ErrNotFound)
 		case http.StatusMethodNotAllowed:
+			markRouterAnswered(r)
 			allow := prblm.WithHeader("Allow", rec.header.Get("Allow"))
 			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, allow))
 		default:
 			rec.replay(w)
 		}
 	})
+}
+
+// markRouterAnswered marks r's request state as answered by the router,
+// for the unmatched-record limit.
+func markRouterAnswered(r *http.Request) {
+	if state, ok := engine.StateFrom(r.Context()); ok {
+		state.MarkRouterAnswered()
+	}
 }
 
 // fallbackRecorder records what ServeMux's fallback handler writes.

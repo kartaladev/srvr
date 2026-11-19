@@ -147,7 +147,8 @@ func assertSettings(e *gin.Engine) {
 
 // requestStage is srvr's outermost gin stage. Before the chain runs, so
 // that a request aborted with http.ErrAbortHandler keeps them, it records
-// the matched route and its handler's location in the request state; and
+// the matched route and its handler's location in the request state, or
+// that the router answers a request no route matched; and
 // it sorts the Allow header gin set for a 405 (in the order its method
 // trees were created), so the problem rendered inside carries it like
 // net/http.
@@ -157,6 +158,10 @@ func (s *Server) requestStage(c *gin.Context) {
 		if route := c.FullPath(); route != "" {
 			state.SetRoute(route)
 			state.SetLocation(s.locations[handlerKey(c.Handler())])
+		} else {
+			// Only srvr's stages run in gin's no-route and no-method
+			// chains, so the router answers this request.
+			state.MarkRouterAnswered()
 		}
 	}
 

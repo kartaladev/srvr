@@ -17,9 +17,10 @@ import (
 // a limit loosens a triage default. With a limit, the first Burst
 // unmatched records of every Interval are written and the rest are
 // counted; the count is added as srvr.unmatched.suppressed to the next
-// unmatched record written and to server.stopped. Handler errors, panics
-// and 5xx records are never limited, and observers still see every
-// request.
+// unmatched record written and to server.stopped. Only the router's own
+// answers count (see [RequestState.MarkRouterAnswered]): a 404 or 405
+// consumer code reported, handler errors, panics and 5xx records are never
+// limited, and observers still see every request.
 type UnmatchedLimitConfig struct {
 	// Burst is the number of unmatched records written per Interval. 0, the
 	// default, means no limit; a negative value fails construction.
@@ -122,8 +123,9 @@ func (l *unmatchedLimiter) report() int64 {
 
 // unmatched reports whether the failed record of the request, ending with
 // status, is the record of a request no route matched: a 404 or 405 the
-// router answered, not an aborted request, a panic or a rejection.
+// router answered (as its engine marked it), not an aborted request, a
+// panic, a rejection or an error consumer code reported.
 func (r *RequestState) unmatched(status int) bool {
-	return !r.Matched() && !r.aborted && r.Failed() && !r.Panicked() &&
+	return r.routerAnswered && !r.aborted && r.Failed() && !r.Panicked() &&
 		(status == http.StatusNotFound || status == http.StatusMethodNotAllowed)
 }

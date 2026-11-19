@@ -446,8 +446,11 @@ type AccessLogConfig struct {
 	// that embeds a device or account name.
 	OmitUserAgent bool `json:"omit_user_agent" yaml:"omit_user_agent" env:"OMIT_USER_AGENT"`
 	// UnmatchedLimit limits the http.request.failed records of requests no
-	// route matched. Default no limit; setting one loosens a triage
-	// default (see [UnmatchedLimitConfig]).
+	// route matched, counting only the 404s and 405s the router answered
+	// itself, never a 404 or 405 consumer code reported (on fiber, the
+	// router's answer is recognised by identity with fiber.ErrNotFound and
+	// fiber.ErrMethodNotAllowed). Default no limit; setting one loosens a
+	// triage default (see [UnmatchedLimitConfig]).
 	UnmatchedLimit UnmatchedLimitConfig `json:"unmatched_limit" yaml:"unmatched_limit" env:"UNMATCHED_LIMIT"`
 }
 

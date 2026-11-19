@@ -61,6 +61,10 @@ type RequestState struct {
 	location Location
 	// aborted is set when the request was aborted with http.ErrAbortHandler.
 	aborted bool
+	// routerAnswered is set by the engine's stage that saw the router
+	// itself answer the request with a 404 or 405 (see
+	// [RequestState.MarkRouterAnswered]).
+	routerAnswered bool
 	// failure is the error the request failed with, as srvr's prblm hook
 	// or the unmatched interception recorded it.
 	failure *failure
@@ -125,6 +129,13 @@ func (r *RequestState) MarkCommitted() {
 		r.failure.committed = true
 	}
 }
+
+// MarkRouterAnswered records that the router itself answered the request
+// because no route matched: net/http's unmatched interception, gin's no-route
+// chains, or fiber's router returning fiber.ErrNotFound or
+// fiber.ErrMethodNotAllowed. Only such a request counts towards the
+// unmatched-record limit; a 404 or 405 consumer code reported never does.
+func (r *RequestState) MarkRouterAnswered() { r.routerAnswered = true }
 
 // StateFrom returns the request state of ctx, and false outside srvr's
 // pipeline, including for a nil ctx.

@@ -251,8 +251,13 @@ func WithoutAccessLogUserAgent() Option {
 // the next such record written and on server.stopped
 // (AccessLogConfig.UnmatchedLimit). It loosens a triage default: by
 // default every failed record is written, so a path scanner controls the
-// log volume but nothing is lost. Handler errors, panics and 5xx records
-// are never limited, and observers still see every request. A burst of 0
+// log volume but nothing is lost. Only the router's own answers count: a
+// 404 or 405 that consumer code reports, such as fiber middleware returning
+// prblm.ErrNotFound for any path, is never limited, nor are handler errors,
+// panics and 5xx records, and observers still see every request. On fiber
+// the router's answer is recognised by identity with the values
+// fiber.ErrNotFound and fiber.ErrMethodNotAllowed, so middleware returning
+// one of those values itself is counted as the router. A burst of 0
 // means no limit; a negative burst, or a positive one with an interval not
 // above zero, fails construction.
 func WithUnmatchedRecordLimit(burst int, interval time.Duration) Option {

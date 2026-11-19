@@ -17,6 +17,12 @@ once tagged.
 - Construction (`srvr.New`, `ginsrvr.New`, `fibersrvr.New`) reports a rejected `WithProblemOptions`
   option in the same joined error as the other invalid fields; it was reported only when every other
   field was valid. `errors.As` finds a `*srvr.ConfigError` with `Field` `ProblemOptions` among them.
+- With `WithUnmatchedRecordLimit` (or `AccessLogConfig.UnmatchedLimit`), only the `404` and `405`
+  records the router answered are limited. On fiber, a `404` or `405` that consumer middleware
+  reported for a path no route matched (for example `prblm.ErrNotFound`, or a wrapped
+  `fiber.ErrNotFound`) was suppressed too; it is now always written. net/http and gin group
+  middleware never run for unmatched paths, so they were not affected. Each engine marks the router's
+  answer with the new `engine.RequestState.MarkRouterAnswered`.
 
 ## [v0.1.0] - 2026-11-19
 
