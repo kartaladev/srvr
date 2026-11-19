@@ -23,6 +23,7 @@ type result struct {
 	pkg, name         string
 	ns, bytes, allocs float64
 	allocsRuns        []float64 // per-run allocs/op, overriding allocs
+	bytesRuns         []float64 // per-run B/op, overriding bytes
 }
 
 // benchOutput renders results as `go test -bench . -benchmem -count=6`
@@ -39,12 +40,16 @@ func benchOutput(results ...result) string {
 		}
 
 		for i := range 6 {
-			allocs := r.allocs
+			allocs, bytes := r.allocs, r.bytes
 			if r.allocsRuns != nil {
 				allocs = r.allocsRuns[i]
 			}
 
-			fmt.Fprintf(&b, "%s-4   \t  500000\t      %g ns/op\t     %g B/op\t      %g allocs/op\n", r.name, r.ns, r.bytes, allocs)
+			if r.bytesRuns != nil {
+				bytes = r.bytesRuns[i]
+			}
+
+			fmt.Fprintf(&b, "%s-4   \t  500000\t      %g ns/op\t     %g B/op\t      %g allocs/op\n", r.name, r.ns, bytes, allocs)
 		}
 	}
 
@@ -84,7 +89,26 @@ func TestBenchmarkComparison(t *testing.T) {
 	pipeline := func(ns, bytes float64) result {
 		return result{pkg: corePkg, name: "BenchmarkPipeline/success", ns: ns, bytes: bytes, allocs: 19}
 	}
+	withAllocs := func(r result, allocs float64) result {
+		r.allocs = allocs
+
+		return r
+	}
 	other := result{pkg: enginePkg, name: "BenchmarkRedactSecrets/no_secret", ns: 6239, bytes: 112, allocs: 3}
+	parallel := func(ns, bytes float64) result {
+		return result{pkg: corePkg, name: "BenchmarkPipeline/success_parallel", ns: ns, bytes: bytes, allocs: 20}
+	}
+	// concurrent is the parallel benchmark of CI run 44486663813 attempt 1,
+	// under the name it had then, on identical code: on main its runs spread from 4 to 6 allocs/op
+	// (benchstat: 5.000 ± 20%) and 300 to 390 B/op (344.5 ± 13%).
+	concurrent := func(allocsRuns, bytesRuns []float64) result {
+		return result{
+			pkg: enginePkg, name: "BenchmarkLogHandler/root_logger_concurrent_requests", ns: 1036,
+			allocsRuns: allocsRuns, bytesRuns: bytesRuns,
+		}
+	}
+	noisyAllocs := []float64{4, 5, 5, 5, 6, 6}
+	noisyBytes := []float64{300, 330, 340, 349, 360, 390}
 
 	tests := []struct {
 		name         string
@@ -119,6 +143,36 @@ func TestBenchmarkComparison(t *testing.T) {
 			main: []result{pipeline(3613, 1333)}, branch: []result{pipeline(7000, 1333)},
 			wantCode: 0,
 			wantOut:  []string{"BenchmarkPipeline/success", "ns/op", "main 3613", "branch 7000", "not gated"},
+		},
+		{
+			name: "identical code with a noisy parallel benchmark passes, reported as not reproducible",
+			main: []result{concurrent(noisyAllocs, noisyBytes)},
+			branch: []result{concurrent(
+				[]float64{7, 7, 7, 7, 7, 7}, []float64{414, 416, 418, 418, 420, 422})},
+			wantCode: 0,
+			wantOut: []string{
+				"BenchmarkLogHandler/root_logger_concurrent_requests allocs/op", "main 5 (runs 4..6)", "branch 7 (runs 7..7)",
+				"BenchmarkLogHandler/root_logger_concurrent_requests B/op", "main 344.5 (runs 300..390)", "not reproducible",
+			},
+		},
+		{
+			name: "allocations up 21% in a serial benchmark fail",
+			main: []result{pipeline(3613, 1333)}, branch: []result{withAllocs(pipeline(3613, 1333), 23)},
+			wantCode: 1,
+			wantOut:  []string{"FAIL", "BenchmarkPipeline/success", "allocs/op", "main 19", "branch 23"},
+		},
+		{
+			name: "allocations up 15% in a reproducible parallel benchmark fail",
+			main: []result{parallel(1100, 1410)}, branch: []result{withAllocs(parallel(1100, 1410), 23)},
+			wantCode: 1,
+			wantOut:  []string{"FAIL", "BenchmarkPipeline/success_parallel", "allocs/op", "main 20", "branch 23"},
+		},
+		{
+			name:     "allocations doubled in a noisy parallel benchmark pass, reported as not reproducible",
+			main:     []result{concurrent(noisyAllocs, noisyBytes)},
+			branch:   []result{concurrent([]float64{10, 10, 10, 10, 10, 10}, noisyBytes)},
+			wantCode: 0,
+			wantOut:  []string{"BenchmarkLogHandler/root_logger_concurrent_requests allocs/op", "main 5 (runs 4..6)", "branch 10 (runs 10..10)", "not reproducible"},
 		},
 		{
 			name: "a benchmark the branch adds passes, reported as new",
@@ -157,13 +211,20 @@ func TestBenchmarkComparison(t *testing.T) {
 }
 
 // TestBenchmarkComparison_Faults covers what can go wrong around the
-// comparison: missing or empty inputs, noisy runs, zero baselines and one
-// benchmark name in two packages.
+// comparison: missing or empty inputs, noisy runs and the spread at which
+// runs stop being gated, zero baselines and one benchmark name in two
+// packages.
 func TestBenchmarkComparison_Faults(t *testing.T) {
 	t.Parallel()
 
 	one := func(pkg string, allocs float64) result {
 		return result{pkg: pkg, name: "BenchmarkPipeline/success", ns: 3613, bytes: 1333, allocs: allocs}
+	}
+	runs := func(allocs ...float64) string {
+		r := one(corePkg, 0)
+		r.allocsRuns = allocs
+
+		return benchOutput(r)
 	}
 	noBenchmarks := "goos: linux\ngoarch: amd64\npkg: " + corePkg + "\nPASS\nok  \t" + corePkg + "\t0.1s\n"
 
@@ -182,13 +243,36 @@ func TestBenchmarkComparison_Faults(t *testing.T) {
 			wantCode: 2, wantOut: []string{"branch.txt", "no benchmark results"},
 		},
 		{
-			name: "one noisy run of six does not fail",
-			main: benchOutput(one(corePkg, 19)),
-			branch: benchOutput(result{
-				pkg: corePkg, name: "BenchmarkPipeline/success", ns: 3613, bytes: 1333,
-				allocsRuns: []float64{19, 19, 19, 25, 19, 19},
-			}),
+			name:     "one noisy run of six does not fail",
+			main:     benchOutput(one(corePkg, 19)),
+			branch:   runs(19, 19, 19, 25, 19, 19),
 			wantCode: 0,
+		},
+		{
+			// a false failure costs more than one pull request not gating
+			// one unit: the outlier is not left out of the spread.
+			name:     "one outlier run of six on main reports the unit, not gated",
+			main:     runs(19, 19, 19, 19, 19, 25),
+			branch:   benchOutput(one(corePkg, 23)),
+			wantCode: 0, wantOut: []string{"noisy", "allocs/op", "main 19 (runs 19..25)", "branch 23 (runs 23..23)"},
+		},
+		{
+			name:     "runs spread exactly 10% are gated",
+			main:     runs(20, 20, 20, 22, 22, 22),
+			branch:   benchOutput(one(corePkg, 25)),
+			wantCode: 1, wantOut: []string{"FAIL", "allocs/op", "main 21", "branch 25"},
+		},
+		{
+			name:     "runs spread more than 10% are not gated",
+			main:     runs(20, 20, 20, 23, 23, 23),
+			branch:   benchOutput(one(corePkg, 25)),
+			wantCode: 0, wantOut: []string{"noisy", "allocs/op", "main 21.5 (runs 20..23)", "branch 25 (runs 25..25)", "not gated"},
+		},
+		{
+			name:     "runs spread up from zero are not gated",
+			main:     runs(0, 0, 0, 0, 0, 1),
+			branch:   benchOutput(one(corePkg, 2)),
+			wantCode: 0, wantOut: []string{"noisy", "allocs/op", "main 0 (runs 0..1)", "from zero", "not gated"},
 		},
 		{
 			name: "allocations from zero fail",
@@ -213,10 +297,11 @@ func TestBenchmarkComparison_Faults(t *testing.T) {
 		},
 		{
 			name: "an even number of runs compares the mean of the middle two",
-			main: "pkg: " + corePkg + "\nBenchmarkX-4 1 1 ns/op 10 B/op 10 allocs/op\nBenchmarkX-4 1 1 ns/op 10 B/op 12 allocs/op\n",
-			// median 11 on main: 12 is 9.1% above it and passes, 13 is 18.2%.
-			branch:   "pkg: " + corePkg + "\nBenchmarkX-4 1 1 ns/op 10 B/op 12 allocs/op\nBenchmarkX-4 1 1 ns/op 10 B/op 14 allocs/op\n",
-			wantCode: 1, wantOut: []string{"main 11", "branch 13"},
+			main: "pkg: " + corePkg + "\nBenchmarkX-4 1 1 ns/op 10 B/op 20 allocs/op\nBenchmarkX-4 1 1 ns/op 10 B/op 22 allocs/op\n",
+			// median 21 on main: 23 is 9.5% above it and passes, 25 is 19%.
+			// Each side's runs spread 10% or less, so both are gated.
+			branch:   "pkg: " + corePkg + "\nBenchmarkX-4 1 1 ns/op 10 B/op 24 allocs/op\nBenchmarkX-4 1 1 ns/op 10 B/op 26 allocs/op\n",
+			wantCode: 1, wantOut: []string{"main 21", "branch 25"},
 		},
 		{
 			name: "malformed result lines are ignored",

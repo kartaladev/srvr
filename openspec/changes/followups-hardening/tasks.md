@@ -88,7 +88,23 @@
 - [x] 7.7 Update `docs/PERFORMANCE.md` with the measured numbers and decisions; `CHANGELOG.md` "Changed" entries for applied items (performance only); verify the slice end to end: `make check` passes, `make cover` shows every applied hot-path change covered, `gopls` diagnostics clean
 - [x] 7.8 Run `/simplify`, apply what holds up, re-run the tests and benchmarks, then commit `perf: <applied items>` (for example `perf(engine): batch trace-id randomness`), or `test(bench): measure trace ids, debug buffer and access copies` when nothing was applied; verify with `git log -1 --stat`
 
+## 9. Slice: deterministic allocation gate (owner request 2026-11-19, during release)
+
+Placed before group 8 because it runs between 8.3 and 8.4: the owner held the module tags until this lands ("fix the gate first, then finish the release"). Design D10.
+
+- [x] 9.1 Root cause first (rule 2): reproduce the allocation variance of `BenchmarkLogHandler/root_logger_concurrent_requests` that failed pull request #14 (run 44486663813 attempt 1) with a scripted repeated run (`-count=10 -cpu=1,2,4,8 -benchtime=200ms`), and measure the `allocs/op` and `B/op` spread of every gated benchmark over 20 runs of `make bench` at `-cpu=4`; verify the evidence and the list of affected benchmarks are in `notes.md`
+- [x] 9.2 The gate gates only reproducible units (test-quality / Scenario: Benchmark comparison in CI, the four new rows); verify `go test -race ./internal/benchgate` passes
+  - RED: the four rows in `TestBenchmarkComparison` (`internal/benchgate/main_test.go`), the recorded run as fixture; record the failing output (expected: `FAIL ... allocs/op: main 5, branch 7 (+40.0%)` and `FAIL ... B/op: main 344.5, branch 418 (+21.3%)`)
+  - GREEN: design D10 (c): a rise of a unit whose runs on either side spread more than 10% is reported as `noisy`, not failed
+  - REFACTOR: boundary rows (spread exactly 10% gated, one past not, spread up from zero, one outlier run of six) in `TestBenchmarkComparison_Faults`; the even-runs row moved to runs within 10%
+- [x] 9.3 The concurrent log benchmark is deterministic (design D10 (b)): `root logger interleaved requests` alternates two requests per goroutine; verify one `allocs/op` and one `B/op` value over `-count=10 -cpu=1,2,4,8` and over the 18 runs of the three `make bench` runs of 9.5
+- [x] 9.4 The gate step of the CI `bench` job also appends its report to the job summary, so a noisy unit is seen (review finding); `docs/PERFORMANCE.md` "The CI benchmark job" says what the gate checks and what it no longer catches; verify `actionlint` reports nothing and the doc matches D10
+- [x] 9.5 Verify the slice end to end: `make check` passes; gopls diagnostics clean on every changed file; the gate simulated locally on two `make bench` runs of identical code at least three times passes; `openspec validate followups-hardening --strict` passes
+- [x] 9.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `fix(ci): stop the allocation gate failing on scheduling noise`; verify with `git log -1 --stat`
+
 ## 8. Slice: release
+
+Tasks 8.4 and later resume after group 9 lands on `main`.
 
 - [x] 8.1 Precondition: this change is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
 - [x] 8.2 Prepare: move the `CHANGELOG.md` `## [Unreleased]` entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
