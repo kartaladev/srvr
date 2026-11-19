@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/kartaladev/prblm v0.2.1
-	github.com/kartaladev/srvr v0.1.0
+	github.com/kartaladev/srvr v0.2.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
@@ -23,7 +23,3 @@ require (
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
-
-// Development builds use the modules in this repository; RELEASING.md drops
-// these lines in the commit that is tagged.
-replace github.com/kartaladev/srvr => ../
