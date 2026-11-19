@@ -179,3 +179,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   The guard tests passed with each prototype: `go test -race -count=5 -run 'TestUnmatchedLimit|TestAccessLog_OmitUserAgent|TestFiberAccessSuppressed|TestAccessSuppressed' ./...` in `internal/paritytest`, `fibersrvr` and `engine`.
 - **Evidence:** the table above; prototypes reverted.
 - **Suggested action:** none. Closes the archived `triage-debug-buffer` entry "Fiber copies access values of records the unmatched limit suppresses" as measured and not worth applying.
+
+### Release decision (task 8.3, 2026-11-19)
+- **Status:** closed: owner confirmed
+- **Target:** followups-hardening
+- **Context:** presented version `v0.2.0` (visible behaviour changes: joined `ProblemOptions` error, router-only unmatched limit on fiber, `ConfigError.Cause` set), the changelog section (Changed 4, Fixed 2) and the 8.2 dry-run results, and asked to confirm the version and pushing the tags `v0.2.0`, `ginsrvr/v0.2.0`, `fibersrvr/v0.2.0`, `otelsrvr/v0.2.0`, `otelsetup/v0.2.0` in RELEASING.md order; the owner replied "continue". The changelog lands through a pull request from `release/prepare-next`.
+- **Evidence:** 8.2 dry run in a scratch clone with a local file proxy: `make check` and `make cover` pass on `main` at `6822e59`; the release guard and every RELEASING.md step pass for the simulated v0.2.0; a scratch consumer built against all five modules.
+- **Suggested action:** none.
