@@ -208,6 +208,12 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 
 	msg, level := outcome(status, aborted, fail)
 	written := !c.accessSuppressed(msg, info.Path, status) && c.log.baseEnabled(ctx, level)
+
+	var unreported int64
+	if written && req.unmatched(status) {
+		written, unreported = c.unmatched.admit()
+	}
+
 	summary := c.flushBuffer(req, status, written)
 
 	if !written {
@@ -230,7 +236,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 		slog.Float64(keyDuration, millis(info.Duration)),
 	)
 
-	if info.UserAgent != "" {
+	if info.UserAgent != "" && !c.settings.Access.OmitUserAgent {
 		record.AddAttrs(slog.String(keyUserAgent, info.UserAgent))
 	}
 
@@ -242,6 +248,10 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 	case fail != nil:
 		addFailure(&record, fail)
 		record.AddAttrs(c.triageAttrs(info.Method, req, fail)...)
+	}
+
+	if unreported > 0 {
+		record.AddAttrs(slog.Int64(keyUnmatchedSuppressed, unreported))
 	}
 
 	record.AddAttrs(summary...)
@@ -412,7 +422,8 @@ func (c *Core) addOptIns(record *slog.Record, info AccessInfo) {
 // Suppression (Disabled, SkipPaths) applies only to http.request.completed
 // records with a status below 500: http.request.failed records (a returned
 // error, a recovered panic, an aborted or unmatched request) are the triage
-// record and are always written, whatever their status. The
+// record and are always written, whatever their status, except that an
+// opt-in UnmatchedLimit may limit those of requests no route matched. The
 // Include fields each loosen a privacy default: by default the access
 // record holds the route pattern but not the path, the query string or the
 // client address, which may carry personal data or credentials.
@@ -429,6 +440,15 @@ type AccessLogConfig struct {
 	IncludeQuery bool `json:"include_query" yaml:"include_query" env:"INCLUDE_QUERY"`
 	// IncludeClientAddress adds the client's IP address as client.address.
 	IncludeClientAddress bool `json:"include_client_address" yaml:"include_client_address" env:"INCLUDE_CLIENT_ADDRESS"`
+	// OmitUserAgent leaves user_agent.original out of access records.
+	// Default false: the user agent tells clients and scanners apart in
+	// triage; omit it when it may identify a person, such as an app build
+	// that embeds a device or account name.
+	OmitUserAgent bool `json:"omit_user_agent" yaml:"omit_user_agent" env:"OMIT_USER_AGENT"`
+	// UnmatchedLimit limits the http.request.failed records of requests no
+	// route matched. Default no limit; setting one loosens a triage
+	// default (see [UnmatchedLimitConfig]).
+	UnmatchedLimit UnmatchedLimitConfig `json:"unmatched_limit" yaml:"unmatched_limit" env:"UNMATCHED_LIMIT"`
 }
 
 // suppressed reports whether the http.request.completed record of a

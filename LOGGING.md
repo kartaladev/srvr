@@ -32,7 +32,7 @@ arrived after the response started takes the higher of the levels of the status 
 status the error would have been answered with, so a late 5xx error is `ERROR` and a late 4xx error is
 `WARN` after a 2xx and `ERROR` after a 5xx. `AccessLogConfig`
 (`Disabled`, `SkipPaths`) suppresses only `http.request.completed` records below 500; an
-`http.request.failed` record is never suppressed.
+`http.request.failed` record is never suppressed, except by the opt-in unmatched-record limit below.
 
 A handler error matching `context.Canceled` returned after the client went away (the request context
 is cancelled) is answered `499` "Client Closed Request" instead of `500`, so its record is
@@ -48,10 +48,11 @@ fiber a disconnect is not detected, so it stays `500`.
 | `http.response.status_code` | number | final status sent (`200` when the handler wrote none, even after a `1xx`); absent for an aborted request that sent no final status |
 | `http.response.body.size` | number | body bytes written |
 | `duration_ms` | number | handling time in milliseconds |
-| `user_agent.original` | string | `User-Agent`, when sent |
+| `user_agent.original` | string | `User-Agent`, when sent; never with `AccessLogConfig.OmitUserAgent` |
 | `url.path` | string | only with `AccessLogConfig.IncludePath` |
 | `url.query` | string | only with `AccessLogConfig.IncludeQuery` |
 | `client.address` | string | only with `AccessLogConfig.IncludeClientAddress` |
+| `srvr.unmatched.suppressed` | number | only with an unmatched-record limit: the unmatched records suppressed since the last one written, on the first one written after them |
 | `problem` (`status`, `type`, `title`) | group | the problem sent to the client (failed records) |
 | `srvr.response.committed` | bool | the response had started when the error arrived, so no problem was sent |
 | `srvr.response.aborted` | bool | the handler panicked with `http.ErrAbortHandler` |
@@ -66,6 +67,19 @@ fiber a disconnect is not detected, so it stays `500`.
 | `srvr.stacktrace.truncated` | bool | the stack was cut |
 | `code.function.name` | string | the route handler's function (method values without `-fm`; mounted handlers as `<type>.ServeHTTP`) |
 | `code.file.path`, `code.line.number` | string, number | its location, omitted when the runtime cannot tell (method-value wrappers) |
+
+### Unmatched-record limit
+
+Every request no route matched (`404` or `405` answered by the router) writes an
+`http.request.failed` record, so a path scanner controls the log volume. `WithUnmatchedRecordLimit(burst,
+interval)` (or `AccessLogConfig.UnmatchedLimit{Burst, Interval}`) writes at most `burst` of these
+records per `interval` per server and counts the rest; the count goes, as `srvr.unmatched.suppressed`,
+on the first unmatched record written in a later window, and what is left on `server.stopped`. Off by
+default (`Burst` `0`): failed records are the triage record, so a limit loosens a triage default and
+is the consumer's explicit choice. Handler errors, panics, `5xx` and `http.request.completed` records
+are never limited; observers (`otelsrvr` metrics and spans) still see every request; a suppressed
+record discards the request's debug buffer. A negative `Burst`, or a positive one with `Interval` not
+above zero, fails construction. Adding `srvr.unmatched.suppressed` kept `srvr.log.schema` at 1.
 
 Never logged at any level: request or response bodies, `Authorization`, `Cookie`, `Set-Cookie`, the
 query string, the raw path and the client address, unless the named opt-in above is set. Error text
@@ -136,7 +150,7 @@ checkpoint, then returned an error):
 |-------|-------|------|
 | `server.started` | INFO | `server.address` |
 | `server.stopping` | INFO | (common keys) |
-| `server.stopped` | INFO, or WARN when the drain deadline passed | `srvr.drain.duration_ms`, `srvr.drain.forced` |
+| `server.stopped` | INFO, or WARN when the drain deadline passed | `srvr.drain.duration_ms`, `srvr.drain.forced`, `srvr.unmatched.suppressed` (unmatched records suppressed and not yet reported, with an unmatched-record limit) |
 | `server.failed` | ERROR, when `Start` fails: before serving (binding, configuration, a done context) or because serving failed on its own (for example a `WithListener` listener whose `Accept` panics) | `exception.message` |
 | `server.shutdown_hook.failed` | WARN | `srvr.shutdown_hook.phase`, `srvr.shutdown_hook.index`, `code.function.name`, `exception.message` |
 | `server.config.warning` | WARN, once per server, for a configuration that works but is likely unintended: at construction for engine settings, at `Start` for route-dependent ones; it never fails either | `srvr.warning.code` (stable snake_case: `gin_debug_mode`, `fiber_header_limit_capped`), `srvr.warning.message` |
@@ -171,8 +185,9 @@ It carries `srvr.log.schema` 1; adding it kept the version.
 
 - `user_agent.original` is on every access record of a request that sent `User-Agent`. It is how
   triage tells a browser, a mobile app version or a crawler apart, and srvr cuts it to `MaxAttrBytes` like any value. Some mobile SDKs put
-  device identifiers in it; if that counts as personal data for you, drop the key in your own
-  `slog.Handler` (srvr has no option to omit it yet).
+  device identifiers in it; if that counts as personal data for you, omit it with
+  `WithoutAccessLogUserAgent()` (or `AccessLogConfig.OmitUserAgent`). It is kept by default because
+  it is the cheapest way to tell clients and scanners apart in triage.
 - Paths, query strings, client addresses, headers, cookies and bodies are not logged unless an
   explicitly named option turns them on (`WithAccessLogIncludePath`, `WithAccessLogIncludeQuery`,
   `WithAccessLogIncludeClientAddress`).

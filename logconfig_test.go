@@ -13,8 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/engine"
 )
 
 // logBoth registers GET /log writing a DEBUG and an INFO record through
@@ -666,6 +668,69 @@ func TestLogSchemaGolden_DebugBuffer(t *testing.T) {
 	}
 }
 
+// goldenUnmatchedKeys pins the record of an unmatched request that
+// reports suppressed records; srvr.unmatched.suppressed is additive
+// (srvr.log.schema unchanged), also on server.stopped.
+var goldenUnmatchedKeys = []string{
+	"duration_ms", "error.chain", "error.fingerprint", "error.type", "exception.message", "http.request.method",
+	"http.response.body.size", "http.response.status_code", "level", "msg", "problem.status", "problem.title",
+	"problem.type", "service.name", "service.version", "span_id", "srvr.log.schema", "srvr.unmatched.suppressed",
+	"time", "trace_id", "user_agent.original",
+}
+
+// TestLogSchemaGolden_UnmatchedLimit pins the keys a server with an
+// unmatched-record limit writes: the record reporting suppressed records
+// and server.stopped reporting the rest.
+func TestLogSchemaGolden_UnmatchedLimit(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu  sync.Mutex
+		now = time.Unix(0, 0)
+	)
+	clock := func(s *engine.Settings) {
+		s.Now = func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+
+			return now
+		}
+	}
+
+	out := &logBuffer{}
+	srv := newServer(t, srvr.WithLogOutput(out), srvr.WithServiceVersion("1.4.2"),
+		srvr.WithUnmatchedRecordLimit(1, time.Minute), clock)
+	base := startServer(t, srv)
+
+	for _, path := range []string{"/nope-1", "/nope-2"} {
+		get(t, base+path)
+	}
+
+	mu.Lock()
+	now = now.Add(time.Minute)
+	mu.Unlock()
+
+	for _, path := range []string{"/nope-3", "/nope-4"} {
+		get(t, base+path)
+	}
+
+	mustNil(t, srv.Shutdown(t.Context()))
+
+	failed := out.find(t, "http.request.failed")
+	if len(failed) != 2 {
+		t.Fatalf("%d failed records, want 2:\n%s", len(failed), out.String())
+	}
+
+	if got := flatKeys(failed[1], ""); !slices.Equal(got, goldenUnmatchedKeys) {
+		t.Errorf("unmatched keys = %v\nwant %v", got, goldenUnmatchedKeys)
+	}
+
+	stopped := out.find(t, "server.stopped")
+	if len(stopped) != 1 || stopped[0]["srvr.unmatched.suppressed"] != float64(1) || stopped[0]["srvr.log.schema"] != float64(goldenSchemaVersion) {
+		t.Errorf("server.stopped = %v, want srvr.unmatched.suppressed 1 and schema %d", stopped, goldenSchemaVersion)
+	}
+}
+
 // TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
 func TestLogSchemaDocumented(t *testing.T) {
 	t.Parallel()
@@ -674,7 +739,7 @@ func TestLogSchemaDocumented(t *testing.T) {
 	mustNil(t, err)
 
 	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"},
-		goldenFlushedKeys, goldenBufferSummaryKeys)
+		goldenFlushedKeys, goldenBufferSummaryKeys, goldenUnmatchedKeys)
 	for event, k := range goldenKeys {
 		keys = append(keys, event)
 		keys = append(keys, k...)

@@ -135,16 +135,16 @@
 
 ## 9. Slice: access-log controls (carried from skills-compliance)
 
-- [ ] 9.1 Unmatched-record limit (structured-logging / Scenario: Limiting unmatched failed records, all rows; Scenario: Failures while the access log is suppressed, new rows); verify `go test -race -count=10 -run 'TestUnmatchedLimit|TestFailedRecords'` passes on every engine
+- [x] 9.1 Unmatched-record limit (structured-logging / Scenario: Limiting unmatched failed records, all rows; Scenario: Failures while the access log is suppressed, new rows); verify `go test -race -count=10 -run 'TestUnmatchedLimit|TestFailedRecords'` passes on every engine
   - RED: tables over both Examples blocks on net/http, gin and fiber (fake clock for the window rows, 50 concurrent clients, `Shutdown` rows, the `otelsrvr` metrics row); add `WithUnmatchedRecordLimit` as a no-op first so RED is a wrong count, not a compile error
   - GREEN: `UnmatchedLimitConfig`, option and validation; a per-server fixed-window limiter in atomics (design D7) consulted by `writeAccess` for unmatched records only; `srvr.unmatched.suppressed` on the next written record and on `server.stopped`; a suppressed record discards the debug buffer
   - REFACTOR: Extract Class for the limiter; /simplify
-- [ ] 9.2 User-agent omission (structured-logging / Scenario: Omitting the user agent, all rows); verify `go test -race -run TestAccessLog_OmitUserAgent` passes on every engine
+- [x] 9.2 User-agent omission (structured-logging / Scenario: Omitting the user agent, all rows); verify `go test -race -run TestAccessLog_OmitUserAgent` passes on every engine
   - RED: table; fails because `user_agent.original` is always written (no-op option first)
   - GREEN: `AccessLogConfig.OmitUserAgent` and `WithoutAccessLogUserAgent()`
   - REFACTOR: /simplify
-- [ ] 9.3 Add `srvr.unmatched.suppressed` to the central log-key file, the golden-record test and `LOGGING.md` without bumping `srvr.log.schema`; document both options with their defaults and reasons in godoc and `LOGGING.md`, the limit named as a loosening; `CHANGELOG.md` entries; verify `go test -run 'TestLogSchemaGolden|Example'` passes
-- [ ] 9.4 Verify the slice on all three engines, confirm the limiter's admit, rollover and report branches in `go tool cover -func`, run `make check`, gopls diagnostics, run /simplify on the slice and commit `feat(core): rate limit unmatched failed records and omit the user agent on request`
+- [x] 9.3 Add `srvr.unmatched.suppressed` to the central log-key file, the golden-record test and `LOGGING.md` without bumping `srvr.log.schema`; document both options with their defaults and reasons in godoc and `LOGGING.md`, the limit named as a loosening; `CHANGELOG.md` entries; verify `go test -run 'TestLogSchemaGolden|Example'` passes
+- [x] 9.4 Verify the slice on all three engines, confirm the limiter's admit, rollover and report branches in `go tool cover -func`, run `make check`, gopls diagnostics, run /simplify on the slice and commit `feat(core): rate limit unmatched failed records and omit the user agent on request`
 
 ## 10. Slice: API and robustness (carried from skills-compliance)
 

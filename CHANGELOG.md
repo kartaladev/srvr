@@ -24,6 +24,15 @@ once tagged.
   `WithRouteCheck` takes `srvr.RouteCheck` (the same type).
 - `engine.Core.AccessSuppressed`, for an engine to skip copying what only a suppressed access
   record reports.
+- `srvr.WithUnmatchedRecordLimit(burst, interval)` / `AccessLogConfig.UnmatchedLimit`
+  (`srvr.UnmatchedLimitConfig{Burst, Interval}`), off by default and a named loosening: at most
+  `burst` `http.request.failed` records of requests no route matched (404/405) per `interval` per
+  server; the rest are counted and reported as `srvr.unmatched.suppressed` on the next such record
+  written and on `server.stopped`. Handler errors, panics and 5xx records are never limited and
+  observers see every request. A negative `Burst`, or a positive one without a positive `Interval`,
+  fails construction. Additive key: `srvr.log.schema` stays `1`.
+- `srvr.WithoutAccessLogUserAgent()` / `AccessLogConfig.OmitUserAgent` leave `user_agent.original`
+  out of access records; it is still written by default.
 - Benchmarks for every hot path, `make bench` and `make profile` (results under the ignored
   `bench/`), `docs/PERFORMANCE.md`, and a CI job that fails a pull request whose benchmarks
   allocate more than 10% more (`allocs/op` or `B/op`) than `main`; timings are reported only.

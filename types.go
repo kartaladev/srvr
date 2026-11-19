@@ -46,6 +46,10 @@ type (
 	// request; see [engine.AccessLogConfig]. Pass it with
 	// [WithAccessLogConfig].
 	AccessLogConfig = engine.AccessLogConfig
+	// UnmatchedLimitConfig limits the failed records of requests no route
+	// matched; see [engine.UnmatchedLimitConfig]. Set it as
+	// AccessLogConfig.UnmatchedLimit or with [WithUnmatchedRecordLimit].
+	UnmatchedLimitConfig = engine.UnmatchedLimitConfig
 	// TraceConfig configures trace context handling; see
 	// [engine.TraceConfig]. Pass it with [WithTraceConfig].
 	TraceConfig = engine.TraceConfig

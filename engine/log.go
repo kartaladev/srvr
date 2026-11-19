@@ -540,6 +540,9 @@ const (
 	keyProblemStatus   = "status"
 	keyProblemType     = "type"
 	keyProblemTitle    = "title"
+
+	// keyUnmatchedSuppressed is additive (srvr.log.schema unchanged).
+	keyUnmatchedSuppressed = "srvr.unmatched.suppressed"
 )
 
 // WarningCode is the srvr.warning.code of a server.config.warning record:

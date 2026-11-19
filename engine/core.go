@@ -29,6 +29,9 @@ type Core struct {
 	serviceAttrs []slog.Attr
 	// observers are the server's observers, guarded.
 	observers []*guardedObserver
+	// unmatched limits the failed records of unmatched requests; nil
+	// without a limit.
+	unmatched *unmatchedLimiter
 }
 
 // ResolveConfig applies opts in argument order, fills the defaults and
@@ -41,7 +44,10 @@ func ResolveConfig(opts []Option) (*Core, error) {
 		return nil, err
 	}
 
-	c := &Core{settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers)}
+	c := &Core{
+		settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers),
+		unmatched: newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now),
+	}
 
 	if c.log, err = newLogHandler(&c.settings.Log); err != nil {
 		return nil, err

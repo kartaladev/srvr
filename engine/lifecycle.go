@@ -527,7 +527,9 @@ func closeListener(ln net.Listener) {
 }
 
 // logStopped writes server.stopped: INFO, or WARN with srvr.drain.forced
-// when the drain deadline passed and connections were closed.
+// when the drain deadline passed and connections were closed, with
+// srvr.unmatched.suppressed when unmatched records were suppressed since
+// the last one written.
 func (c *Core) logStopped(ctx context.Context, d time.Duration, drainErr error) {
 	attrs := []slog.Attr{slog.Float64(keyDrainDuration, millis(d))}
 	level := slog.LevelInfo
@@ -535,6 +537,10 @@ func (c *Core) logStopped(ctx context.Context, d time.Duration, drainErr error) 
 	if drainErr != nil {
 		level = slog.LevelWarn
 		attrs = append(attrs, slog.Bool(keyDrainForced, true))
+	}
+
+	if n := c.unmatched.report(); n > 0 {
+		attrs = append(attrs, slog.Int64(keyUnmatchedSuppressed, n))
 	}
 
 	c.logEvent(ctx, level, eventStopped, attrs...)

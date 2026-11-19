@@ -348,16 +348,24 @@ func (b *logBuffer) access(t *testing.T) []map[string]any {
 func (b *logBuffer) accessWithin(t *testing.T, wait time.Duration) []map[string]any {
 	t.Helper()
 
+	return b.recordsWithin(t, wait, 1, func(msg string) bool { return strings.HasPrefix(msg, "http.request.") })
+}
+
+// recordsWithin returns the records whose message keep accepts, waiting
+// up to wait for want of them.
+func (b *logBuffer) recordsWithin(t *testing.T, wait time.Duration, want int, keep func(msg string) bool) []map[string]any {
+	t.Helper()
+
 	for deadline := time.Now().Add(wait); ; time.Sleep(5 * time.Millisecond) {
 		var out []map[string]any
 
 		for _, m := range b.parse(t) {
-			if msg, _ := m["msg"].(string); strings.HasPrefix(msg, "http.request.") {
+			if msg, _ := m["msg"].(string); keep(msg) {
 				out = append(out, m)
 			}
 		}
 
-		if len(out) > 0 || time.Now().After(deadline) {
+		if len(out) >= want || time.Now().After(deadline) {
 			return out
 		}
 	}

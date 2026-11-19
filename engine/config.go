@@ -89,6 +89,10 @@ type Settings struct {
 	// ReadBuild reads the binary's build information: debug.ReadBuildInfo,
 	// replaced in tests.
 	ReadBuild func() (*debug.BuildInfo, bool)
+	// Now is the clock of the unmatched-record limit, its only reader:
+	// time.Now, whose monotonic reading ignores clock steps, replaced in
+	// tests.
+	Now func() time.Time
 	// ProblemOptions are the consumer's prblm options, applied to every
 	// engine's problem renderer before srvr's own.
 	ProblemOptions []prblm.Option
@@ -154,7 +158,7 @@ func Only(engineName, name string, value any) Option {
 
 // newSettings applies opts and validates the result.
 func newSettings(opts []Option) (Settings, error) {
-	s := Settings{ReadBuild: debug.ReadBuildInfo}
+	s := Settings{ReadBuild: debug.ReadBuildInfo, Now: time.Now}
 
 	for i, opt := range opts {
 		if opt == nil {
@@ -199,6 +203,7 @@ func (s *Settings) validate() []error {
 		validateMaxHeaderBytes,
 		validateObservers,
 		validateDebugBuffer,
+		validateUnmatchedLimit,
 	} {
 		if err := check(s); err != nil {
 			errs = append(errs, err)

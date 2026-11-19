@@ -238,6 +238,29 @@ func WithAccessLogIncludeClientAddress() Option {
 	return func(s *engine.Settings) { s.Access.IncludeClientAddress = true }
 }
 
+// WithoutAccessLogUserAgent leaves user_agent.original out of access
+// records (AccessLogConfig.OmitUserAgent). By default it is written: it
+// tells clients and scanners apart in triage.
+func WithoutAccessLogUserAgent() Option {
+	return func(s *engine.Settings) { s.Access.OmitUserAgent = true }
+}
+
+// WithUnmatchedRecordLimit writes at most burst http.request.failed records
+// of requests no route matched (404 and 405 answered by the router) per
+// interval and counts the rest, reported as srvr.unmatched.suppressed on
+// the next such record written and on server.stopped
+// (AccessLogConfig.UnmatchedLimit). It loosens a triage default: by
+// default every failed record is written, so a path scanner controls the
+// log volume but nothing is lost. Handler errors, panics and 5xx records
+// are never limited, and observers still see every request. A burst of 0
+// means no limit; a negative burst, or a positive one with an interval not
+// above zero, fails construction.
+func WithUnmatchedRecordLimit(burst int, interval time.Duration) Option {
+	return func(s *engine.Settings) {
+		s.Access.UnmatchedLimit = engine.UnmatchedLimitConfig{Burst: burst, Interval: interval}
+	}
+}
+
 // WithLogConfig sets every field of [LogConfig], replacing what any
 // earlier log option set, LogConfig.DebugBuffer included: a
 // [WithDebugBuffer] or [WithDebugBufferConfig] before it has no effect.
