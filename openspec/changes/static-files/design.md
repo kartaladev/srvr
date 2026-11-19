@@ -113,6 +113,8 @@ The fallback answers a miss when all hold: method `GET` or `HEAD`; `Accept` list
 
 **Alternatives:** `*/*` counts (API typos get HTML); unconditional (assets get HTML); configurable exclusions now (postponed, notes.md).
 
+The fallback is opened first and its type read from the open file (one name lookup fewer per navigation than `Stat` then `Open`; its name is the consumer's, checked at `Start`, never the request's), on every request, so a fallback deleted or replaced after `Start` is seen at once (/simplify of slice 3).
+
 **Failure modes:** a route segment with a dot (`/users/john.doe`) gets `404` (documented limitation, row pinned). A fallback deleted after `Start` gives `404` and a fallback that cannot be opened gives `500` ("fallback after Start" rows); neither crashes.
 
 ### D8. Caching headers are set only once a file is served

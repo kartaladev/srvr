@@ -49,25 +49,25 @@
 
 ## 3. Slice: SPA fallback and caching headers on net/http
 
-- [ ] 3.1 Fallback and cache settings are validated (static-files / Scenario: Rejected static configuration, the `SPAFallback`, `CacheControl` and `IndexCacheControl` rows; Scenario: Several invalid settings, the full row); verify `go test -race -run 'TestNewStatic_Config|TestStatic_ConfigErrors' ./engine .` passes
+- [x] 3.1 Fallback and cache settings are validated (static-files / Scenario: Rejected static configuration, the `SPAFallback`, `CacheControl` and `IndexCacheControl` rows; Scenario: Several invalid settings, the full row); verify `go test -race -run 'TestNewStatic_Config|TestStatic_ConfigErrors' ./engine .` passes
   - RED: add the rows; the panicking and `fs.ErrPermission` `Open` rows use a fake `fs.FS`; expected failure: options undefined, then no error for a missing fallback
   - GREEN: `WithSPAFallback`, `WithStaticCacheControl`, `WithStaticIndexCacheControl`; header-value validation; the fallback `fs.Stat` under recover (design D9)
   - REFACTOR: share the header-value check between both cache fields (Extract Function); then `/simplify`
-- [ ] 3.2 The navigation rule (static-files / Scenario: Fallback decision, every row; decision level); verify `go test -race -run TestStatic_Resolve ./engine` passes
+- [x] 3.2 The navigation rule (static-files / Scenario: Fallback decision, every row; decision level); verify `go test -race -run TestStatic_Resolve ./engine` passes
   - RED: add the fallback rows to `TestStatic_Resolve`, plus `TestAcceptsHTML` unit rows for media-range parsing (case, `q=0`, `q=0.1`, `*/*`, `text/*`, empty, malformed `;q=x`)
   - GREEN: design D7 in step 5 of D3, with `Vary: Accept`
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.3 Cache headers on files, index files and the fallback (static-files / Scenario: Cache headers, every row; Scenario: Configuration sources, remaining rows; net/http); verify `go test -race -run 'TestStatic_CacheHeaders|TestStatic_ConfigSources' .` passes
+- [x] 3.3 Cache headers on files, index files and the fallback (static-files / Scenario: Cache headers, every row; Scenario: Configuration sources, remaining rows; net/http); verify `go test -race -run 'TestStatic_CacheHeaders|TestStatic_ConfigSources' .` passes
   - RED: the rows, including the `404` rows asserting `Cache-Control: no-store` (prblm's) and the `304` row
   - GREEN: design D8: set `Cache-Control` only after the file opened, before `ServeContent`
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.4 Fallback over HTTP (static-files / Scenarios: Fallback decision, Fallback under a prefix, Precedence (fallback rows); net/http rows, including the deleted, replaced and unreadable fallback after `Start`); verify `go test -race -run 'TestStatic_Fallback|TestStatic_Precedence' .` passes
+- [x] 3.4 Fallback over HTTP (static-files / Scenarios: Fallback decision, Fallback under a prefix, Precedence (fallback rows); net/http rows, including the deleted, replaced and unreadable fallback after `Start`); verify `go test -race -run 'TestStatic_Fallback|TestStatic_Precedence' .` passes
   - RED: the rows; expected failure before GREEN: `404` problems where `200` is expected
   - GREEN: none beyond 3.2 and 3.3 expected; fix only what a row proves
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.5 Documentation: godoc of the three options (the navigation rule, why `*/*` does not count, the dot rule, `Vary: Accept`, the `no-cache` default and why), `ExampleWithSPAFallback`, the README section's SPA part, `CHANGELOG.md` entry; verify `go test -run Example .` passes
-- [ ] 3.6 Verify the slice end to end: `make check MODULES=". internal/paritytest"` passes; `go tool cover -func` shows the fallback, header and validation branches covered; `gopls` diagnostics clean
-- [ ] 3.7 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): add the SPA fallback and static caching headers`; verify with `git log -1 --stat`
+- [x] 3.5 Documentation: godoc of the three options (the navigation rule, why `*/*` does not count, the dot rule, `Vary: Accept`, the `no-cache` default and why), `ExampleWithSPAFallback`, the README section's SPA part, `CHANGELOG.md` entry; verify `go test -run Example .` passes
+- [x] 3.6 Verify the slice end to end: `make check MODULES=". internal/paritytest"` passes; `go tool cover -func` shows the fallback, header and validation branches covered; `gopls` diagnostics clean
+- [x] 3.7 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): add the SPA fallback and static caching headers`; verify with `git log -1 --stat`
 
 ## 4. Slice: gin serves static files from its no-route chain
 

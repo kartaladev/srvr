@@ -102,6 +102,15 @@ redirected or compressed, and byte ranges are not served yet. Every other regist
 the static mount, in either registration order, and a static `404` is logged and limited like a
 request no route matched.
 
+For a single-page app, `srvr.WithSPAFallback("index.html")` answers client-side routes such as
+`/dashboard` or `/users/42/edit` with the app. Only browser navigations get it: `GET` or `HEAD`, an
+`Accept` header listing `text/html` (not just `*/*`, which `fetch` sends), and a last path segment
+without a `.`, so a missing `app-9999.js` or an API typo still gets a `404` problem. The fallback is
+sent with `Cache-Control: no-cache` and `Vary: Accept`. Content-hashed assets can be cached for good
+with `srvr.WithStaticCacheControl("public, max-age=31536000, immutable")`; index files and the
+fallback keep `no-cache` (`srvr.WithStaticIndexCacheControl` changes it). Every option has a field in
+`srvr.StaticConfig` for configuration loaders.
+
 ## Modules
 
 | Module | Purpose | Dependencies |

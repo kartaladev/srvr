@@ -28,6 +28,49 @@ func WithStaticIndexNames(names ...string) StaticOption {
 	return func(c *StaticConfig) { c.IndexNames = names }
 }
 
+// WithSPAFallback serves file, a name inside the file system such as
+// "index.html", for a navigation request that matches no file, so a
+// single-page app's client-side routes (/dashboard, /users/42/edit) load
+// the app. A miss is a navigation when all hold:
+//   - its method is GET or HEAD;
+//   - its Accept header lists text/html with a quality above zero (*/*
+//     does not count: fetch sends it by default, and an API typo would get
+//     HTML with status 200);
+//   - the last element of its path has no "." (a missing /app-9999.js is a
+//     404, not HTML; a route segment with a dot, such as /users/john.doe,
+//     gets 404 too);
+//   - its path is not hidden or hostile (those are always 404).
+//
+// The fallback is sent with status 200, its own Content-Type, the index
+// Cache-Control (no-cache by default) and Vary: Accept, because the answer
+// depends on Accept. Other misses get the 404 problem. Default: no
+// fallback. Start fails when file is not a regular file of the file
+// system; a fallback deleted after Start gives 404, and one that cannot be
+// read gives the 500 problem.
+func WithSPAFallback(file string) StaticOption {
+	return func(c *StaticConfig) { c.SPAFallback = file }
+}
+
+// WithStaticCacheControl sets the Cache-Control header of served files
+// other than index files and the fallback, such as "public,
+// max-age=31536000, immutable" for content-hashed build assets. Default:
+// none, because only the consumer knows which names are hashed. It is
+// never sent on a problem. A value with a control character other than a
+// tab fails Start.
+func WithStaticCacheControl(v string) StaticOption {
+	return func(c *StaticConfig) { c.CacheControl = v }
+}
+
+// WithStaticIndexCacheControl sets the Cache-Control header of index files
+// and the fallback, replacing the default "no-cache": clients revalidate
+// on every use, so a deploy reaches them at once while an unchanged file
+// still gets 304. "" means the default, so an index file always carries a
+// Cache-Control. A value with a control character other than a tab fails
+// Start.
+func WithStaticIndexCacheControl(v string) StaticOption {
+	return func(c *StaticConfig) { c.IndexCacheControl = v }
+}
+
 // WithStaticConfig sets every field of [StaticConfig], a zero field
 // meaning its default, replacing what earlier options set; later options
 // change the fields they name. The configuration is copied when [Static]
@@ -67,6 +110,10 @@ func WithStaticConfig(c StaticConfig) StaticOption {
 //     nothing is compressed.
 //   - Other methods get a 405 problem whose Allow lists GET, HEAD and the
 //     methods other routes serve for the path.
+//   - Index files are sent with Cache-Control: no-cache, other files with
+//     none ([WithStaticIndexCacheControl], [WithStaticCacheControl]); a
+//     problem never carries either.
+//   - No SPA fallback: a miss is a 404 until [WithSPAFallback] is set.
 //
 // Symbolic links are the file system's business: os.DirFS follows a link
 // anywhere, even out of its directory. Prefer os.OpenRoot(dir) and its
@@ -94,8 +141,11 @@ func WithStaticConfig(c StaticConfig) StaticOption {
 // trailing slash is dropped. fsys must not be nil, and two mounts must not
 // share a prefix. A nil option or invalid configuration fails Start with
 // an error wrapping [ErrRouteConfig] and, for each invalid setting, a
-// [*ConfigError] naming it (Static.Prefix, Static.FS, StaticOption,
-// Static.IndexNames).
+// [*ConfigError] naming it (StaticOption, Static.Prefix, Static.FS,
+// Static.CacheControl, Static.IndexCacheControl, Static.IndexNames,
+// Static.SPAFallback). The fallback is checked at Start, when the file
+// system is read for the first time; a file system that blocks there
+// blocks Start.
 func Static(prefix string, fsys fs.FS, opts ...StaticOption) RouteConfigurer[*Group] {
 	m, err := engine.NewStatic(prefix, fsys, opts...)
 
@@ -114,8 +164,9 @@ type staticConfigurer struct {
 
 // Configure registers the mount on g, or records its configuration error.
 func (c *staticConfigurer) Configure(g *Group) {
-	if c.err != nil {
-		g.b.errs = append(g.b.errs, engine.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, c.err))
+	// Reads the file system, which the consumer may fill until Start.
+	if err := engine.CheckStatic(c.mount, c.err); err != nil {
+		g.b.errs = append(g.b.errs, engine.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
 
 		return
 	}
@@ -156,7 +207,7 @@ func (c *staticConfigurer) Configure(g *Group) {
 // serve answers a request with the mount's decision; sv is what the
 // server's routes serve.
 func (c *staticConfigurer) serve(w http.ResponseWriter, r *http.Request, sv *served) error {
-	res := c.mount.Resolve(r.Method, r.PathValue("path"))
+	res := c.mount.Resolve(r.Method, r.PathValue("path"), r.Header.Get("Accept"))
 
 	switch res.Answer {
 	case engine.StaticFile:
@@ -211,6 +262,7 @@ func (sv *served) allow(r *http.Request) string {
 func setStaticHeaders(h http.Header, res engine.StaticResult) {
 	setIf(h, "Content-Type", res.ContentType)
 	setIf(h, "Cache-Control", res.CacheControl)
+	setIf(h, "Vary", res.Vary)
 }
 
 // setIf sets header name to v unless v is empty.

@@ -88,7 +88,22 @@ func TestNewStatic_Config(t *testing.T) {
 		{"empty index name", "/", staticSite(), []StaticOption{indexNames("")}, []string{"Static.IndexNames"}},
 		{"index name with a slash", "/", staticSite(), []StaticOption{indexNames("a/index.html")}, []string{"Static.IndexNames"}},
 		{"dot-dot index name", "/", staticSite(), []StaticOption{indexNames("..")}, []string{"Static.IndexNames"}},
-		{"several invalid settings", "assets", nil, nil, []string{"Static.Prefix", "Static.FS"}},
+		{"fallback leaving the file system", "/", staticSite(), []StaticOption{fallback("../index.html")}, []string{"Static.SPAFallback"}},
+		{"absolute fallback", "/", staticSite(), []StaticOption{fallback("/index.html")}, []string{"Static.SPAFallback"}},
+		{"hidden fallback", "/", staticSite(), []StaticOption{fallback(".env")}, []string{"Static.SPAFallback"}},
+		{"fallback with a backslash", "/", staticSite(), []StaticOption{fallback(`a\index.html`)}, []string{"Static.SPAFallback"}},
+		{"directory-only fallback", "/", staticSite(), []StaticOption{fallback("docs/")}, []string{"Static.SPAFallback"}},
+		{"header injection in CacheControl", "/", staticSite(), []StaticOption{func(c *StaticConfig) {
+			c.CacheControl = "max-age=60\r\nSet-Cookie: a=b"
+		}}, []string{"Static.CacheControl"}},
+		{"NUL in IndexCacheControl", "/", staticSite(), []StaticOption{func(c *StaticConfig) {
+			c.IndexCacheControl = "no-cache\x00"
+		}}, []string{"Static.IndexCacheControl"}},
+		{
+			"several invalid settings", "assets", nil,
+			[]StaticOption{func(c *StaticConfig) { c.CacheControl = "a\nb" }},
+			[]string{"Static.Prefix", "Static.FS", "Static.CacheControl"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -106,6 +121,61 @@ func TestNewStatic_Config(t *testing.T) {
 
 			if got := configFields(err); !slices.Equal(got, tt.fields) {
 				t.Errorf("fields = %v, want %v (error %v)", got, tt.fields, err)
+			}
+		})
+	}
+}
+
+// fallback returns an option setting SPAFallback.
+func fallback(name string) StaticOption { return func(c *StaticConfig) { c.SPAFallback = name } }
+
+// TestStatic_Check covers the static-files / Scenario: Rejected static
+// configuration rows that read the file system: the fallback must be a
+// regular file, checked under recover.
+func TestStatic_Check(t *testing.T) {
+	t.Parallel()
+
+	site := staticSite()
+	opening := func(open func() (fs.File, error)) fs.FS {
+		return faultFS{base: site, open: map[string]func() (fs.File, error){"index.html": open}, noStat: true}
+	}
+
+	tests := []struct {
+		name     string
+		fsys     fs.FS
+		fallback string
+		// reason is text the error's Reason contains, "" for no error.
+		reason string
+	}{
+		{"no fallback", site, "", ""},
+		{"existing fallback", site, "index.html", ""},
+		{"missing fallback", site, "missing.html", "does not exist"},
+		{"directory fallback", site, "docs", "not a regular file"},
+		{"Open panics", opening(func() (fs.File, error) { panic("boom") }), "index.html", "boom"},
+		{"permission denied", opening(func() (fs.File, error) { return nil, fs.ErrPermission }), "index.html", "permission denied"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			m, err := NewStatic("/", tt.fsys, fallback(tt.fallback))
+			if err != nil {
+				t.Fatalf("NewStatic: %v", err)
+			}
+
+			err = m.Check()
+			if tt.reason == "" {
+				if err != nil {
+					t.Errorf("Check = %v, want nil", err)
+				}
+
+				return
+			}
+
+			ce, ok := errors.AsType[*ConfigError](err)
+			if !ok || ce.Field != "Static.SPAFallback" || ce.Value != tt.fallback || !strings.Contains(ce.Reason, tt.reason) {
+				t.Errorf("Check = %v, want a Static.SPAFallback error for %q containing %q", err, tt.fallback, tt.reason)
 			}
 		})
 	}
@@ -146,6 +216,8 @@ type faultFS struct {
 	base fs.FS
 	open map[string]func() (fs.File, error)
 	stat map[string]func() (fs.FileInfo, error)
+	// noStat hides Stat, so fs.Stat goes through Open.
+	noStat bool
 }
 
 func (f faultFS) Open(name string) (fs.File, error) {
@@ -161,6 +233,16 @@ func (f faultFS) Stat(name string) (fs.FileInfo, error) {
 		return stat()
 	}
 
+	if f.noStat {
+		file, err := f.Open(name)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+
+		return file.Stat()
+	}
+
 	return fs.Stat(f.base, name)
 }
 
@@ -170,6 +252,11 @@ type noSeekFile struct{ f fs.File }
 func (n noSeekFile) Stat() (fs.FileInfo, error) { return n.f.Stat() }
 func (n noSeekFile) Read(p []byte) (int, error) { return n.f.Read(p) }
 func (n noSeekFile) Close() error               { return n.f.Close() }
+
+// statFailFile is a file whose Stat fails.
+type statFailFile struct{ fs.File }
+
+func (statFailFile) Stat() (fs.FileInfo, error) { return nil, errors.New("stat failed") }
 
 // MyError is a consumer error type whose nil pointer is returned as an
 // error.
@@ -183,10 +270,11 @@ type staticDecision struct {
 	name         string
 	contentType  string
 	cacheControl string
+	vary         string
 }
 
 func decisionOf(r StaticResult) staticDecision {
-	return staticDecision{r.Answer, r.Name, r.ContentType, r.CacheControl}
+	return staticDecision{r.Answer, r.Name, r.ContentType, r.CacheControl, r.Vary}
 }
 
 // TestStatic_Resolve covers the static-files decisions (Serving a file,
@@ -205,6 +293,7 @@ func TestStatic_Resolve(t *testing.T) {
 	}
 	notFound := staticDecision{answer: StaticNotFound}
 	notAllowed := staticDecision{answer: StaticMethodNotAllowed}
+	spa := []StaticOption{fallback("index.html")}
 	failed := staticDecision{answer: StaticFailed}
 
 	const (
@@ -213,12 +302,15 @@ func TestStatic_Resolve(t *testing.T) {
 		text = "text/plain; charset=utf-8"
 	)
 
+	fellBack := staticDecision{answer: StaticFile, name: "index.html", contentType: html, cacheControl: "no-cache", vary: "Accept"}
+
 	tests := []struct {
 		name   string
 		fsys   fs.FS
 		opts   []StaticOption
 		method string
 		rest   string
+		accept string
 		want   staticDecision
 		// errIs is a target the failed decision's error matches.
 		errIs error
@@ -265,6 +357,68 @@ func TestStatic_Resolve(t *testing.T) {
 		{name: "empty first element", method: "GET", rest: "/app.js", want: notFound},
 		{name: "empty inner element", method: "GET", rest: "a//b.txt", want: notFound},
 		{name: "dot element", method: "GET", rest: "./app.js", want: notFound},
+		// Fallback decision.
+		{
+			name: "browser navigation", method: "GET", rest: "dashboard", opts: spa,
+			accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", want: fellBack,
+		},
+		{name: "deep link", method: "GET", rest: "users/42/edit", opts: spa, accept: "text/html", want: fellBack},
+		{name: "HEAD navigation", method: "HEAD", rest: "dashboard", opts: spa, accept: "text/html", want: fellBack},
+		{name: "upper-case media type", method: "GET", rest: "dashboard", opts: spa, accept: "TEXT/HTML", want: fellBack},
+		{name: "low quality html", method: "GET", rest: "dashboard", opts: spa, accept: "application/json, text/html;q=0.1", want: fellBack},
+		{name: "directory without index", method: "GET", rest: "empty/", opts: spa, accept: "text/html", want: fellBack},
+		{name: "no Accept", method: "GET", rest: "dashboard", opts: spa, want: notFound},
+		{name: "any type", method: "GET", rest: "dashboard", opts: spa, accept: "*/*", want: notFound},
+		{name: "any text", method: "GET", rest: "dashboard", opts: spa, accept: "text/*", want: notFound},
+		{name: "JSON", method: "GET", rest: "dashboard", opts: spa, accept: "application/json", want: notFound},
+		{name: "html refused", method: "GET", rest: "dashboard", opts: spa, accept: "text/html;q=0", want: notFound},
+		{name: "missing asset", method: "GET", rest: "assets/app-9999.js", opts: spa, accept: "text/html", want: notFound},
+		{name: "dot in the last segment", method: "GET", rest: "users/john.doe", opts: spa, accept: "text/html", want: notFound},
+		{name: "hidden file never falls back", method: "GET", rest: ".env", opts: spa, accept: "text/html", want: notFound},
+		{name: "hostile path never falls back", method: "GET", rest: "../secret", opts: spa, accept: "text/html", want: notFound},
+		{name: "POST navigation", method: "POST", rest: "dashboard", opts: spa, accept: "text/html", want: notAllowed},
+		{name: "no fallback configured", method: "GET", rest: "dashboard", accept: "text/html", want: notFound},
+		{
+			name: "existing file is not the fallback", method: "GET", rest: "app.js", opts: spa, accept: "text/html",
+			want: served("app.js", js, ""),
+		},
+		{
+			name: "fallback with its own cache", method: "GET", rest: "dashboard", accept: "text/html",
+			opts: slices.Concat(spa, []StaticOption{func(c *StaticConfig) { c.IndexCacheControl = "no-store" }}),
+			want: staticDecision{answer: StaticFile, name: "index.html", contentType: html, cacheControl: "no-store", vary: "Accept"},
+		},
+		{
+			name: "fallback unreadable", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: failed, errIs: fs.ErrPermission,
+			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
+				"index.html": func() (fs.File, error) { return nil, fs.ErrPermission },
+			}},
+		},
+		{
+			name: "fallback deleted", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: notFound,
+			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
+				"index.html": func() (fs.File, error) { return nil, fs.ErrNotExist },
+			}},
+		},
+		{
+			name: "fallback replaced by a directory", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: notFound,
+			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
+				"index.html": func() (fs.File, error) { return site.Open("docs") },
+			}},
+		},
+		{
+			name: "fallback Stat fails", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: failed,
+			errText: "stat failed",
+			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
+				"index.html": func() (fs.File, error) { f, err := site.Open("index.html"); return statFailFile{f}, err },
+			}},
+		},
+		{
+			name: "fallback without Seek", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: failed,
+			errText: "cannot seek",
+			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
+				"index.html": func() (fs.File, error) { f, err := site.Open("index.html"); return noSeekFile{f}, err },
+			}},
+		},
 		// Other methods.
 		{name: "POST", method: "POST", rest: "app.js", want: notAllowed},
 		{name: "DELETE missing", method: "DELETE", rest: "nope", want: notAllowed},
@@ -350,7 +504,7 @@ func TestStatic_Resolve(t *testing.T) {
 				t.Fatalf("NewStatic: %v", err)
 			}
 
-			res := m.Resolve(tt.method, tt.rest)
+			res := m.Resolve(tt.method, tt.rest, tt.accept)
 			if res.File != nil {
 				defer res.File.Close()
 			}
@@ -401,8 +555,52 @@ func TestStatic_ResolvePanics(t *testing.T) {
 		}
 	}()
 
-	m.Resolve("GET", "app.js")
+	m.Resolve("GET", "app.js", "")
 	t.Error("Resolve returned")
+}
+
+// TestAcceptsHTML covers the media-range parsing of the navigation rule.
+func TestAcceptsHTML(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		accept string
+		want   bool
+	}{
+		{"text/html", true},
+		{"TEXT/HTML", true},
+		{" text/html ; charset=utf-8", true},
+		{"application/json, text/html", true},
+		{"text/html;q=0.1", true},
+		{"text/html; Q=0.5", true},
+		{"text/html;q=1.000", true},
+		{"text/html;q=0.001", true},
+		{"text/html;q=1.5", false},
+		{"text/html;q=2", false},
+		{"text/html;q=0.0001", false},
+		{"text/html;q=.5", false},
+		{"text/html;q=0.5x", false},
+		{"text/html;q=0", false},
+		{"text/html;q=0.000", false},
+		{"text/html;q=x", false},
+		{"text/html;q=", false},
+		{"*/*", false},
+		{"text/*", false},
+		{"", false},
+		{"application/json", false},
+		{"text/htmlx", false},
+		{",,,", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.accept, func(t *testing.T) {
+			t.Parallel()
+
+			if got := acceptsHTML(tt.accept); got != tt.want {
+				t.Errorf("acceptsHTML(%q) = %v, want %v", tt.accept, got, tt.want)
+			}
+		})
+	}
 }
 
 // FuzzStaticResolve checks that whatever the request path, a served name
@@ -416,13 +614,13 @@ func FuzzStaticResolve(f *testing.F) {
 	site := staticSite()
 	site["secret"] = &fstest.MapFile{Data: []byte("SECRET")}
 
-	m, err := NewStatic("/", site)
+	m, err := NewStatic("/", site, fallback("index.html"))
 	if err != nil {
 		f.Fatalf("NewStatic: %v", err)
 	}
 
 	f.Fuzz(func(t *testing.T, rest string) {
-		res := m.Resolve("GET", rest)
+		res := m.Resolve("GET", rest, "text/html")
 		if res.File != nil {
 			defer res.File.Close()
 		}

@@ -17,6 +17,12 @@ once tagged.
   logged and limited like unmatched requests. Compared with `Mount` of `http.FileServerFS`, a
   consumer switching gets `404` problems instead of plain text, hidden dotfiles, no listings and no
   `/index.html` redirect.
+- `srvr.WithSPAFallback(file)` serves a single-page app's `index.html` for browser navigations
+  (`GET`/`HEAD`, `Accept` listing `text/html`, no `.` in the last path segment) that match no file,
+  with `Cache-Control: no-cache` and `Vary: Accept`. `srvr.WithStaticCacheControl` sets
+  `Cache-Control` on files (none by default), `srvr.WithStaticIndexCacheControl` on index files and
+  the fallback (`no-cache` by default). A fallback that is not a regular file, or a header value with
+  a control character, fails `Start`.
 - `engine.RequestState.MarkRouterAnswered` (package `engine`, unstable before v1) also clears the
   route an earlier stage recorded: an answer of the router means no route matched.
 

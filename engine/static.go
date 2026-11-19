@@ -53,13 +53,18 @@ type Static struct {
 	prefix string
 	fsys   fs.FS
 	cfg    StaticConfig
+	// indexCacheControl is the Cache-Control of index files and the
+	// fallback: cfg.IndexCacheControl or the default.
+	indexCacheControl string
 }
 
 // NewStatic returns the mount of fsys under prefix, configured by opts
 // applied in order to a zero StaticConfig, or an error wrapping ErrConfig
-// joining one *ConfigError per invalid setting: Static.Prefix,
-// Static.FS, StaticOption (a nil option) and Static.IndexNames. It reads
-// nothing from fsys.
+// joining one *ConfigError per invalid setting: StaticOption (a nil
+// option), Static.Prefix, Static.FS, Static.CacheControl and
+// Static.IndexCacheControl (a control character other than a tab, which
+// could inject a header), Static.IndexNames and Static.SPAFallback (not a
+// valid fs.FS name). It reads nothing from fsys: [Static.Check] does.
 //
 // A valid prefix starts with "/", has no empty, "." or ".." element, no
 // whitespace or control character, and none of { } * : % ? # \, which are
@@ -82,8 +87,15 @@ func NewStatic(prefix string, fsys fs.FS, opts ...StaticOption) (*Static, error)
 		errs = append(errs, NewConfigError("Static.FS", fsys, "must not be nil"))
 	}
 
-	if err := validateIndexNames(cfg.IndexNames); err != nil {
-		errs = append(errs, err)
+	for _, err := range []error{
+		validateHeaderValue("Static.CacheControl", cfg.CacheControl),
+		validateHeaderValue("Static.IndexCacheControl", cfg.IndexCacheControl),
+		validateIndexNames(cfg.IndexNames),
+		validateFallbackName(cfg.SPAFallback),
+	} {
+		if err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	if len(errs) > 0 {
@@ -94,7 +106,10 @@ func NewStatic(prefix string, fsys fs.FS, opts ...StaticOption) (*Static, error)
 		cfg.IndexNames = []string{defaultIndexName}
 	}
 
-	return &Static{prefix: norm, fsys: fsys, cfg: cfg}, nil
+	return &Static{
+		prefix: norm, fsys: fsys, cfg: cfg,
+		indexCacheControl: cmp.Or(cfg.IndexCacheControl, defaultIndexCacheControl),
+	}, nil
 }
 
 // Prefix returns the mount's normalised prefix: "/" or a path without a
@@ -157,6 +172,73 @@ func staticPrefix(prefix string) (string, error) {
 	}
 
 	return norm, nil
+}
+
+// CheckStatic returns the error an engine's configure phase reports for a
+// mount NewStatic returned with err: err itself, or [Static.Check]. It is
+// the one call every engine makes, so none forgets the start-time check.
+func CheckStatic(m *Static, err error) error {
+	if err != nil {
+		return err
+	}
+
+	return m.Check()
+}
+
+// Check reads the file system for the settings that need it, during an
+// engine's configure phase: the SPA fallback must be a regular file. A
+// file system that panics or fails is reported, never raised. It returns
+// nil or a *ConfigError naming Static.SPAFallback.
+func (s *Static) Check() (err error) {
+	name := s.cfg.SPAFallback
+	if name == "" {
+		return nil
+	}
+
+	defer func() {
+		if v := recover(); v != nil {
+			err = NewConfigError("Static.SPAFallback", name, "reading it panicked: "+ValueText(v))
+		}
+	}()
+
+	info, statErr := fs.Stat(s.fsys, name)
+
+	switch {
+	case statErr != nil && missOrError(statErr) == nil:
+		return NewConfigError("Static.SPAFallback", name, "does not exist in the file system")
+	case statErr != nil:
+		return NewConfigError("Static.SPAFallback", name, "cannot be read: "+errorText(statErr))
+	case !info.Mode().IsRegular():
+		return NewConfigError("Static.SPAFallback", name, "is not a regular file")
+	default:
+		return nil
+	}
+}
+
+// validateHeaderValue returns an error naming field when v has a control
+// character other than a tab: a CR or LF would end the header and start
+// another one.
+func validateHeaderValue(field, v string) error {
+	if strings.ContainsFunc(v, func(r rune) bool { return r != '\t' && unicode.IsControl(r) }) {
+		return NewConfigError(field, v, "must not contain control characters")
+	}
+
+	return nil
+}
+
+// validateFallbackName returns an error naming Static.SPAFallback when
+// name is set but is not a name the mount could serve for a request (see
+// Resolve rules 2 and 3), such as "../index.html" or "/index.html".
+func validateFallbackName(name string) error {
+	if name == "" {
+		return nil
+	}
+
+	if n, dirOnly, ok := requestName(name); !ok || dirOnly || n != name {
+		return NewConfigError("Static.SPAFallback", name, `must be a visible file name inside the file system, such as "index.html"`)
+	}
+
+	return nil
 }
 
 // validateIndexNames returns an error naming Static.IndexNames for the
@@ -223,13 +305,18 @@ type StaticResult struct {
 	// CacheControl is the Cache-Control header to send with the file, ""
 	// for none.
 	CacheControl string
+	// Vary is the Vary header to send with the file: "Accept" for the SPA
+	// fallback, whose answer depends on it, "" otherwise.
+	Vary string
 	// Err is the file system's failure when Answer is StaticFailed.
 	Err error
 }
 
 // Resolve decides how the mount answers method for rest, the request path
 // below the prefix as the engine decoded it, without a leading slash (""
-// for the prefix itself; a trailing slash names a directory). In order:
+// for the prefix itself; a trailing slash names a directory), and accept,
+// the request's Accept header, which only the SPA fallback reads. In
+// order:
 //
 //  1. A method other than GET or HEAD: StaticMethodNotAllowed.
 //  2. Invalid UTF-8, a backslash, a control character, or an empty, "."
@@ -241,12 +328,16 @@ type StaticResult struct {
 //     exist, a regular file named with a trailing slash, a directory
 //     without an index file and anything else (a device, a socket):
 //     StaticNotFound.
-//  5. Any other file system error, and a file that cannot seek:
+//  5. A miss of rule 4 gets the SPA fallback when one is configured and
+//     the request is a navigation: accept lists text/html with a quality
+//     above zero and rest's last element has no ".". Otherwise
+//     StaticNotFound. Rules 1 to 3 never fall back.
+//  6. Any other file system error, and a file that cannot seek:
 //     StaticFailed.
 //
 // It never redirects. A panic of the file system reaches the caller, whose
 // request recovery answers it; no file is left open.
-func (s *Static) Resolve(method, rest string) StaticResult {
+func (s *Static) Resolve(method, rest, accept string) StaticResult {
 	if method != http.MethodGet && method != http.MethodHead {
 		return StaticResult{Answer: StaticMethodNotAllowed}
 	}
@@ -262,10 +353,116 @@ func (s *Static) Resolve(method, rest string) StaticResult {
 	}
 
 	if found == "" {
-		return StaticResult{Answer: StaticNotFound}
+		return s.miss(rest, accept)
 	}
 
 	return s.open(found, info)
+}
+
+// miss answers a request whose valid, visible path matched no file: the
+// fallback for a navigation, else StaticNotFound. The fallback is opened
+// first and its type read from the open file, one name lookup fewer than
+// Stat then Open: its name is the consumer's, checked at Start, never the
+// request's. It is read on every request, so a fallback deleted or
+// replaced after Start is seen at once.
+func (s *Static) miss(rest, accept string) StaticResult {
+	name := s.cfg.SPAFallback
+	if name == "" || !navigation(rest, accept) {
+		return StaticResult{Answer: StaticNotFound}
+	}
+
+	f, err := s.fsys.Open(name)
+	if err != nil {
+		return openFailure(err)
+	}
+
+	info, err := f.Stat()
+
+	switch {
+	case err != nil:
+		_ = f.Close()
+
+		return staticFailure(err)
+	case !info.Mode().IsRegular():
+		_ = f.Close()
+
+		return StaticResult{Answer: StaticNotFound} // replaced by a directory after Start
+	}
+
+	res := s.serving(name, f, info)
+	if res.Answer == StaticFile {
+		res.CacheControl, res.Vary = s.indexCacheControl, "Accept"
+	}
+
+	return res
+}
+
+// navigation reports whether a request for rest with Accept header accept
+// is a page navigation the SPA fallback answers: rest's last element has
+// no "." (a missing app-9999.js is not a page) and accept lists text/html.
+func navigation(rest, accept string) bool {
+	trimmed := strings.TrimSuffix(rest, "/")
+	last := trimmed[strings.LastIndexByte(trimmed, '/')+1:]
+
+	return !strings.Contains(last, ".") && acceptsHTML(accept)
+}
+
+// acceptsHTML reports whether an Accept header lists text/html with a
+// quality above zero. Media ranges are split on ",", parameters on ";",
+// compared without case. */* and text/* do not count: fetch sends */* by
+// default. A malformed quality does not count either.
+func acceptsHTML(accept string) bool {
+	for mediaRange := range strings.SplitSeq(accept, ",") {
+		mediaType, params, _ := strings.Cut(mediaRange, ";")
+		if !strings.EqualFold(strings.TrimSpace(mediaType), "text/html") {
+			continue
+		}
+
+		if positiveQuality(params) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// positiveQuality reports whether the parameters of a media range give it
+// a quality above zero: no q parameter means 1.
+func positiveQuality(params string) bool {
+	for param := range strings.SplitSeq(params, ";") {
+		name, value, _ := strings.Cut(param, "=")
+		if strings.EqualFold(strings.TrimSpace(name), "q") {
+			return positiveQValue(strings.TrimSpace(value))
+		}
+	}
+
+	return true
+}
+
+// positiveQValue reports whether v is a valid RFC 9110 qvalue ("0",
+// "0.5", "1", "1.000") above zero; an invalid one is not. It is parsed by
+// hand so that a malformed value costs no allocation.
+func positiveQValue(v string) bool {
+	if v == "" || (v[0] != '0' && v[0] != '1') {
+		return false
+	}
+
+	whole, frac, dotted := strings.Cut(v, ".")
+	if len(whole) != 1 || (dotted && len(frac) > 3) {
+		return false
+	}
+
+	positive := whole == "1"
+	for _, c := range []byte(frac) {
+		switch {
+		case c < '0' || c > '9', whole == "1" && c != '0':
+			return false
+		case c != '0':
+			positive = true
+		}
+	}
+
+	return positive
 }
 
 // requestName returns the file system name rest names and whether it
@@ -354,13 +551,15 @@ func (s *Static) isIndex(name string) bool {
 func (s *Static) open(name string, info fs.FileInfo) StaticResult {
 	f, err := s.fsys.Open(name)
 	if err != nil {
-		if err = missOrError(err); err != nil {
-			return staticFailure(err)
-		}
-
-		return StaticResult{Answer: StaticNotFound}
+		return openFailure(err)
 	}
 
+	return s.serving(name, f, info)
+}
+
+// serving returns the decision serving f, the open file name with info,
+// or closes it and fails when it cannot seek.
+func (s *Static) serving(name string, f fs.File, info fs.FileInfo) StaticResult {
 	content, ok := f.(StaticFileContent)
 	if !ok {
 		_ = f.Close()
@@ -374,10 +573,20 @@ func (s *Static) open(name string, info fs.FileInfo) StaticResult {
 	}
 
 	if s.isIndex(name) {
-		res.CacheControl = cmp.Or(s.cfg.IndexCacheControl, defaultIndexCacheControl)
+		res.CacheControl = s.indexCacheControl
 	}
 
 	return res
+}
+
+// openFailure returns the decision for an error opening a chosen file: a
+// miss (deleted since it was found) or a failure.
+func openFailure(err error) StaticResult {
+	if err = missOrError(err); err != nil {
+		return staticFailure(err)
+	}
+
+	return StaticResult{Answer: StaticNotFound}
 }
 
 // missOrError returns nil when err, a file system error, means the name
