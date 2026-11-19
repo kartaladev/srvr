@@ -61,8 +61,8 @@ context: |
     named opt-in allows it.
 
   Change plan (Gall's Law): core-server -> gin-and-fiber-engines -> otel-observability ->
-  goroutine-leak-checks -> scrty-integration -> triage-debug-buffer. Each change ships a
-  releasable library.
+  goroutine-leak-checks -> triage-debug-buffer -> followups-hardening -> scrty-integration.
+  Each change ships a releasable library.
 
   Project rules that bind every artifact and every apply run
   - TDD RED -> GREEN -> REFACTOR (Fowler's catalog); every hot path tested, coverage checked with

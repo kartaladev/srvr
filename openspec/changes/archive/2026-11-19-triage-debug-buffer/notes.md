@@ -117,8 +117,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 
 
 ### engine-support main spec fails strict validation on requirement length
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 5)
+- **Target:** followups-hardening
 - **Context:** `openspec validate --specs --strict` fails `engine-support`: three requirement texts exceed 500 characters - "Engines share one per-request state" (579, already in main before `skills-compliance` was archived), and "srvr re-exports the shared types" (522) and "Registered routes are listed with their configurer" (581), both as `skills-compliance` modified them. Found while archiving `skills-compliance` on 2026-11-18; the sync copied the delta text faithfully.
 - **Evidence:** `openspec validate engine-support --type spec --strict`: `[WARNING] requirements[7]`, `[9]`, `[10]`: "Requirement text is very long (>500 characters)"; 14 of 15 main specs pass.
 - **Suggested action:** a planning change (or this change's next consolidation) moves the examples out of each requirement text into its scenarios, or splits each into requirements stating one behaviour, without changing behaviour.
@@ -132,8 +132,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none. Task 8.5 measures the deferred efficiency items.
 
 ### TestShutdownHooks_Faulty "blocks and ignores its context" is timing-sensitive under load
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 5)
+- **Target:** followups-hardening
 - **Context:** this row starts a hook that blocks and ignores its context, sets `WithShutdownHookTimeout(50ms)`, and asserts that Start returns within 200ms. With `go test -race ./...` running the core, engine and tracectx packages at the same time, Start once returned after 205ms. The test was not changed by this change. Most likely it is also behind the unexplained root-package FAIL recorded in the slice 2 outcome. It does not affect the debug buffer, so it is not fixed here (AGENTS.md: follow-ups go to notes).
 - **Evidence:** run 4 of 4 of `GOWORK=off go test -race -count=1 ./...` on 2026-11-19 failed with `shutdown_test.go:569: Start returned after 205.696042ms, want within 200ms` (`TestShutdownHooks_Faulty/blocks_and_ignores_its_context`). Runs 1-3, and every run of the package alone, passed.
 - **Suggested action:** give the bound headroom for `-race` and CPU contention (for example the hook budget plus a margin derived from it, or a bound that fails only when Start waits for the blocking hook itself, such as several seconds). Keep the row's intent: Start must not wait for a hook that ignores its context.
@@ -218,35 +218,35 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Decision (2026-11-19):** option (a): an error matching `context.Canceled` answered while the request context is cancelled gets `499` "Client Closed Request"; a live request context keeps `500`. Rationale: prblm v0.1.0 (and v0.2.0) maps only `context.DeadlineExceeded` (`builtins.go:39`) and its `Handler.Respond` doc answers a cancelled request like any other; design D3 already assumed a status below 500; OpenTelemetry semantic conventions mark only `5xx` server spans as errors; a disconnect should not page or flush. Implemented as srvr's own prblm mapper `clientClosed` (`engine/clientclosed.go`), added by `Core.ProblemOptions` after the consumer's options. (It was briefly reverted on a coordinator redirect to move the rule into prblm; the owner then decided srvr keeps its own mapper.) RED: `go test -count=1 -run 'TestDebugBuffer_Endings/client_disconnects|TestClientClosedRequest' .` failed with "ctx written = true, want false: [ctx http.request.failed]" and "want http.request.failed at WARN with status 499" (record 500 ERROR). GREEN: the same command, `go test -race -run 'TestDebugBuffer_Endings|TestDebugBuffer_AbortOrder' .`, `TestClientClosed` in `./engine` and `TestClientClosedRequest_Parity` in `internal/paritytest` pass. Spec rows: `error-responses` delta (Scenario: Client closed request; Client closed request on every engine), `engine-parity` delta (fiber exception row), design D3/D11.
 
 ### prblm: map a cancelled request to 499 (optional upstream)
-- **Status:** open: optional
+- **Status:** closed: srvr owns the 499 mapper (engine/clientclosed.go); no upstream work planned; owner decision 2026-11-19
 - **Target:** unassigned (prblm)
 - **Context:** srvr answers `context.Canceled` with a cancelled request context as `499` with its own prblm mapper (design D11). Any other prblm user has the same problem: prblm v0.1.0 and v0.2.0 map only `context.DeadlineExceeded` (`builtins.go:39`), and `Handler.Respond`'s doc answers a cancelled request like any other. If prblm adds a built-in rule later, srvr's mapper becomes redundant but harmless (srvr's runs first and gives the same answer). Fiber quirk for prblm's docs: `fiberprblm` resolves with `c.Context()`, and fasthttp never cancels it on a disconnect. Local prblm repository: `/Users/zakyalvan/Documents/RND/prblm` (main at `c7b4c67`).
 - **Evidence:** unverified for prblm itself (not tested there); srvr's behaviour is pinned by `TestClientClosedRequest`, `TestClientClosed` and `TestClientClosedRequest_Parity`.
 - **Suggested action:** the owner decides whether to propose the rule to prblm; if adopted, srvr keeps or removes its mapper after bumping prblm, with the tests above unchanged.
 
 ### Sampling successful requests into the debug buffer
-- **Status:** open
+- **Status:** closed: deferred, no current need (Gall's Law); reopen as a new change when a consumer asks; owner decision 2026-11-19
 - **Target:** unassigned
 - **Context:** the debug buffer writes a request's below-level records only when it fails (status at or above `FlushStatus`, or a panic). Triage of slow or wrong-but-successful requests gets nothing. Other buffering libraries (AWS Powertools, .NET log buffering) leave this to sampling; srvr has no sampling, which proposal and design D1 kept out of scope.
 - **Evidence:** unverified: feature gap, not a defect; `TestDebugBuffer_Flush` "200" row pins the discard.
 - **Suggested action:** a later change specifies an opt-in rate (per server, deterministic by `trace_id` so a sampled trace is complete across services), its interaction with `TotalBytes` and the summary attributes, and a `srvr.debug_buffer.sampled` key (additive, schema unchanged).
 
 ### On-demand flush (API to flush a request's buffer explicitly)
-- **Status:** open
+- **Status:** closed: deferred, no current need (Gall's Law); reopen as a new change when a consumer asks; owner decision 2026-11-19
 - **Target:** unassigned
 - **Context:** a handler that detects something worth keeping on a request that will still succeed (a retried call, a fallback taken) cannot ask for its buffer to be written; only the outcome at the access stage decides. A `srvr.FlushDebugBuffer(ctx)` (or a mark that forces the flush at the outcome point) would cover it, but it must define ordering against the access record, late calls after the seal, and concurrent calls.
 - **Evidence:** unverified: feature gap, not a defect.
 - **Suggested action:** a later change specifies the API (prefer marking the request to flush at the outcome point, which keeps the single-writer order of design D3), with rows for a call after the seal, from another goroutine, with buffering off, and on every engine.
 
 ### TestShutdownHooks_Order failed once under a full -race run
-- **Status:** open: unconfirmed (AGENTS.md rule 2)
+- **Status:** closed: not confirmed (AGENTS.md rule 2): failed once without captured output, then passed in every later run (isolated x5, -count=3 under load, several make check runs, CI on PRs #7, #9-#11); owner decision 2026-11-19
 - **Target:** unassigned
 - **Context:** one `GOWORK=off go test -race -count=1 ./...` run in the root on 2026-11-19 reported `--- FAIL: TestShutdownHooks_Order (0.11s)` while the paritytest and fibersrvr suites ran at the same time; no production code had changed relative to `HEAD` (only tests and docs). Likely the same CPU-contention timing sensitivity as the `TestShutdownHooks_Faulty` entry above. The failure message was not captured.
 - **Evidence:** `GOWORK=off go test -race -count=5 -run TestShutdownHooks_Order .` passes; the full run failure is not reproduced. Task 6.5 (2026-11-19) retried under load: `go test -race -count=3 ./...` in the root while the paritytest (`-count=2`) and fibersrvr (`-count=2`) suites ran at the same time, plus three `make check` runs; it passed every time, so there is still no failure output to capture.
 - **Suggested action:** rerun the full suite under load with `-count` and capture the message; if it reproduces, widen the timing bound as suggested for `TestShutdownHooks_Faulty`.
 
 ### Client-closed probe ignores prblm.WithoutBuiltins
-- **Status:** open: accepted limitation, documented
+- **Status:** closed: accepted limitation, documented in the WithProblemOptions godoc; it errs toward the visible 500; owner decision 2026-11-19
 - **Target:** unassigned (resolves with "prblm: map a cancelled request to 499 (optional upstream)" or a prblm pre-fallback hook)
 - **Context:** `clientClosed` (`engine/clientclosed.go`) decides precedence by resolving the error with a package-level prblm handler holding prblm's default built-ins, not the consumer's configured handler. When a consumer passes `prblm.WithoutBuiltins()` through `WithProblemOptions`, a sentinel such as `prblm.ErrUnavailable` wrapping the cancellation still makes srvr's mapper decline, and the real handler, having no built-ins, answers the `500` fallback where the rule would give `499`. It fails toward the visible `500`, so nothing is hidden. srvr cannot read the consumer's prblm options without re-running their mappers, enrichers and hook. The probe also relies on prblm's fallback being `500`; `TestClientClosed_ProbeFallback` (`engine/clientclosed_internal_test.go`) now fails if that changes.
 - **Evidence:** a throwaway test `TestClientClosed_WithoutBuiltins` (`prblm.NewHandler(prblm.WithoutBuiltins(), prblm.WithMappers(clientClosedMapper)).Resolve(cancelledCtx, fmt.Errorf("%w: %w", prblm.ErrUnavailable, context.Canceled))`) failed with `status 500, want 499: with built-ins off nothing outranks the client-closed mapper` (`GOWORK=off go test -run TestClientClosed_WithoutBuiltins ./engine`); removed after the run, since the behaviour is kept. Documented in the `clientClosed` comment and the `WithProblemOptions` godoc.
@@ -267,8 +267,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### prblm v0.2.0 exports ginprblm.ErrStatusOnly
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 6)
+- **Target:** followups-hardening
 - **Context:** part (2) of the archived core-server entry "Ask prblm for a composable OnError and an exported status-only sentinel": prblm v0.2.0 exports `ginprblm.ErrStatusOnly` (`adapters/ginprblm/doc.go`), so a hook can tell a `c.AbortWithStatus(4xx)` report apart with `errors.Is`. ginsrvr still classifies failures from `c.Errors` and recovered panics (gin-and-fiber-engines design D2), which works. Since srvr's hook no longer owns the only slot, a consumer's `prblm.OnError` on gin also receives these status-only reports (prblm's documented behaviour, not srvr's).
 - **Evidence:** `git -C ../prblm grep -n ErrStatusOnly v0.2.0` lists the exported sentinel; no srvr test depends on it.
 - **Suggested action:** decide whether ginsrvr's `classify` should use `errors.Is(err, ginprblm.ErrStatusOnly)` instead of its `c.Errors` check; keep the gin-engine `c.AbortWithStatus(401)` row as the guard.
@@ -293,15 +293,15 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none. These close the 8.5 items of the archived `skills-compliance` entries "Slice 2 /simplify: efficiency items deferred to the benchmarks", "Task 9.4: measured performance changes" (deferred part) and "Target cache: patterns where it cannot hit"; the archived files are not edited.
 
 ### Debug buffer efficiency items from slice 2 not measured
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Target:** followups-hardening
 - **Context:** the slice 2 outcome deferred three buffering-only items to 8.5: `attrSize` formatting `KindAny` values a second time, a `Clone` discarded when `truncator.record` rewrites, and reslicing the entries instead of a ring. Task 8.5 as written measures only the buffer's cost (D1), so these were not prototyped. `slog.Record.Clone` allocates only for records with more than five attributes, so `BenchmarkDebugBuffer` (two attributes per record) cannot show the second item.
 - **Evidence:** unverified: code reading; `BenchmarkDebugBuffer` numbers in "Task 8.5: deferred items measured with benchstat".
 - **Suggested action:** add a `BenchmarkDebugBuffer` row with records of six or more attributes and a `slog.Any` value, then measure each item with `benchstat -count=10` and apply at the D8 gain.
 
 ### Trace ids cost a crypto/rand system call per request
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Target:** followups-hardening
 - **Context:** `make profile` on the root package shows 35% of the CPU samples of `BenchmarkPipeline` (mostly the parallel rows) in `syscall.rawsyscalln` under `internal/syscall/unix.ARC4Random` <- `crypto/rand.Read` <- `tracectx.New` <- `Core.BeginRequest`: every request without an incoming `traceparent` reads its trace and span ids from `crypto/rand`, a system call on darwin. W3C trace context asks for random ids, not cryptographic ones. On Linux, `crypto/rand` uses `getrandom` (vDSO on recent kernels), so the cost there is unmeasured.
 - **Evidence:** `make profile MODULES=. BENCH=BenchmarkPipeline BENCH_FLAGS=-benchtime=200ms`, then `go tool pprof -traces bench/srvr.cpu` (2026-11-19, local machine); not reproduced on Linux.
 - **Suggested action:** measure `BenchmarkPipeline` on the CI runner (Linux); if the call is significant there, compare `math/rand/v2` (a per-goroutine or pooled ChaCha8 seeded from `crypto/rand`) with `benchstat`, keeping the all-zero-id rejection.
@@ -320,15 +320,15 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** confirm the `bench` job on the first pull request (runtime about 3-4 minutes locally) and record its timings for design D1/D8.
 
 ### Fiber copies access values of records the unmatched limit suppresses
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 7)
+- **Target:** followups-hardening
 - **Context:** `engine.Core.AccessSuppressed` (used by fiber to skip copying path, query, client address and user agent out of pooled buffers) does not consult the unmatched-record limit, because `admit` changes state and must run once, in `writeAccess`. So on fiber a record the limit suppresses still pays those copies, which is the scanner case the limit targets. Likewise, with `OmitUserAgent` set, fiber still copies the user agent (`string(c.Request().Header.UserAgent())`) and net/http and gin still read the header, only for `writeAccess` to drop it. Both costs exist only with the opt-in options.
 - **Evidence:** unverified: code reading during the slice 9 /simplify (efficiency reviewer); no benchmark row has a limit or `OmitUserAgent`.
 - **Suggested action:** add `BenchmarkPipeline` rows on fiber for a suppressed unmatched record and for `OmitUserAgent`; if `benchstat` shows the D8 gain, decide the limit once per request (cache `admit`'s result on `RequestState` from `AccessSuppressed`) and expose the omission to the engines.
 
 ### Unmatched classification of errors from consumer middleware
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 3)
+- **Target:** followups-hardening
 - **Context:** `RequestState.unmatched` treats a non-panic 404/405 failure with no matched route as answered by the router. Consumer middleware that runs before route matching (fiber `app.Use`, gin middleware on an engine given with `WithGinEngine`) and returns a 404/405 error for a path no route matches would therefore be limited too. D7 scopes the limit to "404 and 405 answered by the router"; for an unmatched path the difference is arguably immaterial (no route would have run), but the godoc promise "handler errors are never limited" reads stronger. A second, similar classification lives in `RequestState.result` (`r.Matched() || f.panic != nil`).
 - **Evidence:** unverified: altitude reviewer's code reading; no test reproduces it.
 - **Suggested action:** write a paritytest row with fiber `app.Use` middleware returning `fiber.ErrNotFound` for an unmatched path under a limit; if the owner wants it unlimited, record the failure's origin where the router answers (`answerUnmatched`, gin `NoRoute`/`NoMethod`, fiber's not-found path) instead of deriving it.
@@ -364,15 +364,15 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### Recovered panic values that are errors are not kept as `Cause`
-- **Status:** open
-- **Target:** unassigned (owner decision)
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 4)
+- **Target:** followups-hardening
 - **Context:** `otelsetup.validatePath` recovers `http.ServeMux` panics, whose value is an `error`, and `otelsrvr` recovers panicking Propagator/TracerProvider/MeterProvider calls; all flatten the value with `engine.ValueText`, so `Cause` stays nil (design D13 states this). A consumer's sentinel is reachable with `errors.Is` when a provider returns it but not when it panics with it.
 - **Evidence:** altitude reviewer's code reading during the 10.6 /simplify (`otelsetup/config.go` `validatePath`, `otelsrvr/otelsrvr.go` recover sites); not a defect, no test.
 - **Suggested action:** if wanted, set `Cause` when the recovered value is an `error` (text unchanged), with spec rows for a panicking provider.
 
 ### Problem-option errors are not joined with the other field errors
-- **Status:** open
-- **Target:** unassigned
+- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 2)
+- **Target:** followups-hardening
 - **Context:** `engine.ResolveConfig` returns a `newProblems` error after `newSettings` validated every other field, the same shape 10.2 fixed for the log fields: an invalid prblm option together with an invalid field reports only the field.
 - **Evidence:** unverified: altitude reviewer's code reading during the slice 10 /simplify (`engine/core.go` `ResolveConfig`); no test reproduces it.
 - **Suggested action:** write a `TestNew_Config` row combining a rejected `WithProblemOptions` option with `ShutdownTimeout -1s`; if it reports one field, validate the prblm options in `Settings.validate`.
@@ -389,4 +389,4 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** triage-debug-buffer
 - **Context:** tagged in RELEASING.md order: `v0.1.0` at `a6357e3` (merge of the release-notes PR), `ginsrvr/v0.1.0` at `5ce058e`, `fibersrvr/v0.1.0` at `cba5c89`, `otelsrvr/v0.1.0` at `8358f7f`, `otelsetup/v0.1.0` at `dc254af`; development `replace` lines restored in `8281f7f`. Between `8358f7f` and `dc254af` the `main` CI run failed in `otelsetup` and `internal/paritytest` with "updates to go.mod needed": an expected intermediate state while the released modules required `srvr v0.1.0` and those two still required the pseudo-version. `8281f7f` also tidies `internal/paritytest` to require `srvr v0.1.0` (its `replace` lines still point at the repository).
 - **Evidence:** `make check` passed before each tag (root at `a6357e3`; `ginsrvr`, `fibersrvr`, `otelsrvr` and `otelsetup` without `replace`) and after restoring `replace`; the CI `release` job passed for all five tags (runs 44461313127, 44461418921, 44461417969, 44461417905, 44461482157). `GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m` resolves `github.com/kartaladev/srvr`, `/ginsrvr`, `/fibersrvr`, `/otelsrvr` and `/otelsetup` at `v0.1.0`. A scratch consumer outside the repository (`GOWORK=off`) requiring all five at `v0.1.0` passed `go vet`, built, and constructed a net/http, gin and fiber server and an otelsrvr observer without error.
-- **Suggested action:** RELEASING.md could say that `internal/paritytest` needs `go mod tidy` in the restore commit, and that `main` CI is red between the module release commits; unassigned.
+- **Suggested action:** RELEASING.md could say that `internal/paritytest` needs `go mod tidy` in the restore commit, and that `main` CI is red between the module release commits; adopted by followups-hardening (tasks 5.6 and 8.5, owner decision 2026-11-19).

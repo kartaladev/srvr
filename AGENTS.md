@@ -89,7 +89,7 @@ When a task group is complete and verified, run `/simplify` on that group's chan
 
 ## OpenSpec workflow
 
-- Changes are planned in order: `core-server` -> `gin-and-fiber-engines` -> `otel-observability` -> `goroutine-leak-checks` -> `scrty-integration` -> `triage-debug-buffer`.
+- Changes are planned in order: `core-server` -> `gin-and-fiber-engines` -> `otel-observability` -> `goroutine-leak-checks` -> `triage-debug-buffer` -> `followups-hardening` -> `scrty-integration` (owner decision 2026-11-19: `triage-debug-buffer` and `followups-hardening` are applied before `scrty-integration`).
 - Task group 1 of every change is consolidation: sync with the main branch, decide earlier changes' `notes.md` carry-overs, refresh the change's artifacts against merged specs and code, and record the outcome. Do not skip it, even when the change looks current.
 - While applying, write every follow-up that does not belong to the current change - especially problems not tightly related to it - to the change's `notes.md` (status, target change, context, evidence, suggested action). Never fix such problems silently and never drop them.
 - Each spec scenario maps to one table-driven test, and each Examples row to one test case.
