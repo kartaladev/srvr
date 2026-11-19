@@ -6,6 +6,8 @@ once tagged.
 
 ## [Unreleased]
 
+## [v0.1.0] - 2026-11-19
+
 ### Added
 
 - Per-request debug buffering, off by default: `srvr.WithDebugBuffer(opts...)` with `BufferLevel`,

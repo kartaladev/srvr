@@ -179,9 +179,9 @@ Note: owner request 2026-11-19, placed before the release slice so it ships in t
 
 ## 11. Slice: release (carried from skills-compliance)
 
-- [ ] 11.1 Precondition: this change is reviewed and merged to `main`, and `skills-compliance` is archived; verify `git log main --oneline -1` contains the merge and `openspec list` no longer lists `skills-compliance`
-- [ ] 11.2 Prepare: move the `CHANGELOG.md` "Unreleased" entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
-- [ ] 11.3 STOP for the owner: present the proposed version (suggested `v0.1.0`), the changelog section and the dry-run results, and wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [x] 11.1 Precondition: this change is reviewed and merged to `main`, and `skills-compliance` is archived; verify `git log main --oneline -1` contains the merge and `openspec list` no longer lists `skills-compliance`
+- [x] 11.2 Prepare: move the `CHANGELOG.md` "Unreleased" entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
+- [x] 11.3 STOP for the owner: present the proposed version (suggested `v0.1.0`), the changelog section and the dry-run results, and wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
 - [ ] 11.4 Release in `RELEASING.md` order: tag the core module and push the tag; in each released module (`ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`) require that core version, drop the `replace`, run its checks with `GOWORK=off`, commit, tag `<module>/<version>` and push; verify the CI `release` job passes for every tag
 - [ ] 11.5 Verify through the module proxy: `GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m github.com/kartaladev/srvr@<version>` and the same for every module, and build a scratch consumer outside the repository that imports each module at the tagged version; record the result in `notes.md`
 
