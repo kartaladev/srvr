@@ -46,7 +46,11 @@ import (
 // default, so a file replaced on disk is served fresh and no file stays
 // open after a request; [WithSendFileCache] turns the cache on for one
 // mount. Compression, byte ranges and fiber's own Cache-Control stay off.
-// A file that disappears between the resolution and SendFile is a 404.
+// Because SendFile opens the file again by name, a file removed or made
+// unreadable between the resolution and SendFile's open is the 404 problem,
+// recorded as a request no route matched, and one removed before
+// fasthttp's second open is the safe 500 problem; net/http and gin serve
+// the file the resolver opened (an engine-parity exception).
 //
 // fiber matches routes in registration order, so the server installs the
 // mounts after every other configurer, longest prefix first, as GET
@@ -64,6 +68,11 @@ import (
 //   - fiber removes "." and ".." elements from the path before routing;
 //     a request whose path had one is answered 404, never with a file or
 //     the fallback.
+//   - With fiber's UnescapePath (set through [WithFiberConfig]), fiber
+//     decodes the path before routing, so an encoded slash at the end of
+//     the prefix, as in GET /assets%2Fapp.js for Static("/assets"), serves
+//     app.js, as on gin; without it the answer is 404, as on net/http (an
+//     engine-parity exception; nothing outside fsys is reachable).
 //
 // A served file is recorded with http.route prefix+"/*" ("/*" for "/"), or
 // prefix for the prefix itself, and no code location. A mount's 404 is

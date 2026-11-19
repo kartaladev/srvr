@@ -80,7 +80,8 @@ engine does not compile.
 ## Static files and single-page apps
 
 `srvr.Static(prefix, fsys, opts...)` serves the files of an `fs.FS`, such as a Vite or React build
-directory or an `embed.FS`, as a route configurer:
+directory or an `embed.FS`, as a route configurer. `ginsrvr.Static` and `fibersrvr.Static` take the
+same arguments and `srvr.StaticOption` values and give the same answers on their engines:
 
 ```go
 root, err := os.OpenRoot("dist") // refuses symbolic links that leave dist; os.DirFS does not
@@ -110,6 +111,37 @@ sent with `Cache-Control: no-cache` and `Vary: Accept`. Content-hashed assets ca
 with `srvr.WithStaticCacheControl("public, max-age=31536000, immutable")`; index files and the
 fallback keep `no-cache` (`srvr.WithStaticIndexCacheControl` changes it). Every option has a field in
 `srvr.StaticConfig` for configuration loaders.
+
+```go
+s.Register(srvr.Static("/", site, srvr.WithSPAFallback("index.html")))      // net/http
+s.Register(ginsrvr.Static("/", site, srvr.WithSPAFallback("index.html")))   // gin
+s.Register(fibersrvr.Static("/", site, srvr.WithSPAFallback("index.html"))) // fiber
+```
+
+**Prefer `os.OpenRoot` over `os.DirFS`.** srvr refuses any request path that could leave the file
+system (`..`, encoded or not, backslashes, control characters), but symbolic links are the file
+system's business: `os.DirFS(dir)` follows a link inside `dir` to anywhere on the disk. The
+`fs.FS` of `os.OpenRoot(dir)` (`root.FS()`) refuses a link that escapes the root, and such a request
+gets the safe `500` problem and an `ERROR` record. An `embed.FS` has no links and no modification
+times, so its files are sent without `Last-Modified`.
+
+Each engine routes as its router does, so a few answers differ, each documented on the engine's
+`Static` and pinned by the parity tests: net/http redirects a raw `..` or `//` in the request target
+to the cleaned path (`307`), where gin and fiber answer `404`; gin, and fiber with `UnescapePath`,
+serve `GET /assets%2Fapp.js` from `Static("/assets")`, where net/http and fiber by default answer
+`404`; fiber refuses a consumer `Get("/*")` beside `Static("/")` at `Start`, where the consumer's
+catch-all wins on net/http and gin; and fiber opens a file again by name to send it, so a file
+removed or made unreadable in between is a `404`, or the safe `500` when it fails at fasthttp's
+second open. See [ginsrvr](ginsrvr#static-files-and-single-page-apps)
+and [fibersrvr](fibersrvr#static-files-and-single-page-apps).
+
+fiber can keep served files open between requests with an explicit, per-mount opt-in:
+`fibersrvr.WithSendFileCache(d)`, or `srvr.StaticConfig.FiberSendFileCache` (`0` is off). It measured
+about twice as fast per request on `os.DirFS`, but it loosens the default: a file replaced on disk
+may be served stale for up to `d`, and each cached mount starts a fasthttp cache-cleaner goroutine
+that outlives `Shutdown` (fiber v3.7.0 never stops it), which a goleak test must ignore. `srvr.Static`
+and `ginsrvr.Static` have no file cache and fail `Start` on a non-zero `FiberSendFileCache` rather
+than ignore it.
 
 ## Modules
 

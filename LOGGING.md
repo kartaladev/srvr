@@ -84,6 +84,28 @@ router. Handler errors, panics, `5xx` and `http.request.completed` records are n
 record discards the request's debug buffer. A negative `Burst`, or a positive one with `Interval` not
 above zero, fails construction. Adding `srvr.unmatched.suppressed` kept `srvr.log.schema` at 1.
 
+### Static files
+
+Requests to a static mount (`srvr.Static`, `ginsrvr.Static`, `fibersrvr.Static`) write the same
+request events as routed requests, through the whole pipeline (trace context, access record,
+observers, recovery, problems), on every engine:
+
+- A served file, index file or SPA fallback is `http.request.completed` with `http.route` set to the
+  mount's pattern in the engine's syntax: `/assets/{path...}` (net/http), `/assets/*filepath` (gin),
+  `/assets/*` (fiber), or `/assets` for the prefix itself. `code.function.name` and its location are
+  absent: no consumer handler ran.
+- A static miss (`404`: a missing file, a dotfile, a path that cannot name a file inside the file
+  system) and another method's `405` are the router's answer, recorded exactly like a request no route
+  matched: `http.request.failed` at `WARN`, no `http.route`, and counted by the unmatched-record limit
+  above, because with `Static("/")` every scanner path reaches the mount. A `404` or `405` that
+  consumer middleware reports before the mount runs is not counted.
+- A file system error, panic or file that cannot seek is the safe `500` problem; its
+  `http.request.failed` record at `ERROR` keeps `http.route` and carries the error (`error.type`,
+  `error.chain`, `exception.message`), which may name the file. The file system path never appears in
+  the response, and the request path only as `url.path` with `AccessLogConfig.IncludePath`.
+
+Serving static files added no key: `srvr.log.schema` stays 1.
+
 Never logged at any level: request or response bodies, `Authorization`, `Cookie`, `Set-Cookie`, the
 query string, the raw path and the client address, unless the named opt-in above is set. Error text
 goes to logs, never to 5xx responses.

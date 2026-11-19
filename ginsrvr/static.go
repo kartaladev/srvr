@@ -50,6 +50,10 @@ import (
 //     server has a mount, also for requests gin answers with its own 404
 //     or 405.
 //   - The mount replaces a no-route handler a [WithGinEngine] hook set.
+//   - gin routes on the decoded path, so an encoded slash at the end of
+//     the prefix, as in GET /assets%2Fapp.js for Static("/assets"), serves
+//     app.js, where net/http and fiber by default answer 404 (an
+//     engine-parity exception; nothing outside fsys is reachable).
 //
 // A served file is recorded with http.route prefix+"/*filepath"
 // ("/*filepath" for "/"), or prefix for the prefix itself, and no code

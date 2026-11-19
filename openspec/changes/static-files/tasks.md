@@ -121,17 +121,18 @@
 
 ## 6. Slice: static parity and documented exceptions
 
-- [ ] 6.1 One parity table for every "every engine" row (static-files, all scenarios run on every engine); verify `go test -race -run TestStaticParity .` in `internal/paritytest` passes
+- [x] 6.1 One parity table for every "every engine" row (static-files, all scenarios run on every engine); verify `go test -race -run TestStaticParity .` in `internal/paritytest` passes
   - RED: `TestStaticParity` (`internal/paritytest/static_test.go`) builds the fixture once and runs every row on the three engines from one table, comparing status, the headers named by the spec, the body, and the access record's key set against net/http's; any difference is a defect claim (rule 2): record the failing output in `notes.md` and fix it under that row
   - GREEN: fixes only where a row fails
   - REFACTOR: reuse `engines` and the harness helpers (no new helpers unless three call sites repeat)
-- [ ] 6.2 The three new documented differences (engine-parity / Scenario: Documented differences, the static rows, plus the encoded-slash-at-the-prefix row (owner decision 2026-11-20, notes.md "An encoded slash that joins the prefix to a name"): gin and fiber with `UnescapePath` serve `GET /assets%2Fapp.js`, net/http and fiber by default answer `404`; the `FiberSendFileCache` row is pinned by task 5.6.1's tests; gin's static `Allow` row was removed by task 5.10); verify `go test -race -run TestParityExceptions .` (the existing test of this scenario, extended; name it in the task note) passes
+- [x] 6.2 The three new documented differences (engine-parity / Scenario: Documented differences, the static rows, plus the encoded-slash-at-the-prefix row (owner decision 2026-11-20, notes.md "An encoded slash that joins the prefix to a name"): gin and fiber with `UnescapePath` serve `GET /assets%2Fapp.js`, net/http and fiber by default answer `404`; the `FiberSendFileCache` row is pinned by task 5.6.1's tests; gin's static `Allow` row was removed by task 5.10); verify `go test -race -run TestParity_Exceptions .` (the existing test of this scenario, extended; name it in the task note) passes
   - RED: the two remaining rows pin each engine's actual behaviour
   - GREEN: godoc of `fibersrvr.Static` and `srvr.Static` names its exception
   - REFACTOR: none
-- [ ] 6.3 `LOGGING.md`: static hits carry `http.route`, misses are unmatched and counted by the limit, no new key (`srvr.log.schema` stays `1`); README section finished with all three engines and the `os.OpenRoot` advice; verify `go test -run 'TestLogSchemaDocumented|Example' .` passes and the golden-record test is unchanged
-- [ ] 6.4 Verify the change end to end: `make check` passes in every module; `make cover` shows `engine/static.go` covered from the engine modules' tests too; `openspec validate static-files --strict` passes; `gopls` diagnostics clean
-- [ ] 6.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `test(paritytest): pin static-file parity across engines`; verify with `git log -1 --stat`
+  - Note: the existing test is `TestParity_Exceptions` (`internal/paritytest/problem_test.go`), extended with one subtest per static row; the open race entry became a fourth documented row (fiber reopening a file by name), deterministic with a counted `Open`; see notes.md "Task 6.2: static parity exceptions pinned"
+- [x] 6.3 `LOGGING.md`: static hits carry `http.route`, misses are unmatched and counted by the limit, no new key (`srvr.log.schema` stays `1`); README section finished with all three engines and the `os.OpenRoot` advice; verify `go test -run 'TestLogSchemaDocumented|Example' .` passes and the golden-record test is unchanged
+- [x] 6.4 Verify the change end to end: `make check` passes in every module; `make cover` shows `engine/static.go` covered from the engine modules' tests too; `openspec validate static-files --strict` passes; `gopls` diagnostics clean
+- [x] 6.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `test(paritytest): pin static-file parity across engines`; verify with `git log -1 --stat`
 
 ## 7. Slice: release
 

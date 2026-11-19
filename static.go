@@ -127,7 +127,10 @@ func WithStaticConfig(c StaticConfig) StaticOption {
 // prefix that contains the path owns the request. A request path with ".."
 // or "//" sent as a raw request target gets ServeMux's 307 redirect to the
 // cleaned path before any route runs (an engine-parity exception: gin and
-// fiber answer 404).
+// fiber answer 404). An encoded slash at the end of the prefix, as in
+// GET /assets%2Fapp.js for Static("/assets"), is matched by ServeMux as the
+// escaped segment "assets%2Fapp.js" and answered 404 (an engine-parity
+// exception: gin, and fiber with UnescapePath, serve app.js).
 //
 // A 404 or 405 of the mount is logged and observed as a request no route
 // matched (no http.route) and counted by [WithUnmatchedRecordLimit],

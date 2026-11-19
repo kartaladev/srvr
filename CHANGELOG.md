@@ -32,7 +32,9 @@ once tagged.
   the requests gin answers with its own `404` or `405`. Any other method that another method's route
   matches gets gin's `405`, whose `Allow` inside a mount also lists `GET` and `HEAD`, as net/http and
   fiber send it (`Allow: GET, HEAD, POST`). A mount replaces a `NoRoute` handler set by a
-  `ginsrvr.WithGinEngine` hook.
+  `ginsrvr.WithGinEngine` hook. gin routes on the decoded path, so an encoded slash at the end of
+  the prefix (`GET /assets%2Fapp.js`) serves `app.js`, where net/http and fiber answer `404`
+  (documented engine-parity exception).
 - `fibersrvr.Static(prefix, fsys, opts...)` serves static files and single-page apps on the fiber
   engine with the same `srvr.StaticOption` values, defaults and answers as `srvr.Static`. Files are
   sent with fiber's `Ctx.SendFile` with its open-file cache off (a file replaced on disk is served
@@ -41,7 +43,10 @@ once tagged.
   around the mounts even when added after `Static`, and a `GET` or `HEAD` to a path only another
   method's route serves gets the file or the SPA fallback. A consumer route that repeats a mount's
   pattern, such as `Get("/*")` beside `Static("/")`, fails `Start` as a duplicate (net/http and gin
-  let the consumer's catch-all win).
+  let the consumer's catch-all win). With fiber's `UnescapePath`, `GET /assets%2Fapp.js` serves
+  `app.js` as on gin. `SendFile` opens the file again by name, so a file removed or made unreadable
+  between srvr's check and that open is a `404` (a `500` if it fails at fasthttp's second open),
+  where net/http and gin serve the file they opened (documented engine-parity exceptions).
 - `fibersrvr.WithSendFileCache(d)` and `srvr.StaticConfig.FiberSendFileCache`
   (`fiber_send_file_cache`) turn on fiber's open-file cache for one static mount (opt-in; off by
   default). About twice as fast per request on `os.DirFS`, but a file replaced on disk may be served
