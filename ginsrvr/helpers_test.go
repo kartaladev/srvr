@@ -270,3 +270,61 @@ func clientFor(rawURL string) *http.Client {
 
 	return http.DefaultClient
 }
+
+// mustNil fails the test when err is not nil.
+func mustNil(t *testing.T, err error) {
+	t.Helper()
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// String returns everything written so far, for failure messages.
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buf.String()
+}
+
+// eventually polls cond until it holds, failing with msg after a second.
+func eventually(t *testing.T, cond func() bool, msg string) {
+	t.Helper()
+
+	for deadline := time.Now().Add(time.Second); !cond(); time.Sleep(time.Millisecond) {
+		if !time.Now().Before(deadline) {
+			t.Fatal(msg)
+		}
+	}
+}
+
+// duplicateWindow is how long waitRecord watches for a second record.
+const duplicateWindow = 10 * time.Millisecond
+
+// waitRecord waits for the one record with msg: access records are
+// written as the response finishes, which can be just after the client
+// has it. It fails when a second one appears within duplicateWindow.
+func (b *logBuffer) waitRecord(t *testing.T, msg string) map[string]any {
+	t.Helper()
+
+	var got []map[string]any
+	eventually(t, func() bool { got = b.withMsg(t, msg); return len(got) > 0 }, "no "+msg+" record in:\n"+b.String())
+
+	for quiet := time.Now().Add(duplicateWindow); ; time.Sleep(time.Millisecond) {
+		if got = b.withMsg(t, msg); len(got) != 1 {
+			t.Fatalf("%d %s records, want 1:\n%s", len(got), msg, b.String())
+		}
+
+		if !time.Now().Before(quiet) {
+			return got[0]
+		}
+	}
+}
+
+// get sends a GET request without headers.
+func get(t *testing.T, url string) response {
+	t.Helper()
+
+	return do(t, http.MethodGet, url, nil, nil)
+}

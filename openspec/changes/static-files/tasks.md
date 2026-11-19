@@ -71,21 +71,21 @@
 
 ## 4. Slice: gin serves static files from its no-route chain
 
-- [ ] 4.1 `ginsrvr.Static` validation and lifecycle (static-files / Scenarios: Rejected static configuration, Several invalid settings, Static configurer lifecycle misuse; gin rows); verify `go test -race -run 'TestStatic_Config|TestStatic_Lifecycle' ./...` in `ginsrvr` passes
+- [x] 4.1 `ginsrvr.Static` validation and lifecycle (static-files / Scenarios: Rejected static configuration, Several invalid settings, Static configurer lifecycle misuse; gin rows); verify `go test -race -run 'TestStatic_Config|TestStatic_Lifecycle' ./...` in `ginsrvr` passes
   - RED: `ginsrvr/static_test.go` rows; the direct-`Configure` row expects the `Server.Register` message
   - GREEN: design D4 (gin): `ginsrvr.Static` returns a configurer holding the `engine` mount and its error; `configure` recognises it (unexported interface), returns its error, and after the loop installs one dispatcher with `e.NoRoute`; `Configure` panics with the guidance message
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 4.2 gin serves, misses and refuses like net/http (static-files / Scenarios: Serving a file, Conditional and range requests, Not found, Hostile paths, Faulty file system, Symbolic links, Other methods, Fallback decision, Fallback under a prefix, Cache headers, Configuration sources; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
+- [x] 4.2 gin serves, misses and refuses like net/http (static-files / Scenarios: Serving a file, Conditional and range requests, Not found, Hostile paths, Faulty file system, Symbolic links, Other methods, Fallback decision, Fallback under a prefix, Cache headers, Configuration sources; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
   - RED: the gin rows with `httptest`; the `PUT /api/users` row pins gin's `Allow: POST` (documented exception)
   - GREEN: the dispatcher: longest prefix, `rest` from `c.Request.URL.Path`, the resolver, `ServeContent` on `c.Writer` with the stripped clone, `c.Error(prblm.ErrNotFound)` and abort for a miss, the `405` problem, `SetRoute` on a hit
   - REFACTOR: compare the request-clone and header-setting code with the root module's and move the shared part to `engine` if it is engine-independent (Move Function); then `/simplify`
-- [ ] 4.3 Precedence, conflicts, records, the limit, observers, middleware and listing on gin (static-files / Scenarios: Precedence, Conflicts with other routes, Static access records, Static misses and the unmatched-record limit, Observers see static requests, Consumer middleware around static files, Static route listing, Partial failure while serving; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
+- [x] 4.3 Precedence, conflicts, records, the limit, observers, middleware and listing on gin (static-files / Scenarios: Precedence, Conflicts with other routes, Static access records, Static misses and the unmatched-record limit, Observers see static requests, Consumer middleware around static files, Static route listing, Partial failure while serving; gin rows); verify `go test -race -run 'TestStatic_' ./...` in `ginsrvr` passes
   - RED: the gin rows; check `RequestState.result`'s `Err` for a static miss against the request-observer rows (design D5 failure modes) and record the outcome in `notes.md`
   - GREEN: synthesise the listing entries (`GET {prefix}`, `GET {prefix}/*filepath`) attributed to the static configurer's type, placed after the other routes; `NoRoute` is called after the configure loop, so its rebuilt chain includes the root group's consumer middleware (design D4); add a row proving a server without a static mount keeps the followups-hardening unmatched rows unchanged (no consumer middleware in the no-route chain)
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 4.4 Documentation: `ginsrvr` godoc (`Static`, why no-route, the gin catch-all exception), README engine table, `CHANGELOG.md` entry; verify `go test -run Example ./...` in `ginsrvr` passes
-- [ ] 4.5 Verify the slice end to end: `make check MODULES=ginsrvr` passes; `make cover` shows the dispatcher, its installation and the shared `engine` static code covered from ginsrvr's tests; `gopls` diagnostics clean
-- [ ] 4.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(ginsrvr): serve static files and single-page apps`; verify with `git log -1 --stat`
+- [x] 4.4 Documentation: `ginsrvr` godoc (`Static`, why no-route, the gin catch-all exception), README engine table, `CHANGELOG.md` entry; verify `go test -run Example ./...` in `ginsrvr` passes
+- [x] 4.5 Verify the slice end to end: `make check MODULES=ginsrvr` passes; `make cover` shows the dispatcher, its installation and the shared `engine` static code covered from ginsrvr's tests; `gopls` diagnostics clean
+- [x] 4.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(ginsrvr): serve static files and single-page apps`; verify with `git log -1 --stat`
 
 ## 5. Slice: fiber serves static files with Ctx.SendFile
 

@@ -616,3 +616,51 @@ var missErrors = [...]error{fs.ErrNotExist, fs.ErrInvalid, syscall.ENOTDIR, sysc
 func staticFailure(err error) StaticResult {
 	return StaticResult{Answer: StaticFailed, Err: err}
 }
+
+// ServeStaticFile sends res, a StaticFile decision, with net/http's
+// content server, as the net/http and gin engines do, and closes its file.
+// The headers the decision names are set first: only once the file is
+// open, so a problem never carries them (prblm keeps a Cache-Control
+// already on the response), and before http.ServeContent, which then
+// keeps them on a 304 and does not sniff a known type. The request is
+// passed without the preconditions a static mount ignores.
+func ServeStaticFile(w http.ResponseWriter, r *http.Request, res StaticResult) {
+	defer res.File.Close()
+
+	h := w.Header()
+	setIf(h, "Content-Type", res.ContentType)
+	setIf(h, "Cache-Control", res.CacheControl)
+	setIf(h, "Vary", res.Vary)
+
+	http.ServeContent(w, withoutPreconditions(r), res.Name, res.ModTime, res.File)
+}
+
+// setIf sets header name to v unless v is empty.
+func setIf(h http.Header, name, v string) {
+	if v != "" {
+		h.Set(name, v)
+	}
+}
+
+// preconditions are the request headers http.ServeContent would honour
+// and a static mount ignores: byte ranges and every precondition except
+// If-Modified-Since, so no 206, 412 or 416 answer can occur.
+var preconditions = [...]string{"Range", "If-Range", "If-Match", "If-None-Match", "If-Unmodified-Since"}
+
+// withoutPreconditions returns r, or a shallow copy without the
+// preconditions a static mount ignores when r carries any.
+func withoutPreconditions(r *http.Request) *http.Request {
+	if !slices.ContainsFunc(preconditions[:], func(h string) bool { _, ok := r.Header[h]; return ok }) {
+		return r
+	}
+
+	r2 := new(http.Request)
+	*r2 = *r
+	r2.Header = r.Header.Clone()
+
+	for _, h := range preconditions {
+		delete(r2.Header, h)
+	}
+
+	return r2
+}

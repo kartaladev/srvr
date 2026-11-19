@@ -328,7 +328,7 @@ A served index file and the SPA fallback SHALL carry `Cache-Control: no-cache` u
 | `WithStaticIndexCacheControl("")` | `GET /` | `200` | `no-cache` (empty means the default) |
 
 ### Requirement: Only GET and HEAD are served
-A request below a static prefix with another method, that no other route matches, SHALL get a `405` problem with `Allow: GET, HEAD` on every engine, counted as answered by the router. A path another route serves keeps that route's answer.
+A request below a static prefix with another method, that no other route matches, SHALL get a `405` problem with `Allow: GET, HEAD` on every engine, counted as answered by the router. A path another route serves keeps that route's answer. A `GET` or `HEAD` to a path below a static prefix that only routes for other methods serve SHALL be answered by the static mount (file, fallback or `404` problem) on every engine.
 
 #### Scenario: Other methods
 - **Given** a server on engine `<engine>` with `Static("/", site)` and `<routes>`
@@ -353,6 +353,12 @@ A request below a static prefix with another method, that no other route matches
 | `net/http` | `POST /api/users` | `PUT /api/users` | a `405` problem with `Allow: GET, HEAD, POST` |
 | `gin` | `POST /api/users` | `PUT /api/users` | a `405` problem with `Allow: POST` (documented parity exception) |
 | `fiber` | `POST /api/users` | `PUT /api/users` | a `405` problem with `Allow: GET, HEAD, POST` |
+| `gin` | `POST /app.js` | `GET /app.js` | `200` with the file `app.js`, no `Allow` header (a `GET` or `HEAD` that only another method's route matches is the mount's) |
+| `gin` | `POST /api/users` | `GET /api/users` | a `404` problem without an `Allow` header, recorded as unmatched |
+| `gin` | `POST /login`, with `WithSPAFallback("index.html")` on the mount | `GET /login` with `Accept: text/html` | `200` `<html>app</html>` (the fallback), no `Allow` header |
+| `gin` | `POST /login`, with `WithSPAFallback("index.html")` on the mount | `HEAD /login` with `Accept: text/html` | `200` without a body, no `Allow` header |
+| `gin` | `POST /api/users`, with `Static("/assets", site)` instead of `Static("/", site)` | `GET /api/users` | a `405` problem with `Allow: POST` (no mount contains the path) |
+| `gin` | `POST /api/users`, and no static mount | `GET /api/users` | a `405` problem with `Allow: POST`; consumer root-group middleware does not run |
 
 ### Requirement: Registered routes win over static files
 Any route registered by a configurer SHALL take precedence over a static mount and its SPA fallback for the requests it matches, on every engine and in either registration order. Among static mounts, the one with the longest prefix that contains the request path SHALL own it.

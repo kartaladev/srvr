@@ -23,6 +23,17 @@ once tagged.
   `Cache-Control` on files (none by default), `srvr.WithStaticIndexCacheControl` on index files and
   the fallback (`no-cache` by default). A fallback that is not a regular file, or a header value with
   a control character, fails `Start`.
+- `ginsrvr.Static(prefix, fsys, opts...)` serves static files and single-page apps on the gin engine
+  with the same `srvr.StaticOption` values, defaults and answers as `srvr.Static`. Mounts are served
+  from gin's no-route and no-method chains (a gin catch-all cannot sit beside other routes), so
+  registered routes win in either order, a `GET` or `HEAD` to a path only another method's route
+  serves gets the file or the SPA fallback as on net/http, and root-group middleware runs around the
+  mounts even when added after `Static`; once a server has a mount, that middleware also runs for
+  the requests gin answers with its own `404` or `405`. Any other method that another method's route
+  matches keeps gin's `405` (`Allow: POST` where net/http and fiber send `Allow: GET, HEAD, POST`). A mount replaces a `NoRoute` handler set by a
+  `ginsrvr.WithGinEngine` hook.
+- `engine.ServeStaticFile` (package `engine`, unstable before v1) sends a static mount's file with
+  `http.ServeContent`, shared by the net/http and gin engines.
 - `engine.RequestState.MarkRouterAnswered` (package `engine`, unstable before v1) also clears the
   route an earlier stage recorded: an answer of the router means no route matched.
 
