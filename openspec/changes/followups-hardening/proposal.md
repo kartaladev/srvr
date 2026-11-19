@@ -35,6 +35,7 @@
 - `otel-metrics`: typed configuration errors keep a recovered panic error as `Cause`.
 - `telemetry-setup`: typed configuration errors keep a recovered panic error as `Cause`.
 - `gin-engine`: the middleware-order scenario gains status-only abort rows that guard the classification refactor.
+- `test-quality`: the allocation gate reports, and does not fail on, a unit whose runs spread more than 10% on either side, with rows for the false failure of pull request #14 (owner request 2026-11-19, design D10).
 - `trace-context`: the uniqueness scenario covers span ids and many concurrent clients, as a guard for any change of id source.
 
 ## Scope by Gall's Law

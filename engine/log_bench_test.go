@@ -58,7 +58,8 @@ func BenchmarkCorrelation(b *testing.B) {
 // attribute, which the attribute cap formats to measure. Two more rows
 // measure the patterns where the handler's target cache cannot hit: a
 // request logger taken from LoggerFromContext for each record, and the
-// root logger shared by concurrent requests, each with its own trace.
+// root logger shared by concurrent requests, each with its own trace,
+// whose records interleave.
 func BenchmarkLogHandler(b *testing.B) {
 	h := newLogHandler(&LogSettings{Output: io.Discard})
 
@@ -110,20 +111,31 @@ func BenchmarkLogHandler(b *testing.B) {
 		}
 	})
 
-	b.Run("root logger concurrent requests", func(b *testing.B) {
+	// Each goroutine alternates between two requests of its own, so no
+	// record's trace is the last one the root handler cached: every record
+	// rebuilds its target, at any GOMAXPROCS and however the goroutines
+	// interleave. With one request per goroutine the cache hit whenever no
+	// other goroutine had logged since, and allocs/op followed the
+	// scheduling: 0 at -cpu=1, 4 at -cpu=2, 4 to 7 at -cpu=4 (design D10).
+	b.Run("root logger interleaved requests", func(b *testing.B) {
 		l := slog.New(h)
 
 		var requests atomic.Uint64
 
+		request := func() context.Context {
+			tr := benchTrace
+			tr.SpanID = fmt.Sprintf("%016x", requests.Add(1))
+
+			return benchRequestContext(b, &RequestState{trace: tr})
+		}
+
 		b.ReportAllocs()
 
 		b.RunParallel(func(pb *testing.PB) {
-			tr := benchTrace
-			tr.SpanID = fmt.Sprintf("%016x", requests.Add(1)) // a request of its own per goroutine
-			ctx := benchRequestContext(b, &RequestState{trace: tr})
+			ctxs := [2]context.Context{request(), request()}
 
-			for pb.Next() {
-				l.LogAttrs(ctx, slog.LevelInfo, "query", attr)
+			for i := 0; pb.Next(); i++ {
+				l.LogAttrs(ctxs[i%2], slog.LevelInfo, "query", attr)
 			}
 		})
 	})

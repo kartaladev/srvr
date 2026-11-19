@@ -11,9 +11,14 @@
 // `make bench` writes it, usually with -count=6. A benchmark is compared
 // by package and name, using the median of its runs. It fails when the
 // median allocs/op or B/op of the branch is more than 10% above main's; a
-// rise from zero fails. Timing changes above 10% are reported but never
-// fail: shared CI runners vary too much for timings to gate. Benchmarks
-// only on one side are reported as new or removed.
+// rise from zero fails. A unit whose runs on either side spread more than
+// 10% (the largest more than 10% above the smallest) is not reproducible:
+// a rise of it is reported as noisy and does not fail, because the gate
+// cannot tell it from the runs' own noise. A parallel benchmark whose
+// allocations depend on how goroutines interleave is the known case.
+// Timing changes above 10% are reported but never fail: shared CI runners
+// vary too much for timings to gate. Benchmarks only on one side are
+// reported as new or removed.
 //
 // The exit code is 0 when nothing regressed, 1 when an allocation
 // regressed and 2 when an input cannot be read or holds no benchmark
@@ -180,12 +185,22 @@ func compare(base, branch results, out io.Writer) bool {
 			fmt.Fprintf(out, "removed  %s\n", k)
 		default:
 			for _, unit := range gated {
-				if m, b, ok := medians(was, now, unit); ok && rise(m, b) > maxRise {
-					failed = true
-
-					fmt.Fprintf(out, "FAIL     %s %s: main %g, branch %g (%s), more than %d%%\n",
-						k, unit, m, b, percent(m, b), maxRise)
+				m, b, ok := medians(was, now, unit)
+				if !ok || rise(m, b) <= maxRise {
+					continue
 				}
+
+				if !reproducible(was[unit]) || !reproducible(now[unit]) {
+					fmt.Fprintf(out, "noisy    %s %s: main %g (runs %s), branch %g (runs %s), %s, runs spread more than %d%%: not reproducible, not gated\n",
+						k, unit, m, span(was[unit]), b, span(now[unit]), percent(m, b), maxRise)
+
+					continue
+				}
+
+				failed = true
+
+				fmt.Fprintf(out, "FAIL     %s %s: main %g, branch %g (%s), more than %d%%\n",
+					k, unit, m, b, percent(m, b), maxRise)
 			}
 
 			if m, b, ok := medians(was, now, timed); ok && max(rise(m, b), rise(b, m)) > maxRise {
@@ -232,6 +247,18 @@ func median(values []float64) float64 {
 	}
 
 	return (s[n/2-1] + s[n/2]) / 2
+}
+
+// reproducible reports whether runs, one side's values of a unit, spread
+// maxRise or less: only then can a rise above maxRise against the other
+// side be told from the noise of the runs themselves.
+func reproducible(runs []float64) bool {
+	return rise(slices.Min(runs), slices.Max(runs)) <= maxRise
+}
+
+// span formats the range of runs, which is not empty.
+func span(runs []float64) string {
+	return fmt.Sprintf("%g..%g", slices.Min(runs), slices.Max(runs))
 }
 
 // rise returns how much branch is above base, in percent; a rise from

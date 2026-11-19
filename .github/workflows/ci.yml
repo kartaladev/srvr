@@ -106,11 +106,18 @@ jobs:
               main="$RUNNER_TEMP/main.txt" branch="$RUNNER_TEMP/branch.txt"
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+      # The gate's report also goes to the job summary, so a unit reported
+      # as noisy (not gated) is seen next to benchstat's table.
       - name: allocation gate
         working-directory: branch
         env:
           GOWORK: "off"
-        run: go run ./internal/benchgate "$RUNNER_TEMP/main.txt" "$RUNNER_TEMP/branch.txt"
+        run: |
+          status=0
+          go run ./internal/benchgate "$RUNNER_TEMP/main.txt" "$RUNNER_TEMP/branch.txt" > "$RUNNER_TEMP/gate.txt" || status=$?
+          cat "$RUNNER_TEMP/gate.txt"
+          { echo '```'; cat "$RUNNER_TEMP/gate.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
   # A released module must not keep a replace directive: go ignores replace
   # in a dependency, so consumers would build against another core.

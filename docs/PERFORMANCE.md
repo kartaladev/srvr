@@ -11,7 +11,7 @@ versions, and what CI checks on every pull request.
 | `srvr` (`internal/tracectx`) | `BenchmarkNewTrace` | generating a new trace's ids, serial and parallel |
 | `ginsrvr` | `BenchmarkPipeline` | the same cases on gin |
 | `fibersrvr` | `BenchmarkPipeline` | the same cases on fiber through `app.Test`, plus a success whose access record is suppressed (`SkipPaths`) and an unmatched path whose record `WithUnmatchedRecordLimit` suppresses, except the body over the limit, which fasthttp rejects before fiber runs and `app.Test` reports as an error |
-| `srvr/engine` | `BenchmarkLogHandler` | srvr's log handler: 0, 1 and 3 `With` steps, with and without a `slog.Any` value, a logger from `LoggerFromContext` used for one record, and the root logger used by concurrent requests |
+| `srvr/engine` | `BenchmarkLogHandler` | srvr's log handler: 0, 1 and 3 `With` steps, with and without a `slog.Any` value, a logger from `LoggerFromContext` used for one record, and the root logger used by concurrent requests whose records interleave |
 | `srvr/engine` | `BenchmarkCorrelation` | grouped and ungrouped request records |
 | `srvr/engine` | `BenchmarkRedactSecrets` | the default redactor over error texts and a 32 KiB stack |
 | `srvr/engine` | `BenchmarkDebugBuffer` | a request logging five `DEBUG` records with the debug buffer off, on and succeeding, on and failing; on and failing with seven attributes per record, one a `slog.Any` value; on and failing with 150 records, past the default 100 |
@@ -158,7 +158,10 @@ On every pull request the `bench` job of `.github/workflows/ci.yml`:
    with `BENCH_FLAGS=-benchtime=200ms`;
 3. writes `benchstat`'s comparison to the job summary;
 4. runs `internal/benchgate`, which fails the job when a benchmark's
-   median `allocs/op` or `B/op` rises more than 10% against `main`.
+   median `allocs/op` or `B/op` rises more than 10% against `main` and
+   that unit's runs are reproducible: on each side, the largest run at
+   most 10% above the smallest. Its report goes to the job log and to the
+   job summary.
 
 What fails and what does not:
 
@@ -166,6 +169,7 @@ What fails and what does not:
 |---|---|
 | `allocs/op` or `B/op` up by 10% or less | passes |
 | `allocs/op` or `B/op` up by more than 10%, or up from zero | fails, naming the benchmark and both values |
+| the same, but the unit's runs on `main` or on the branch spread more than 10% | passes, reported as `noisy` with both ranges: not reproducible, not gated |
 | `ns/op` up or down by more than 10% | passes, reported as a timing change |
 | a benchmark only on the branch | passes, reported as new |
 | a benchmark only on `main` | passes, reported as removed |
@@ -175,6 +179,34 @@ earlier measurements on one machine varied by more than 100% between runs.
 Allocation counts are deterministic for a given code path, so a rise is a
 real regression. The median over six runs absorbs the occasional outlier
 from pooled objects.
+
+A benchmark whose code path depends on how goroutines interleave is not
+deterministic, and the gate checks that instead of assuming it. The
+first version of the concurrent log benchmark shared the root logger's
+one-entry target cache between goroutines, each with a request of its
+own, so a record hit the cache only when no other goroutine had logged
+since: 0 `allocs/op` at `-cpu=1`, 4 to 7 at `-cpu=4`. It failed a
+docs-only pull request at 5 -> 7 `allocs/op` (+40%, and `benchstat`
+called it significant), and a re-run measured 6 -> 6. The benchmark now
+alternates two requests per goroutine, so every record misses the cache
+(8 `allocs/op` and 464 `B/op` at every `-cpu`), and the gate reports a
+unit whose runs spread more than 10% instead of failing on it: a 10%
+threshold cannot tell a regression from runs that disagree by more than
+that among themselves. Over 20 runs of every benchmark at `-cpu=4`, every
+other benchmark, `RunParallel` rows included, kept its `allocs/op` within
+one allocation and its `B/op` within 4.1% (pooled buffers, stack traces),
+apart from one outlier run of fiber's `panic parallel` (+24% `B/op`).
+
+So the gate still fails every rise above 10% of a benchmark whose runs
+agree to within 10% on both sides, which is every benchmark today. It
+does not fail a rise of a benchmark that has become noisy, nor of a unit
+with one outlier run in that job: the rise is printed, with both medians
+and ranges, in the job log and in the job summary below `benchstat`'s
+table. A new benchmark must keep its allocations
+independent of scheduling; one that is steady within each run but
+different between two runs (one cache hit rate on `main`, another on the
+branch) would still fail the gate, which only determinism prevents. See
+design D10 of the `followups-hardening` change.
 
 To run the gate locally, benchmark both versions into two directories and
 compare them:
