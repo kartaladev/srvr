@@ -39,22 +39,25 @@ type Core struct {
 // [ErrConfig] that names every offending field and value; nothing is
 // silently replaced by a default.
 func ResolveConfig(opts []Option) (*Core, error) {
-	s, err := newSettings(opts)
+	s, errs := newSettings(opts)
+
+	// The problem handler is built even when a field is invalid, so a
+	// rejected problem option is reported with every other field.
+	c := &Core{settings: s}
+
+	problems, err := newProblems(c.ProblemOptions())
 	if err != nil {
-		return nil, err
+		errs = append(errs, err)
 	}
 
-	c := &Core{
-		settings: s, cfg: s.resolve(), observers: guardObservers(s.Observers),
-		unmatched: newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now),
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
 	}
 
+	c.problems, c.cfg, c.observers = problems, s.resolve(), guardObservers(s.Observers)
+	c.unmatched = newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now)
 	c.log = newLogHandler(&c.settings.Log)
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
-
-	if c.problems, err = newProblems(c.ProblemOptions()); err != nil {
-		return nil, err
-	}
 
 	return c, nil
 }

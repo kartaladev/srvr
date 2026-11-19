@@ -12,6 +12,12 @@ once tagged.
   `prblm/adapters/ginprblm` v0.2.1: an error whose `As` or `Is` method panics, or a panic whose value
   is such an error, now gets the safe 500 problem instead of escaping prblm.
 
+### Fixed
+
+- Construction (`srvr.New`, `ginsrvr.New`, `fibersrvr.New`) reports a rejected `WithProblemOptions`
+  option in the same joined error as the other invalid fields; it was reported only when every other
+  field was valid. `errors.As` finds a `*srvr.ConfigError` with `Field` `ProblemOptions` among them.
+
 ## [v0.1.0] - 2026-11-19
 
 ### Added

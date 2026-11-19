@@ -10,17 +10,17 @@
 
 ## 2. Slice: construction joins problem-option errors (item 4)
 
-- [ ] 2.1 Prove or drop the claim: one error names `ProblemOptions` together with the other invalid fields (server-lifecycle / Scenario: Valid and invalid configuration, the four `WithProblemOptions` rows); verify `go test -race -run 'TestNew_Config' .` passes
+- [x] 2.1 Prove or drop the claim: one error names `ProblemOptions` together with the other invalid fields (server-lifecycle / Scenario: Valid and invalid configuration, the four `WithProblemOptions` rows); verify `go test -race -run 'TestNew_Config' .` passes
   - RED: add the four rows to `TestNew_Config` (`server_test.go`), asserting with `configFields` that every listed field is found; run it and record the failing output (expected: `fields ["ShutdownTimeout"], want "ProblemOptions" among them`). If every row passes, the defect is not confirmed: record that in `notes.md` (rule 2), keep the rows as regression rows, skip 2.2's GREEN, and commit 2.5 as `test(core): pin joined problem-option errors`
   - GREEN: design D2: `ResolveConfig` builds the problem handler even when `newSettings` reports errors and returns `errors.Join` of both, with the consumer-only fallback when srvr's own options cannot be built
   - REFACTOR: look for a duplicated error-collection path (Consolidate Duplicate Conditional Fragments) between `newSettings` and `ResolveConfig`; keep one join point
-- [ ] 2.2 The same join on gin and fiber (server-lifecycle / Scenario: Problem-option errors are joined on every engine); verify `go test -race -run TestProblemOptionErrors_Joined ./...` in `internal/paritytest` passes
+- [x] 2.2 The same join on gin and fiber (server-lifecycle / Scenario: Problem-option errors are joined on every engine); verify `go test -race -run TestProblemOptionErrors_Joined ./...` in `internal/paritytest` passes
   - RED: `TestProblemOptionErrors_Joined` (`internal/paritytest`), one case per Examples row (3 engines × 2 fields); fails on every engine like 2.1 if the defect is confirmed
   - GREEN: none beyond 2.1 expected (the engines share `ResolveConfig`); if an engine still fails, fix its construction order
   - REFACTOR: reuse the paritytest construction helpers instead of new ones (Extract Function only if three call sites repeat)
-- [ ] 2.3 Murphy check of the new branch: a consumer option that panics inside the joined path (row with `MaxHeaderBytes`), and a valid problem option with invalid settings that reports no `ProblemOptions` field; verify both rows pass in `TestNew_Config` and `go tool cover -func` shows every branch of `ResolveConfig` covered
-- [ ] 2.4 `CHANGELOG.md` `## [Unreleased]` "Fixed" entry (only if 2.1 confirmed the defect); `gopls` diagnostics on every changed file; verify `make check MODULES=". internal/paritytest"` (or `make check`) passes
-- [ ] 2.5 Run `/simplify` on the slice's changes, apply what holds up, re-run the tests, then commit `fix(core): join problem-option errors with the other configuration errors` (or the `test(core)` message from 2.1 when not confirmed); verify with `git log -1 --stat`
+- [x] 2.3 Murphy check of the new branch: a consumer option that panics inside the joined path (row with `MaxHeaderBytes`), and a valid problem option with invalid settings that reports no `ProblemOptions` field; verify both rows pass in `TestNew_Config` and `go tool cover -func` shows every branch of `ResolveConfig` covered
+- [x] 2.4 `CHANGELOG.md` `## [Unreleased]` "Fixed" entry (only if 2.1 confirmed the defect); `gopls` diagnostics on every changed file; verify `make check MODULES=". internal/paritytest"` (or `make check`) passes
+- [x] 2.5 Run `/simplify` on the slice's changes, apply what holds up, re-run the tests, then commit `fix(core): join problem-option errors with the other configuration errors` (or the `test(core)` message from 2.1 when not confirmed); verify with `git log -1 --stat`
 
 ## 3. Slice: only the router's 404 and 405 are limited (item 5)
 

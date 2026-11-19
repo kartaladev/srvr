@@ -12,8 +12,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
-	"github.com/kartaladev/srvr/fibersrvr"
-	"github.com/kartaladev/srvr/ginsrvr"
 	"github.com/kartaladev/srvr/otelsrvr"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
@@ -276,15 +274,6 @@ func checkStopped(t *testing.T, logs *logBuffer, want float64) {
 func TestUnmatchedLimit_Config(t *testing.T) {
 	t.Parallel()
 
-	builders := []struct {
-		name string
-		new  func(opts ...srvr.Option) error
-	}{
-		{"net/http", func(opts ...srvr.Option) error { _, err := srvr.New(opts...); return err }},
-		{"gin", func(opts ...srvr.Option) error { _, err := ginsrvr.New(opts...); return err }},
-		{"fiber", func(opts ...srvr.Option) error { _, err := fibersrvr.New(opts...); return err }},
-	}
-
 	tests := []struct {
 		name     string
 		burst    int
@@ -297,7 +286,7 @@ func TestUnmatchedLimit_Config(t *testing.T) {
 		{"no limit", 0, 0, ""},
 	}
 
-	for _, b := range builders {
+	for _, b := range constructors {
 		for _, tt := range tests {
 			t.Run(b.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
