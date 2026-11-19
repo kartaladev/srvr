@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kartaladev/prblm"
+
 	"github.com/kartaladev/srvr"
 )
 
@@ -31,6 +33,7 @@ func TestNew_Config(t *testing.T) {
 		opts    []srvr.Option
 		message string   // empty: a server is returned
 		fields  []string // every field one joined error names, read with errors.As
+		absent  []string // fields the error must not name
 	}{
 		// accepted
 		{name: "none"},
@@ -83,6 +86,36 @@ func TestNew_Config(t *testing.T) {
 			opts:    []srvr.Option{srvr.WithLogConfig(srvr.LogConfig{Level: "loud", Format: "xml"})},
 			message: "Level", fields: []string{"Level", "Format"},
 		},
+		{
+			name: "ProblemOptions and ShutdownTimeout joined",
+			opts: []srvr.Option{
+				srvr.WithProblemOptions(prblm.WithNamespace("not a uri")), srvr.WithConfig(srvr.Config{ShutdownTimeout: -time.Second}),
+			},
+			message: "ProblemOptions", fields: []string{"ProblemOptions", "ShutdownTimeout"},
+		},
+		{
+			name:    "ProblemOptions and Level joined",
+			opts:    []srvr.Option{srvr.WithProblemOptions(prblm.WithNamespace("not a uri")), srvr.WithLogConfig(srvr.LogConfig{Level: "loud"})},
+			message: "ProblemOptions", fields: []string{"ProblemOptions", "Level"},
+		},
+		{
+			name:    "panicking ProblemOptions and MaxHeaderBytes joined",
+			opts:    []srvr.Option{srvr.WithProblemOptions(func(*prblm.Handler) { panic("boom") }), srvr.WithMaxHeaderBytes(-1)},
+			message: "ProblemOptions", fields: []string{"ProblemOptions", "MaxHeaderBytes"},
+		},
+		{
+			name: "valid ProblemOptions and ShutdownTimeout",
+			opts: []srvr.Option{
+				srvr.WithProblemOptions(prblm.WithNamespace("https://example.com/problems")),
+				srvr.WithConfig(srvr.Config{ShutdownTimeout: -time.Second}),
+			},
+			message: "ShutdownTimeout", fields: []string{"ShutdownTimeout"}, absent: []string{"ProblemOptions"},
+		},
+		{
+			name:    "ProblemOptions alone",
+			opts:    []srvr.Option{srvr.WithProblemOptions(prblm.WithNamespace("not a uri"))},
+			message: "ProblemOptions", fields: []string{"ProblemOptions"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -106,6 +139,12 @@ func TestNew_Config(t *testing.T) {
 			for _, field := range tt.fields {
 				if !slices.Contains(got, field) {
 					t.Errorf("New error has *ConfigError fields %q, want %q among them; error: %v", got, field, err)
+				}
+			}
+
+			for _, field := range tt.absent {
+				if slices.Contains(got, field) {
+					t.Errorf("New error has *ConfigError fields %q, want no %q; error: %v", got, field, err)
 				}
 			}
 		})

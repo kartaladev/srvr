@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
@@ -27,7 +28,11 @@ func errorChain(n int) error {
 // pipeline with app.Test (no listener) and logging to io.Discard: a
 // success, a handler error rendered as a 500 problem, an unmatched path
 // answered as a 404 problem, a panic recovered as a 500, a 32-link error
-// chain and a success on a skip path, whose access record is suppressed. Each case runs sequentially and, as "<case> parallel",
+// chain, a success on a skip path, whose access record is suppressed, an
+// unmatched path whose record WithUnmatchedRecordLimit suppresses, and a
+// success from a client sending a User-Agent that
+// WithoutAccessLogUserAgent leaves out of the record. Each case runs
+// sequentially and, as "<case> parallel",
 // from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
 // connection is part of every measurement.
 //
@@ -35,11 +40,6 @@ func errorChain(n int) error {
 // fiber runs, and app.Test returns fasthttp's error instead of the 413,
 // so measuring it would need a listener, timing TCP instead of srvr.
 func BenchmarkPipeline(b *testing.B) {
-	srv, err := fibersrvr.New(srvr.WithLogOutput(io.Discard), srvr.WithAccessLogSkipPaths("/health"))
-	if err != nil {
-		b.Fatal(err)
-	}
-
 	chain := errorChain(32)
 
 	conf := routes(func(r fiber.Router) {
@@ -53,16 +53,33 @@ func BenchmarkPipeline(b *testing.B) {
 	cases := []struct {
 		name, path string
 		status     int
+		// userAgent is the request's User-Agent header; empty sends
+		// net/http's default.
+		userAgent string
+		// opts are the case's server options besides the benchmark's own.
+		opts []srvr.Option
 	}{
-		{"success", "/ok", http.StatusOK},
-		{"handler error", "/fail", http.StatusInternalServerError},
-		{"unmatched", "/nope", http.StatusNotFound},
-		{"panic", "/panic", http.StatusInternalServerError},
-		{"32-link error chain", "/chain", http.StatusInternalServerError},
-		{"suppressed access record", "/health", http.StatusOK},
+		{name: "success", path: "/ok", status: http.StatusOK},
+		{name: "handler error", path: "/fail", status: http.StatusInternalServerError},
+		{name: "unmatched", path: "/nope", status: http.StatusNotFound},
+		{name: "panic", path: "/panic", status: http.StatusInternalServerError},
+		{name: "32-link error chain", path: "/chain", status: http.StatusInternalServerError},
+		{name: "suppressed access record", path: "/health", status: http.StatusOK},
+		{
+			// the first request, the status check below, takes the window's
+			// only record: every measured one is suppressed.
+			name: "suppressed unmatched record", path: "/nope", status: http.StatusNotFound,
+			opts: []srvr.Option{srvr.WithUnmatchedRecordLimit(1, time.Hour)},
+		},
+		{
+			name: "user agent omitted", path: "/ok", status: http.StatusOK,
+			userAgent: "bench-client/1.0", opts: []srvr.Option{srvr.WithoutAccessLogUserAgent()},
+		},
 	}
 
 	for _, bc := range cases {
+		srv := pipelineServer(b, bc.opts...)
+
 		// do sends one request; it reports failures with Error, as
 		// RunParallel's goroutines must not call FailNow.
 		do := func(b *testing.B) int {
@@ -73,6 +90,10 @@ func BenchmarkPipeline(b *testing.B) {
 				b.Error(err)
 
 				return 0
+			}
+
+			if bc.userAgent != "" {
+				req.Header.Set("User-Agent", bc.userAgent)
 			}
 
 			res, err := srv.Test(req, conf)
@@ -112,4 +133,17 @@ func BenchmarkPipeline(b *testing.B) {
 			})
 		})
 	}
+}
+
+// pipelineServer returns a server built with opts that logs to io.Discard
+// and suppresses the access records of /health.
+func pipelineServer(b *testing.B, opts ...srvr.Option) *fibersrvr.Server {
+	b.Helper()
+
+	srv, err := fibersrvr.New(append([]srvr.Option{srvr.WithLogOutput(io.Discard), srvr.WithAccessLogSkipPaths("/health")}, opts...)...)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	return srv
 }

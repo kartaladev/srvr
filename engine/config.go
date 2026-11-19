@@ -156,8 +156,11 @@ func Only(engineName, name string, value any) Option {
 	}
 }
 
-// newSettings applies opts and validates the result.
-func newSettings(opts []Option) (Settings, error) {
+// newSettings applies opts and validates the result, returning every
+// field error. It returns the applied settings even then, so the caller
+// can validate what the settings do not, the problem options, and join
+// every error once.
+func newSettings(opts []Option) (Settings, []error) {
 	s := Settings{ReadBuild: debug.ReadBuildInfo, Now: time.Now}
 
 	for i, opt := range opts {
@@ -172,11 +175,7 @@ func newSettings(opts []Option) (Settings, error) {
 
 	s.resolveDefaults()
 
-	if errs := slices.Concat(s.Errs, s.validate()); len(errs) > 0 {
-		return Settings{}, errors.Join(errs...)
-	}
-
-	return s, nil
+	return s, slices.Concat(s.Errs, s.validate())
 }
 
 // resolveDefaults fills the defaults chosen after every option applied

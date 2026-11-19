@@ -267,7 +267,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### prblm v0.2.0 exports ginprblm.ErrStatusOnly
-- **Status:** adopted by followups-hardening (owner decision 2026-11-19; slice 6)
+- **Status:** closed: done in followups-hardening slice 6 (ginsrvr clears status-only aborts by `errors.Is(err, ginprblm.ErrStatusOnly)`)
 - **Target:** followups-hardening
 - **Context:** part (2) of the archived core-server entry "Ask prblm for a composable OnError and an exported status-only sentinel": prblm v0.2.0 exports `ginprblm.ErrStatusOnly` (`adapters/ginprblm/doc.go`), so a hook can tell a `c.AbortWithStatus(4xx)` report apart with `errors.Is`. ginsrvr still classifies failures from `c.Errors` and recovered panics (gin-and-fiber-engines design D2), which works. Since srvr's hook no longer owns the only slot, a consumer's `prblm.OnError` on gin also receives these status-only reports (prblm's documented behaviour, not srvr's).
 - **Evidence:** `git -C ../prblm grep -n ErrStatusOnly v0.2.0` lists the exported sentinel; no srvr test depends on it.

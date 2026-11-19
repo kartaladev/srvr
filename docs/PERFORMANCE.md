@@ -7,13 +7,14 @@ versions, and what CI checks on every pull request.
 
 | Module | Benchmark | Measures |
 |---|---|---|
-| `srvr` (net/http) | `BenchmarkPipeline` | one request through the full pipeline: success, handler error, unmatched path, panic, body over `MaxRequestBodyBytes`, 32-link error chain; each also as `<case> parallel` (`b.RunParallel`) |
+| `srvr` (net/http) | `BenchmarkPipeline` | one request through the full pipeline: success, handler error, unmatched path, panic, body over `MaxRequestBodyBytes`, 32-link error chain, a success with the user agent omitted (`WithoutAccessLogUserAgent`); each also as `<case> parallel` (`b.RunParallel`) |
+| `srvr` (`internal/tracectx`) | `BenchmarkNewTrace` | generating a new trace's ids, serial and parallel |
 | `ginsrvr` | `BenchmarkPipeline` | the same cases on gin |
-| `fibersrvr` | `BenchmarkPipeline` | the same cases on fiber through `app.Test`, plus a success whose access record is suppressed (`SkipPaths`), except the body over the limit, which fasthttp rejects before fiber runs and `app.Test` reports as an error |
+| `fibersrvr` | `BenchmarkPipeline` | the same cases on fiber through `app.Test`, plus a success whose access record is suppressed (`SkipPaths`) and an unmatched path whose record `WithUnmatchedRecordLimit` suppresses, except the body over the limit, which fasthttp rejects before fiber runs and `app.Test` reports as an error |
 | `srvr/engine` | `BenchmarkLogHandler` | srvr's log handler: 0, 1 and 3 `With` steps, with and without a `slog.Any` value, a logger from `LoggerFromContext` used for one record, and the root logger used by concurrent requests |
 | `srvr/engine` | `BenchmarkCorrelation` | grouped and ungrouped request records |
 | `srvr/engine` | `BenchmarkRedactSecrets` | the default redactor over error texts and a 32 KiB stack |
-| `srvr/engine` | `BenchmarkDebugBuffer` | a request logging five `DEBUG` records with the debug buffer off, on and succeeding, on and failing |
+| `srvr/engine` | `BenchmarkDebugBuffer` | a request logging five `DEBUG` records with the debug buffer off, on and succeeding, on and failing; on and failing with seven attributes per record, one a `slog.Any` value; on and failing with 150 records, past the default 100 |
 | `otelsrvr` | `BenchmarkObserver` | the observer on one request: metrics, metrics and tracing, every instrument and tracing |
 
 Every benchmark reports `ns/op`, `B/op` and `allocs/op` and logs to
@@ -23,11 +24,39 @@ Every benchmark reports `ns/op`, `B/op` and `allocs/op` and logs to
 One reference point, on an Apple M4 Pro laptop (darwin/arm64, Go 1.27,
 `-count=10`; timings from another machine will differ): a request that
 logs five `DEBUG` records below the `INFO` level costs 1.24 µs, 866 B and
-15 allocations with the debug buffer off; 3.16 µs, 6.0 KiB and 20
+15 allocations with the debug buffer off; 3.0 µs, 4.9 KiB and 18
 allocations with it on and the request succeeding (the records are
-buffered, then discarded); and 4.96 µs, 6.8 KiB and 31 allocations with it
+buffered, then discarded); and 4.8 µs, 5.8 KiB and 29 allocations with it
 on and the request failing (the records are written). That cost is why
 the buffer is off by default.
+
+## Measured decisions
+
+Every optimisation below was measured with `benchstat` over ten runs
+(design D8 rule: kept at a 10% or larger gain in `allocs/op` or `B/op`, or
+in `ns/op` with `p < 0.05`). Unless noted, the timings are from the same
+M4 Pro laptop, which other work was also using; allocation counts do not
+depend on the machine. The full tables are in the `followups-hardening`
+change's `notes.md`.
+
+| Item | Result | Decision |
+|---|---|---|
+| Debug buffer kept as a ring instead of a resliced slice | `BenchmarkDebugBuffer` on-success -17% B/op and 20 -> 18 allocations; 150 records -47% B/op | applied |
+| Debug buffer: size a `slog.Any` value without building its text | -2.5% B/op | not applied |
+| Debug buffer: skip `slog.Record.Clone` when the record is rewritten | no change: `Clone` does not allocate | not applied |
+| fiber: decide the unmatched-record limit once, skipping copies for suppressed records | 70 -> 67 allocations (-4%) | not applied |
+| Skip reading the user agent when `OmitUserAgent` is set | fiber 50 -> 49 allocations; net/http and gin unchanged | not applied |
+| Trace ids drawn from a pooled batch of `crypto/rand` bytes (one read per 32 traces) instead of one `crypto/rand` read per request | darwin: about 42% of `BenchmarkPipeline` CPU was in `crypto/rand`; `Pipeline/success` -12%, parallel -47%. Linux (local arm64 container, `getrandom` vDSO): at most -4%; the CI runner is unverified | applied, with the owner's acceptance of the trade-off below |
+| Trace ids from pooled ChaCha8 generators seeded from `crypto/rand` | the same gain as the batch | not applied: the batch keeps `crypto/rand` as the source at a similar gain |
+
+The trace-id batch is a security trade-off. Ids stay cryptographically
+random and come only from `crypto/rand`. A process holds up to 768 bytes
+of future ids per pooled batch, so a heap disclosure (a core dump, a
+memory-read bug) reveals the next ids drawn from that batch. Ids also
+repeat when a process or VM snapshot is restored more than once, because
+the copied batches are not reseeded. Trace ids are not secrets: srvr
+writes them to problem responses and logs, and W3C Trace Context asks
+only that they be random and unique.
 
 ## Running the benchmarks
 

@@ -10,10 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v3"
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/engine"
-	"github.com/kartaladev/srvr/fibersrvr"
-	"github.com/kartaladev/srvr/ginsrvr"
 	"github.com/kartaladev/srvr/otelsrvr"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )
@@ -276,15 +275,6 @@ func checkStopped(t *testing.T, logs *logBuffer, want float64) {
 func TestUnmatchedLimit_Config(t *testing.T) {
 	t.Parallel()
 
-	builders := []struct {
-		name string
-		new  func(opts ...srvr.Option) error
-	}{
-		{"net/http", func(opts ...srvr.Option) error { _, err := srvr.New(opts...); return err }},
-		{"gin", func(opts ...srvr.Option) error { _, err := ginsrvr.New(opts...); return err }},
-		{"fiber", func(opts ...srvr.Option) error { _, err := fibersrvr.New(opts...); return err }},
-	}
-
 	tests := []struct {
 		name     string
 		burst    int
@@ -297,7 +287,7 @@ func TestUnmatchedLimit_Config(t *testing.T) {
 		{"no limit", 0, 0, ""},
 	}
 
-	for _, b := range builders {
+	for _, b := range constructors {
 		for _, tt := range tests {
 			t.Run(b.name+"/"+tt.name, func(t *testing.T) {
 				t.Parallel()
@@ -405,5 +395,116 @@ func TestAccessLog_OmitUserAgent(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestUnmatchedLimit_ConsumerMiddleware covers structured-logging /
+// Scenario: Failures consumer middleware reports are not limited, both
+// Examples tables: only a 404 or 405 the router answered counts towards the
+// limit. net/http and gin group middleware run only for matched routes, so
+// their rows also fail if it ever runs for an unmatched path.
+func TestUnmatchedLimit_ConsumerMiddleware(t *testing.T) {
+	t.Parallel()
+
+	ok := func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(http.StatusOK); return nil }
+
+	// netGate and ginGate report a test error and answer 404 themselves
+	// if they ever run.
+	netGate := func(t *testing.T) srvr.Middleware {
+		t.Helper()
+
+		return func(http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("group middleware ran for %s", r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			})
+		}
+	}
+	ginGate := func(t *testing.T) gin.HandlerFunc {
+		t.Helper()
+
+		return func(c *gin.Context) {
+			t.Errorf("group middleware ran for %s", c.Request.URL.Path)
+			_ = c.AbortWithError(http.StatusNotFound, prblm.ErrNotFound)
+		}
+	}
+	fiberUse := func(mw fiber.Handler) func(*testing.T, *logBuffer, ...srvr.Option) server {
+		return func(t *testing.T, logs *logBuffer, opts ...srvr.Option) server {
+			t.Helper()
+
+			return newFiberServer(t, logs, idleWorkerDuration, func(r fiber.Router) {
+				r.Use(mw)
+				r.Get("/x", func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) })
+			}, opts...)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		build  func(t *testing.T, logs *logBuffer, opts ...srvr.Option) server
+		status int
+		want   int
+	}{
+		// consumer-reported errors
+		{
+			name:  "fiber/returns prblm.ErrNotFound",
+			build: fiberUse(func(fiber.Ctx) error { return prblm.ErrNotFound }), status: http.StatusNotFound, want: 3,
+		},
+		{
+			name:   "fiber/returns a wrapped fiber.ErrNotFound",
+			build:  fiberUse(func(fiber.Ctx) error { return fmt.Errorf("gate: %w", fiber.ErrNotFound) }),
+			status: http.StatusNotFound, want: 3,
+		},
+		{
+			name:  "fiber/panics",
+			build: fiberUse(func(fiber.Ctx) error { panic("boom") }), status: http.StatusInternalServerError, want: 3,
+		},
+		// answered by the router
+		{
+			name: "net/http/group middleware",
+			build: func(t *testing.T, logs *logBuffer, opts ...srvr.Option) server {
+				t.Helper()
+
+				return newNetServer(t, logs, func(g *srvr.Group) { g.Use(netGate(t)); g.GET("/x", ok) }, opts...)
+			},
+			status: http.StatusNotFound, want: 1,
+		},
+		{
+			name: "gin/group middleware",
+			build: func(t *testing.T, logs *logBuffer, opts ...srvr.Option) server {
+				t.Helper()
+
+				return newGinServer(t, logs, func(g *gin.RouterGroup) {
+					g.Use(ginGate(t))
+					g.GET("/x", func(c *gin.Context) { c.Status(http.StatusOK) })
+				}, opts...)
+			},
+			status: http.StatusNotFound, want: 1,
+		},
+		{
+			name:  "fiber/returns c.Next()",
+			build: fiberUse(func(c fiber.Ctx) error { return c.Next() }), status: http.StatusNotFound, want: 1,
+		},
+		{
+			name:  "fiber/returns fiber.ErrNotFound",
+			build: fiberUse(func(fiber.Ctx) error { return fiber.ErrNotFound }), status: http.StatusNotFound, want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			logs := &logBuffer{}
+			clk := newFakeClock()
+			base := run(t, tt.build(t, logs, clk.option(), srvr.WithUnmatchedRecordLimit(1, time.Minute)))
+
+			sendN(t, http.MethodGet, base, 3, tt.status, func(i int) string { return nope(i + 1) })
+
+			// Waits for one record more than want, which must not come.
+			if recs := logs.failedRecords(t, tt.want+1); len(recs) != tt.want {
+				t.Errorf("%d http.request.failed records, want %d", len(recs), tt.want)
+			}
+		})
 	}
 }

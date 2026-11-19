@@ -691,6 +691,10 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 	if rejected >= http.StatusBadRequest {
 		s.core.RecordRejection(ctx, rejected)
 	} else if err := c.Next(); err != nil {
+		if routerAnswered(c, err) {
+			state.MarkRouterAnswered()
+		}
+
 		_ = s.renderError(c, err)
 
 		// fiberprblm keeps a body stream that already started; the client
@@ -711,6 +715,16 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 	s.core.WriteAccess(ctx, s.accessInfo(ctx, c, time.Since(begin)))
 
 	return nil
+}
+
+// routerAnswered reports whether err, which the chain returned for c, is
+// fiber's router answering a request no route matched: exactly the values
+// fiber.ErrNotFound and fiber.ErrMethodNotAllowed its router returns,
+// compared by identity so that a consumer's wrapped error never counts. A
+// consumer returning one of those values itself cannot be told apart.
+func routerAnswered(c fiber.Ctx, err error) bool {
+	//nolint:errorlint // identity on purpose: errors.Is would count a consumer's wrapped error
+	return !c.Matched() && (err == fiber.ErrNotFound || err == fiber.ErrMethodNotAllowed)
 }
 
 // bodySize returns the size of the response body without reading a

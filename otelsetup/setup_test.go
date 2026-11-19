@@ -590,6 +590,8 @@ func TestConfigError(t *testing.T) {
 			[]string{"FlushTimeout", "Prometheus.Path"},
 			nil,
 		},
+		{"Prometheus.Path /metrics/{", with(otelsetup.Config{Prometheus: prometheus("127.0.0.1:0", "/metrics/{")}), []string{"Prometheus.Path"}, causeText(t, "/metrics/{")},
+		{"Prometheus.Path /metrics x", with(otelsetup.Config{Prometheus: prometheus("127.0.0.1:0", "/metrics x")}), []string{"Prometheus.Path"}, causeText(t, "/metrics x")},
 	}
 
 	for _, tt := range tests {
@@ -621,6 +623,33 @@ func TestConfigError(t *testing.T) {
 			}
 		})
 	}
+}
+
+// causeText returns a check that a *otelsetup.ConfigError's Cause has the
+// text of the error http.ServeMux panics with when path is registered.
+func causeText(t *testing.T, path string) func(error) bool {
+	t.Helper()
+
+	want := muxPanic(path)
+	if want == nil {
+		t.Fatalf("http.ServeMux accepted %q, want it to panic with an error", path)
+	}
+
+	return func(err error) bool {
+		return slices.ContainsFunc(configCauses(err), func(c error) bool { return c.Error() == want.Error() })
+	}
+}
+
+// muxPanic returns the error http.ServeMux panics with when path is
+// registered, or nil when it does not panic with an error.
+func muxPanic(path string) (err error) {
+	defer func() {
+		err, _ = recover().(error)
+	}()
+
+	http.NewServeMux().Handle(path, http.NotFoundHandler())
+
+	return nil
 }
 
 // configCauses returns the non-nil Cause of every *otelsetup.ConfigError

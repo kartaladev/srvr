@@ -72,6 +72,17 @@ type engineCase struct {
 	start func(t *testing.T, o outcome, opts ...srvr.Option) (string, *logBuffer)
 }
 
+// constructors build one server of each engine without starting it and
+// return only the construction error.
+var constructors = []struct {
+	name string
+	new  func(opts ...srvr.Option) error
+}{
+	{"net/http", func(opts ...srvr.Option) error { _, err := srvr.New(opts...); return err }},
+	{"gin", func(opts ...srvr.Option) error { _, err := ginsrvr.New(opts...); return err }},
+	{"fiber", func(opts ...srvr.Option) error { _, err := fibersrvr.New(opts...); return err }},
+}
+
 var engines = []engineCase{
 	{"net/http", "/items/{id}", startNetHTTP},
 	{"gin", "/items/:id", startGin},

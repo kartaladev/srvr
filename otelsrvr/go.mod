@@ -3,7 +3,7 @@ module github.com/kartaladev/srvr/otelsrvr
 go 1.27
 
 require (
-	github.com/kartaladev/prblm v0.2.0
+	github.com/kartaladev/prblm v0.2.1
 	github.com/kartaladev/srvr v0.1.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0

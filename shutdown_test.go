@@ -520,26 +520,24 @@ func TestShutdownHooks(t *testing.T) {
 func TestShutdownHooks_Faulty(t *testing.T) {
 	t.Parallel()
 
-	block := make(chan struct{})
-	t.Cleanup(func() { close(block) })
-
 	tests := []struct {
-		fault    string
-		hook     func(context.Context) error
+		fault string
+		hook  func(context.Context) error
+		// blocks replaces hook with one that signals entry and blocks until
+		// the row ends, so the row asserts order, not elapsed time.
+		blocks   bool
 		opts     []srvr.Option
 		wantIs   []error
 		contains string
-		within   time.Duration
 	}{
 		{fault: "returns an error", hook: func(context.Context) error { return errors.New("flush failed") }, wantIs: []error{srvr.ErrShutdownHook}, contains: "flush failed"},
 		{fault: "panics", hook: func(context.Context) error { panic("boom") }, wantIs: []error{srvr.ErrShutdownHook}, contains: "boom"},
 		{fault: "panics with nil", hook: func(context.Context) error { panic(nil) }, wantIs: []error{srvr.ErrShutdownHook}, contains: "panic"},
 		{
 			fault:  "blocks and ignores its context",
-			hook:   func(context.Context) error { <-block; return nil },
+			blocks: true,
 			opts:   []srvr.Option{srvr.WithShutdownHookTimeout(50 * time.Millisecond)},
 			wantIs: []error{srvr.ErrShutdownHook, context.DeadlineExceeded},
-			within: 200 * time.Millisecond,
 		},
 		{fault: "returns a typed-nil error", hook: func(context.Context) error { return (*derefError)(nil) }, wantIs: []error{srvr.ErrShutdownHook}},
 		{fault: "returns an error whose Error panics", hook: func(context.Context) error { return badError{} }, wantIs: []error{srvr.ErrShutdownHook}},
@@ -552,9 +550,25 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 		t.Run(tt.fault, func(t *testing.T) {
 			t.Parallel()
 
+			hook := tt.hook
+			entered, release := make(chan struct{}), make(chan struct{})
+			var hookReturned atomic.Bool
+			if tt.blocks {
+				// Closed when the row ends, so the abandoned hook ends
+				// before goleak runs.
+				t.Cleanup(func() { close(release) })
+				hook = func(context.Context) error {
+					close(entered)
+					<-release
+					hookReturned.Store(true)
+
+					return nil
+				}
+			}
+
 			var secondRan atomic.Bool
 			opts := append([]srvr.Option{
-				srvr.WithShutdownHook(srvr.AfterDrain, tt.hook),
+				srvr.WithShutdownHook(srvr.AfterDrain, hook),
 				srvr.WithShutdownHook(srvr.AfterDrain, func(context.Context) error { secondRan.Store(true); return nil }),
 			}, tt.opts...)
 			srv := newServer(t, opts...)
@@ -562,12 +576,16 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			done := startWith(ctx, t, srv)
 
-			begin := time.Now()
 			cancel()
-			err := <-done
 
-			if tt.within > 0 && time.Since(begin) > tt.within {
-				t.Fatalf("Start returned after %v, want within %v", time.Since(begin), tt.within)
+			// waitLimit is 200 times the blocking row's 50ms hook budget.
+			err := receive(t, done, "Start did not return: it waits for the blocking hook")
+
+			if tt.blocks {
+				receive(t, entered, "the blocking hook never ran")
+				if hookReturned.Load() {
+					t.Fatal("the blocking hook returned before Start did, want it still blocked")
+				}
 			}
 			assertErr(t, err, tt.wantIs, tt.contains)
 			// The hooks of a phase share its budget, so after a blocking hook

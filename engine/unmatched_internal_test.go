@@ -23,6 +23,7 @@ func TestUnmatchedLimit_DiscardsDebugBuffer(t *testing.T) {
 
 	for range 3 {
 		ctx := c.BeginRequest(t.Context(), nil)
+		requestFrom(ctx).MarkRouterAnswered() // as an engine's router stage does
 		slog.New(c.log).DebugContext(ctx, "step")
 		recordFailure(ctx, prblm.ErrNotFound, prblm.New(404))
 		c.WriteAccess(ctx, AccessInfo{Method: "GET", Status: 404})

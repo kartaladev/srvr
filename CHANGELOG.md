@@ -6,6 +6,40 @@ once tagged.
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `github.com/kartaladev/prblm` v0.2.1 (was v0.2.0) in every module, and `ginsrvr` requires
+  `prblm/adapters/ginprblm` v0.2.1: an error whose `As` or `Is` method panics, or a panic whose value
+  is such an error, now gets the safe 500 problem instead of escaping prblm.
+- `otelsrvr.ConfigError.Cause` and `otelsetup.ConfigError.Cause` now keep a recovered panic value
+  that is an error: a meter provider, tracer provider or propagator that panics with an error in
+  `otelsrvr.New`, and the error `http.ServeMux` panics with for a rejected `Prometheus.Path` in
+  `otelsetup.New`. `errors.Is`/`errors.As` reach it; `Cause` was nil before. The text is unchanged.
+  A panic value that is not an error, a typed nil, or an error whose chain cycles or whose `Unwrap`
+  panics still leaves `Cause` nil.
+- With the debug buffer on, a request's buffered records are held in a ring: a request that buffers
+  a few records allocates about 17% fewer bytes, and one past `MaxRecords` (evicting) about 47% fewer.
+  What is written, and its order, are unchanged. Performance only.
+- Generated trace and span ids are drawn from a pooled batch of `crypto/rand` bytes, one read per 32
+  traces, instead of one `crypto/rand` read per request. On macOS that read was a system call taking
+  about 40% of a request's CPU, and a request now costs about 12% less (47% less under parallel
+  load). On Linux (`getrandom` vDSO) the change is within noise. Ids stay cryptographically random
+  from `crypto/rand`. The trade-off: up to 768 bytes of future ids per pooled batch stay in process
+  memory, and ids repeat when a process or VM snapshot is restored more than once (see
+  `docs/PERFORMANCE.md`).
+
+### Fixed
+
+- Construction (`srvr.New`, `ginsrvr.New`, `fibersrvr.New`) reports a rejected `WithProblemOptions`
+  option in the same joined error as the other invalid fields; it was reported only when every other
+  field was valid. `errors.As` finds a `*srvr.ConfigError` with `Field` `ProblemOptions` among them.
+- With `WithUnmatchedRecordLimit` (or `AccessLogConfig.UnmatchedLimit`), only the `404` and `405`
+  records the router answered are limited. On fiber, a `404` or `405` that consumer middleware
+  reported for a path no route matched (for example `prblm.ErrNotFound`, or a wrapped
+  `fiber.ErrNotFound`) was suppressed too; it is now always written. net/http and gin group
+  middleware never run for unmatched paths, so they were not affected. Each engine marks the router's
+  answer with the new `engine.RequestState.MarkRouterAnswered`.
+
 ## [v0.1.0] - 2026-11-19
 
 ### Added

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -220,9 +221,12 @@ func attrSize(a slog.Attr) int {
 type requestBuffer struct {
 	policy *bufferPolicy
 
-	mu        sync.Mutex
-	sealed    bool
+	mu     sync.Mutex
+	sealed bool
+	// entries is a ring of n entries from head, the oldest first; it
+	// grows up to the policy's maxRecords.
 	entries   []entry
+	head, n   int
 	bytes     int
 	dropped   int
 	truncated bool
@@ -249,8 +253,8 @@ func (b *requestBuffer) add(e entry) {
 	// The entries to evict are counted first, so the budget is asked once
 	// for the difference: nothing is evicted for a record it refuses.
 	evict, freed := 0, 0
-	for evict < len(b.entries) && (len(b.entries)-evict >= b.policy.maxRecords || b.bytes-freed+e.size > b.policy.maxBytes) {
-		freed += b.entries[evict].size
+	for evict < b.n && (b.n-evict >= b.policy.maxRecords || b.bytes-freed+e.size > b.policy.maxBytes) {
+		freed += b.at(evict).size
 		evict++
 	}
 
@@ -263,10 +267,35 @@ func (b *requestBuffer) add(e entry) {
 		b.policy.budget.release(-grow)
 	}
 
-	clear(b.entries[:evict])
-	b.entries = append(b.entries[evict:], e)
+	for i := range evict {
+		*b.at(i) = entry{}
+	}
+
+	if evict > 0 { // an empty ring has no length to wrap by
+		b.head = (b.head + evict) % len(b.entries)
+		b.n -= evict
+	}
+
+	if b.n == len(b.entries) {
+		b.grow()
+	}
+
+	*b.at(b.n) = e
+	b.n++
 	b.bytes += e.size - freed
 	b.dropped += evict
+}
+
+// at returns the i-th oldest entry of the ring.
+func (b *requestBuffer) at(i int) *entry { return &b.entries[(b.head+i)%len(b.entries)] }
+
+// grow doubles the ring's room, up to maxRecords, with the oldest entry
+// first.
+func (b *requestBuffer) grow() {
+	grown := make([]entry, min(max(2*len(b.entries), 4), b.policy.maxRecords))
+	k := copy(grown, b.entries[b.head:])
+	copy(grown[k:], b.entries[:b.head])
+	b.entries, b.head = grown, 0
 }
 
 // open reports whether the buffer still takes records.
@@ -301,8 +330,16 @@ func (b *requestBuffer) seal() sealedBuffer {
 	defer b.mu.Unlock()
 
 	b.sealed = true
-	s := sealedBuffer{entries: b.entries, dropped: b.dropped, truncated: b.truncated}
-	b.entries = nil
+	// Rotating the ring in place puts the oldest entry first; until a
+	// record is evicted it already is.
+	if b.head > 0 {
+		slices.Reverse(b.entries[:b.head])
+		slices.Reverse(b.entries[b.head:])
+		slices.Reverse(b.entries)
+	}
+
+	s := sealedBuffer{entries: b.entries[:b.n], dropped: b.dropped, truncated: b.truncated}
+	b.entries, b.head, b.n = nil, 0, 0
 	b.policy.budget.release(b.bytes)
 	b.bytes = 0
 

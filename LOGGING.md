@@ -76,8 +76,11 @@ interval)` (or `AccessLogConfig.UnmatchedLimit{Burst, Interval}`) writes at most
 records per `interval` per server and counts the rest; the count goes, as `srvr.unmatched.suppressed`,
 on the first unmatched record written in a later window, and what is left on `server.stopped`. Off by
 default (`Burst` `0`): failed records are the triage record, so a limit loosens a triage default and
-is the consumer's explicit choice. Handler errors, panics, `5xx` and `http.request.completed` records
-are never limited; observers (`otelsrvr` metrics and spans) still see every request; a suppressed
+is the consumer's explicit choice. Only the router's own answers count: a `404` or `405` that consumer
+code reports, such as fiber middleware returning `prblm.ErrNotFound` for every path, is never limited.
+On fiber the router's answer is recognised by identity with the values `fiber.ErrNotFound` and
+`fiber.ErrMethodNotAllowed`, so middleware that returns one of those values itself is counted as the
+router. Handler errors, panics, `5xx` and `http.request.completed` records are never limited; observers (`otelsrvr` metrics and spans) still see every request; a suppressed
 record discards the request's debug buffer. A negative `Burst`, or a positive one with `Interval` not
 above zero, fails construction. Adding `srvr.unmatched.suppressed` kept `srvr.log.schema` at 1.
 

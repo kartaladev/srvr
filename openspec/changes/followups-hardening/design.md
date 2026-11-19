@@ -35,7 +35,7 @@ See proposal.md - Why. Each item comes from an open entry in `openspec/changes/a
 5. **Spec and test hygiene** (items 1, 2, RELEASING.md): the shortened requirements' new detail ("Re-exported names", "Level of a failure after the response started", the moved route-listing and hook-order steps) mapped to tests; `TestShutdownHooks_Faulty` made deterministic; RELEASING.md completed. It works on its own and changes no production code.
 6. **gin status-only classification** (item 7): `gin-engine` / "Consumer middleware behaviour" (the new rows). Hot path: gin's request stage (`classify`). The new rows land first and pass on today's code; `classify` changes only if D6's criteria hold.
 7. **Performance** (items 8, 9, 10): benchmark rows, measurement, and changes only at the gain (D7, D8, D9); `trace-context` / "Concurrent generation" guards any change of id source. Hot paths: trace context generation, the debug buffer, fiber's access stage, and the user-agent read in every engine.
-8. **Release**: precondition, preparation, owner stop, tags in RELEASING.md order, restoring `replace` with `internal/paritytest` tidied, and verification through the proxy.
+8. **Release**: precondition, preparation, owner stop, tags in RELEASING.md order, restoring `replace` with `internal/paritytest` tidied, the GitHub Release page, and verification through the proxy.
 
 Slices 2-4 are independent of each other; the order (smallest first) only keeps each RED step simple. No slice depends on a later one: slice 5's spec deltas already exist in this change, and its tests pin behaviour that is already merged.
 
@@ -113,6 +113,7 @@ Trace ids are not secrets. srvr sends `trace_id` in every problem response and w
 - Apply nothing unless `BenchmarkPipeline` (not only the micro-benchmark) shows the D8 gain.
 - Prefer (b) at a similar gain, because the source stays `crypto/rand` and the snapshot exposure is bounded by the buffer size.
 - Any candidate is applied only after the owner confirms the trade-off (task 7.4).
+- **Decided (owner, 2026-11-19):** (b) is applied. It met the gain on `BenchmarkPipeline` on darwin only, and on Linux CI it is unverified. The owner accepted the trade-off above (`notes.md`, "Slice 7: trace-id cost and candidates").
 - The modified `trace-context` requirement allows (b) and (c) and forbids a non-cryptographic or self-seeded generator.
 - The all-zero rejection loop stays. The W3C sampled flag and the other flags are unchanged.
 
