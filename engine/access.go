@@ -34,32 +34,39 @@ func newFailure(err error, p *prblm.Problem, committed bool) *failure {
 	return &failure{err: err, panic: pe, problem: p, committed: committed}
 }
 
-// renderingNotes returns the prblm notes about a mistake in rendering, not
-// the request's own failure. It returns an array, a copy no caller can
-// change for another and that needs no allocation.
-func renderingNotes() [5]error {
+// prblmNotes returns the prblm notes that are not the request's own failure:
+// those about a mistake in rendering (design D4), and the note that the
+// error's chain cannot be walked, which prblm sends before reporting the
+// error itself (prblm.ErrUnwalkableError, prblm v0.3.0). It returns an
+// array, a copy no caller can change for another and that needs no
+// allocation.
+func prblmNotes() [6]error {
 	return [...]error{
 		prblm.ErrInvalidStatus, prblm.ErrInvalidType, prblm.ErrUndocumentedType,
-		prblm.ErrEncoding, prblm.ErrShadowedDocumentation,
+		prblm.ErrEncoding, prblm.ErrShadowedDocumentation, prblm.ErrUnwalkableError,
 	}
+}
+
+// isNote reports whether err is one of [prblmNotes]. It matches them by
+// identity only, in a bounded walk that survives a panicking Unwrap and
+// calls no Is method of err: err may be the error prblm could not walk. A
+// consumer error whose own Is method claims to be a note is therefore
+// recorded, not dropped.
+func isNote(err error) bool {
+	all := prblmNotes()
+	return findInChain(err, func(e error) bool { return slices.Contains(all[:], e) }) != nil
 }
 
 // recordFailure keeps the failure of the request in ctx. The first failure
 // with a problem wins and later ones are dropped; a failure without one (a
 // panic after the response started, on a broken connection, or while
 // answering) is kept only until one with a problem arrives, which replaces
-// it. Notes about rendering mistakes are not failures and are dropped
-// without a record (design D4).
+// it. prblm's notes ([prblmNotes]) are not failures and are dropped without a
+// record.
 func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 	req := requestFrom(ctx)
-	if req == nil {
+	if req == nil || isNote(err) {
 		return
-	}
-
-	for _, note := range renderingNotes() {
-		if errors.Is(err, note) {
-			return
-		}
 	}
 
 	if req.failure != nil && (req.failure.problem != nil || p == nil) {
