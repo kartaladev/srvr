@@ -7,8 +7,8 @@ The core SHALL keep the shared pieces in packages under its `internal/` path, im
 
 #### Scenario: Core dependencies unchanged
 - **Given** the core module after this change
-- **When** `go list -m all` runs in the core module with `GOWORK=off`
-- **Then** the third-party modules listed are `<modules>`
+- **When** `go list -deps ./...` runs in the core module with `GOWORK=off` (test files excluded, so test-only modules such as goleak do not count)
+- **Then** the third-party modules its packages depend on are `<modules>`
 
 ##### Examples:
 | modules |

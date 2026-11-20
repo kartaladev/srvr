@@ -156,3 +156,27 @@ func TestImportDirection(t *testing.T) {
 		})
 	}
 }
+
+// TestCoreDependencies covers engine-support / Scenario: Core dependencies
+// unchanged: the core module's packages, test files excluded, depend on no
+// module but srvr and prblm.
+func TestCoreDependencies(t *testing.T) {
+	t.Parallel()
+
+	out, err := goCmd(t, repoRoot(t), nil, "list", "-deps",
+		"-f", "{{with .Module}}{{.Path}}{{end}}", "./...")
+	if err != nil {
+		t.Fatalf("go list: %v\n%s", err, out)
+	}
+
+	var modules []string
+	for line := range strings.Lines(out) {
+		if m := strings.TrimSpace(line); m != "" && m != srvrPath && !slices.Contains(modules, m) {
+			modules = append(modules, m)
+		}
+	}
+
+	if want := []string{"github.com/kartaladev/prblm"}; !slices.Equal(modules, want) {
+		t.Fatalf("third-party modules = %q, want %q", modules, want)
+	}
+}

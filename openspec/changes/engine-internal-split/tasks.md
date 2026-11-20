@@ -32,7 +32,7 @@
   - GREEN: none expected
   - REFACTOR: none
 - [x] 3.5 Tooling and docs follow the path: `Makefile` `cover` filter (`/srvr/internal/` excluding `paritytest` and `benchgate`, printing an internal total) and benchmark output names, `.golangci.yml` depguard comment, `docs/PERFORMANCE.md`, package godoc in `internal/engine/doc.go` (drop "public only because ..."; state it is internal to srvr's modules), AGENTS.md layout paragraph and coverage sentence (correct the wrong reason), `openspec/config.yaml` public-shape note, CHANGELOG `[Unreleased]` **BREAKING** entry naming the removed import path and the `srvr` names to use; verify `make cover` prints the internal total and `make bench` writes its files
-- [x] 3.6 Verify the slice end to end: `make check` (every module, `GOWORK=off`), `make cover`, `go mod tidy -diff` in every module, golden-record and log-safety suites unchanged, `go list -m all` in the core module lists only prblm (engine-support / Scenario: Core dependencies unchanged), gopls diagnostics clean on every changed file
+- [x] 3.6 Verify the slice end to end: `make check` (every module, `GOWORK=off`), `make cover`, `go mod tidy -diff` in every module, golden-record and log-safety suites unchanged, `go list -deps ./...` in the core module lists only prblm (TestCoreDependencies) (engine-support / Scenario: Core dependencies unchanged), gopls diagnostics clean on every changed file
 - [x] 3.7 Run `/simplify` on the slice's changes, apply what holds up, re-run the tests, then commit `refactor(engine)!: move engine to internal/engine`; verify with `git log -1 --stat`
 
 ## 4. Slice: extract `internal/errchain`
