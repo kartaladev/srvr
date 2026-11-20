@@ -401,6 +401,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Evidence:** on `main` at `4e2a693`: `make check` passed (lint through `--allow-parallel-runners`), `make cover` passed (core total 99.3%, engine 99.8%).
 - **Suggested action:** none.
 
+### Release v0.3.0 (tasks 8.4-8.7, 2026-11-20)
+- **Status:** closed: released
+- **Target:** static-files
+- **Context:** the changelog landed through PR #21 (`release/prepare-v0.3.0`); the core tag `v0.3.0` was pushed at `58d5884` (its merge). The module release commits went directly to `main`, as v0.2.0's did: `ginsrvr/v0.3.0` at `599d4cb`, `fibersrvr/v0.3.0` at `67a287e`, `otelsrvr/v0.3.0` at `f79a398`, `otelsetup/v0.3.0` at `48eeb6d` (requires core and otelsrvr v0.3.0). Development `replace` lines were restored in `2c986f1` from the pre-release `go.mod` files (keeping the explanatory comment), with `internal/paritytest` tidied to require `srvr v0.3.0`. GitHub Release page: https://github.com/kartaladev/srvr/releases/tag/v0.3.0 (intro, Modules table, CHANGELOG v0.3.0 section).
+- **Deviation (owner request):** GitHub Actions CI is disabled, so neither the CI `release` job nor `main` CI ran. Substituted locally: `make check` from the root passed on `58d5884` before the core tag; `make check MODULES=<module>` (`GOWORK=off`) passed in each module's release commit before its tag; the release guard held for every tag (the tagged module's `go.mod` has no `replace`, checked before each commit); `make check` passed after the restore (`2c986f1`). golangci-lint ran with `--allow-parallel-runners`.
+- **Evidence:** `gh release view v0.3.0` shows title "srvr v0.3.0", tag `v0.3.0`, published 2026-11-20. `GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m` resolves all five modules at `v0.3.0`. A scratch consumer outside the repository (`GOWORK=off`) requiring all five at `v0.3.0` (it resolved prblm, ginprblm and fiberprblm v0.3.0) passed `go vet`, built, and served an `embed.FS` with `srvr.Static`, `ginsrvr.Static` and `fibersrvr.Static` (`WithSPAFallback("index.html")`, otelsrvr observer): on every engine `/app.js` 200 `text/javascript`, `/` 200 `text/html`, `/dashboard` with `Accept: text/html` 200 (the fallback), `/missing.js` 404 `application/problem+json`.
+- **Suggested action:** none.
+
 ## /simplify (task 7.6)
 
 Quality pass on the prblm v0.3.0 upgrade diff (`engine/access.go`, `engine/triage.go`, `engine/core.go`, `types.go`, `CHANGELOG.md`, `internal/paritytest/prblm_test.go`).
