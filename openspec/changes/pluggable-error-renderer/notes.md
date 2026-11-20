@@ -42,3 +42,9 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** pluggable-error-renderer
 - **Context:** change order confirmed: `static-files` -> `engine-internal-split` -> `pluggable-error-renderer` -> `scrty-integration` (AGENTS.md and openspec/config.yaml updated). `engine-internal-split` and `pluggable-error-renderer` are released together as v0.4.0: the first change's release group does not tag; the release runs once, at the end of `pluggable-error-renderer`, after the owner confirms tags.
 - **Suggested action:** group 1 ticks the order and release-coordination tasks against this entry; refresh the release groups accordingly.
+
+### Owner decisions 2026-11-20: D8 hook signature, D9 log schema
+- **Status:** closed: recorded (tasks 1.7, 1.8)
+- **Target:** pluggable-error-renderer
+- **Context:** D8: `ErrorHook` becomes `func(ctx, err error, sent ErrorReport)`, `ErrorReport` a value struct (not a pointer, not an interface), so no allocation and safe to retain; zero report = no answer sent. D9: `srvr.log.schema` stays `1`. Design "D8 and D9 outcome" records the reasons; slice 6 adds a benchmark row with an error hook installed and requires zero added allocs/op.
+- **Suggested action:** none.

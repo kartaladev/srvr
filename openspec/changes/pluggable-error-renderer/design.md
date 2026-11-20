@@ -33,7 +33,7 @@ See proposal.md, Why. Current state at v0.3.0 (`main` `25fa456`), checked in the
 2. **Slice 3: `WithErrorRenderer` on net/http**: option and validation, `engine.Render` with every safety rule, the net/http pipeline switching to it when set; the hook receives a problem synthesised from the response (D8 interim). Satisfies error-rendering "custom renderer", "validated", "safety" scenarios on net/http, and triage-error-records rows for custom renderers. Hot paths: `engine.Render`, `writeResponse`, the recovery stage, `recordFailure` with optional type/title.
 3. **Slice 4: gin**: srvr's own gin error middleware and recovery when a renderer is set; ginprblm unchanged otherwise. Gin rows of the same scenarios.
 4. **Slice 5: fiber**: `renderError`, recovery and `RecordRejection` through `engine.Render` when set. Fiber rows.
-5. **Slice 6: hook signature and log schema** (after the owner decides D8 and D9): `ErrorHook` takes `*ErrorReport`; LOGGING.md and the golden-record test. error-responses MODIFIED rows.
+5. **Slice 6: hook signature and log schema** (after the owner decides D8 and D9): `ErrorHook` takes an `ErrorReport` value; LOGGING.md and the golden-record test. error-responses MODIFIED rows.
 6. **Slice 7: parity, docs, end-to-end**: paritytest golden rows for both renderers, README, LOGGING.md, CHANGELOG, godoc, final benchmark comparison, `make check`, `make cover`.
 7. **Slice 8: release** after owner confirmation.
 
@@ -116,7 +116,7 @@ srvr copies the renderer's headers onto the response: `Cache-Control` replaces o
 ### D8: OWNER DECISION — the new `ErrorHook` signature
 
 Options:
-- **A (recommended)**: `func(ctx context.Context, err error, sent *ErrorReport)` with `ErrorReport{Status int; Type, Title string}`; `sent` is nil for a note about an answer not sent (panic after commit), as `p` is today. Engine-neutral, carries what the log carries, cheap.
+- **A (recommended)**: `func(ctx context.Context, err error, sent ErrorReport)` with `ErrorReport{Status int; Type, Title string}`; the zero report (`Status` 0) marks a note about an answer not sent (panic after commit), as a nil `p` does today. Engine-neutral, carries what the log carries, cheap.
 - B: `func(ctx, err error, resp ErrorResponse)` — exposes the body to hooks (privacy: a hook might log it) and costs a copy.
 - C: `func(ctx, err error, status int)` — loses type/title that today's hooks read.
 - D: keep `*prblm.Problem` and synthesise one for custom renderers — no break, but keeps prblm in the public hook and lies about the format.
@@ -163,3 +163,7 @@ Consumers without a renderer change nothing except `ErrorHook` (slice 6): replac
 ## Open Questions
 
 - Whether `DefaultErrorRenderer` should later replace the adapter path (D2) — answered by parity data after this change; no effect on this change's tasks.
+
+### D8 and D9 outcome (owner decisions 2026-11-20)
+- **D8:** option A as a **value struct**: `func(ctx context.Context, err error, sent ErrorReport)` with `ErrorReport{Status int; Type, Title string}`, passed by value. A `*ErrorReport` would escape to the heap (the hook is an opaque function value); an interface wrapping `*prblm.Problem` would also avoid the allocation but lets a hook retain a live pointer, needs nil handling, is harder to fake in tests and breaks implementers when a method is added. The value is copied on the stack, its strings share the problem's text, and a hook may keep it. The zero report (`Status` 0) marks a note about an answer not sent. A benchmark row with an error hook installed proves zero added allocations.
+- **D9:** `srvr.log.schema` stays `1`: zero-config and prblm records are unchanged; `problem.type`/`problem.title` are absent only for a consumer's own renderer, and `srvr.renderer.failure` is an added key.
