@@ -104,8 +104,8 @@ func TestRequestState_RouteAccessors(t *testing.T) {
 }
 
 // selfError is an error that unwraps to itself: a cyclic chain.
-// selfError is also declared in the internal/errchain tests: test types
-// cannot be shared across packages.
+// selfError is declared in each internal test package that needs it:
+// test types cannot be shared across packages.
 type selfError struct{}
 
 func (selfError) Error() string   { return "self" }

@@ -15,7 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/static"
 )
 
 // structFS is a file system of a struct type that is not comparable, as
@@ -207,7 +207,7 @@ func TestMalformedEscape(t *testing.T) {
 func TestStatic_ServeAnswers(t *testing.T) {
 	t.Parallel()
 
-	m, err := engine.NewStatic("/", fstest.MapFS{"app.js": {Data: []byte("console.log(1)")}})
+	m, err := static.New("/", fstest.MapFS{"app.js": {Data: []byte("console.log(1)")}})
 	if err != nil {
 		t.Fatal(err)
 	}

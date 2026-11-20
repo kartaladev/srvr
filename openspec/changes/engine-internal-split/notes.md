@@ -60,3 +60,15 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** unassigned
 - **Context:** `internal/engine/unmatched.go` `admit`: the `continue` after a failed `CompareAndSwap` (another request started the window first) is covered only when two requests race; `make cover` shows `admit` at 100% on one run and 93.3% on the next with no code change (slice 4 run). Not a defect claim; a hot-path branch without a deterministic test.
 - **Suggested action:** a test injecting a window swap between `Load` and `CompareAndSwap` (for example through the `now` hook) so the branch is covered on every run.
+
+### Slice 5 (static): shape and names
+- **Status:** closed: done
+- **Target:** engine-internal-split
+- **Context:** `internal/static` imports only `internal/errchain`. `StaticResult.Failure` became `engine.StaticFailure(ctx, res, allow)` (`internal/engine/staticfailure.go`; callers `static.go`, `ginsrvr/static.go`, `fibersrvr/static.go`). Names inside the package lost the `Static` stutter (`Mount`, `New`, `Config`, `Settings`, `Option`, `Prefixes`, `Check`, `Answer` with `Found`/`NotFound`/`MethodNotAllowed`/`Failed`, `FileContent`, `Result`, `ServeFile`); `srvr`'s public aliases (`srvr.StaticConfig`, `srvr.StaticOption`) and every error field string (`"StaticOption"`, `"Static.Prefix"`, ...) are unchanged. Two test assertions changed only in the `%T` of test-local fixture types (`engine.configurerA` -> `static.configurerA`, `engine.noSeekFile` -> `static.noSeekFile`), qualified names per D4. Not done (from `/simplify`, outside this change's scope): moving `Prefixes`/`Check` (configure-phase conflict checks) next to route registration in `internal/engine`; splitting `StaticFailure` into a pure `Result` method plus the router-answered mark.
+- **Suggested action:** none.
+
+### configFields test helper is copied in seven test packages
+- **Status:** open
+- **Target:** unassigned
+- **Context:** `configFields(err) []string` (the `*ConfigError` fields of a joined error) is declared in `server_test.go`, `ginsrvr/static_test.go`, `fibersrvr/static_test.go`, `otelsrvr/config_test.go`, `otelsetup/setup_test.go`, `internal/paritytest/config_test.go` and `internal/static/static_internal_test.go` (found by the slice 5 `/simplify` reuse review; pre-existing, not created by this change).
+- **Suggested action:** an exported helper in a test-support location every module can import (for example `errchain.ConfigFields`, if it earns a production use) or accept the copies.

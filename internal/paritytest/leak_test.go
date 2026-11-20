@@ -523,7 +523,7 @@ func TestEveryTestPackageChecksLeaks(t *testing.T) {
 
 		// The walk must find at least these; a test package added later is
 		// found too and checked like them.
-		for _, dir := range []string{".", "internal/engine", "internal/errchain", "internal/tracectx", "ginsrvr", "fibersrvr", "otelsrvr", "otelsetup", "internal/paritytest", "internal/paritytest/gincycle"} {
+		for _, dir := range []string{".", "internal/engine", "internal/errchain", "internal/static", "internal/tracectx", "ginsrvr", "fibersrvr", "otelsrvr", "otelsetup", "internal/paritytest", "internal/paritytest/gincycle"} {
 			if _, ok := pkgs[dir]; !ok {
 				t.Errorf("the walk did not find the test package in %s", dir)
 			}

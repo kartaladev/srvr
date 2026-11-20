@@ -38,8 +38,8 @@ func FuzzErrorChain(f *testing.F) {
 	})
 }
 
-// selfError is also declared in the internal/engine tests: test types
-// cannot be shared across packages.
+// selfError is declared in each internal test package that needs it:
+// test types cannot be shared across packages.
 type selfError struct{}
 
 func (selfError) Error() string { return "self" }

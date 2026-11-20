@@ -47,13 +47,13 @@
 
 ## 5. Slice: extract `internal/static`
 
-- [ ] 5.1 Precondition: 1.3 kept `static`; verify `design.md` D2 lists it, else skip and record why in `notes.md`
-- [ ] 5.2 Move static resolution with its tests behind the guard (test-quality / Scenario: Import direction guard, the `internal/static` row); verify `go test -race -run TestImportDirection` and `go test -race ./...` in the root module, `ginsrvr`, `fibersrvr`, `internal/paritytest` pass
+- [x] 5.1 Precondition: 1.3 kept `static`; verify `design.md` D2 lists it, else skip and record why in `notes.md`
+- [x] 5.2 Move static resolution with its tests behind the guard (test-quality / Scenario: Import direction guard, the `internal/static` row); verify `go test -race -run TestImportDirection` and `go test -race ./...` in the root module, `ginsrvr`, `fibersrvr`, `internal/paritytest` pass
   - RED: add `internal/static` to the recorded order; expected failure: missing package
   - GREEN: move `Static`, `StaticConfig`, `StaticSettings`, `StaticOption`, `StaticResult`, `StaticPrefixes`, `ServeStaticFile` and helpers; `StaticResult.Failure` moves to `internal/engine` as `StaticFailure(ctx, res, allow)` (design D2; call sites in `static.go`, `ginsrvr/static.go`, `fibersrvr/static.go` and tests)
   - REFACTOR: as 4.2; then `/simplify`
-- [ ] 5.3 Verify: `make check`, `make cover`, static parity rows in `internal/paritytest` unchanged, gopls diagnostics clean
-- [ ] 5.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(engine): extract internal/static`; verify with `git log -1 --stat`
+- [x] 5.3 Verify: `make check`, `make cover`, static parity rows in `internal/paritytest` unchanged, gopls diagnostics clean
+- [x] 5.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(engine): extract internal/static`; verify with `git log -1 --stat`
 
 ## 6. Benchmark comparison, documentation and end-to-end verification
 

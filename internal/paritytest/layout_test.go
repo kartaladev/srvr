@@ -20,6 +20,7 @@ const srvrPath = "github.com/kartaladev/srvr"
 var internalOrder = []string{
 	srvrPath + "/internal/tracectx",
 	srvrPath + "/internal/errchain",
+	srvrPath + "/internal/static",
 	srvrPath + "/internal/engine",
 }
 
@@ -99,8 +100,9 @@ func TestImportDirection(t *testing.T) {
 	var (
 		engine   = srvrPath + "/internal/engine"
 		errchain = srvrPath + "/internal/errchain"
+		static   = srvrPath + "/internal/static"
 		tracectx = srvrPath + "/internal/tracectx"
-		order    = []string{tracectx, errchain, engine}
+		order    = []string{tracectx, errchain, static, engine}
 	)
 
 	tests := []struct {
@@ -120,6 +122,10 @@ func TestImportDirection(t *testing.T) {
 		{"internal/engine imports internal/errchain", map[string][]string{engine: {errchain}}, nil},
 		{"internal/errchain imports prblm", map[string][]string{errchain: {"github.com/kartaladev/prblm"}}, nil},
 		{"internal/errchain imports internal/engine", map[string][]string{errchain: {engine}}, []string{"internal/errchain", "internal/engine"}},
+		{"internal/static imports internal/errchain", map[string][]string{static: {errchain}}, nil},
+		{"internal/errchain imports internal/static", map[string][]string{errchain: {static}}, []string{"internal/errchain", "internal/static"}},
+		{"internal/static imports internal/engine", map[string][]string{static: {engine}}, []string{"internal/static", "internal/engine"}},
+		{"internal/static imports the root package", map[string][]string{static: {srvrPath}}, []string{"internal/static", srvrPath + ","}},
 		{"leaf imports internal/engine", map[string][]string{tracectx: {engine}}, []string{"internal/tracectx", "internal/engine"}},
 		{"internal package missing from the order", map[string][]string{srvrPath + "/internal/other": {engine}}, []string{"internal/other", "not in the recorded package order"}},
 		{"internal package imports the root package", map[string][]string{tracectx: {srvrPath}}, []string{"internal/tracectx", srvrPath + ","}},

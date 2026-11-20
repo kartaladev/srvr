@@ -9,6 +9,7 @@ import (
 
 	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/internal/errchain"
+	"github.com/kartaladev/srvr/internal/static"
 )
 
 // HandlerFunc handles a request and reports failure by returning an error,
@@ -58,7 +59,7 @@ type builder struct {
 	owner string
 	// statics records the joined prefix of every static mount registered
 	// so far, with the configurer that registered it.
-	statics engine.StaticPrefixes
+	statics static.Prefixes
 	// served is what the installed routes serve, filled in by the
 	// server once they are installed; static mounts read it while
 	// serving.

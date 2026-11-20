@@ -1,4 +1,4 @@
-package engine
+package static
 
 import (
 	"embed"
@@ -60,20 +60,20 @@ func configFields(err error) []string {
 	return fields
 }
 
-func TestNewStatic_Config(t *testing.T) {
+func TestNew_Config(t *testing.T) {
 	t.Parallel()
 
 	var typedNil *embed.FS
 
-	indexNames := func(names ...string) StaticOption {
-		return func(c *StaticSettings) { c.IndexNames = names }
+	indexNames := func(names ...string) Option {
+		return func(c *Settings) { c.IndexNames = names }
 	}
 
 	tests := []struct {
 		name   string
 		prefix string
 		fsys   fs.FS
-		opts   []StaticOption
+		opts   []Option
 		fields []string
 	}{
 		{"nil FS", "/", nil, nil, []string{"Static.FS"}},
@@ -88,30 +88,30 @@ func TestNewStatic_Config(t *testing.T) {
 		{"NUL in prefix", "/a\x00", staticSite(), nil, []string{"Static.Prefix"}},
 		{"invalid UTF-8 prefix", "/\xff", staticSite(), nil, []string{"Static.Prefix"}},
 		{"space in prefix", "/a b", staticSite(), nil, []string{"Static.Prefix"}},
-		{"nil option", "/", staticSite(), []StaticOption{nil}, []string{"StaticOption"}},
-		{"empty index name", "/", staticSite(), []StaticOption{indexNames("")}, []string{"Static.IndexNames"}},
-		{"index name with a slash", "/", staticSite(), []StaticOption{indexNames("a/index.html")}, []string{"Static.IndexNames"}},
-		{"dot-dot index name", "/", staticSite(), []StaticOption{indexNames("..")}, []string{"Static.IndexNames"}},
-		{"fallback leaving the file system", "/", staticSite(), []StaticOption{fallback("../index.html")}, []string{"Static.SPAFallback"}},
-		{"absolute fallback", "/", staticSite(), []StaticOption{fallback("/index.html")}, []string{"Static.SPAFallback"}},
-		{"hidden fallback", "/", staticSite(), []StaticOption{fallback(".env")}, []string{"Static.SPAFallback"}},
-		{"fallback with a backslash", "/", staticSite(), []StaticOption{fallback(`a\index.html`)}, []string{"Static.SPAFallback"}},
-		{"directory-only fallback", "/", staticSite(), []StaticOption{fallback("docs/")}, []string{"Static.SPAFallback"}},
-		{"header injection in CacheControl", "/", staticSite(), []StaticOption{func(c *StaticSettings) {
+		{"nil option", "/", staticSite(), []Option{nil}, []string{"StaticOption"}},
+		{"empty index name", "/", staticSite(), []Option{indexNames("")}, []string{"Static.IndexNames"}},
+		{"index name with a slash", "/", staticSite(), []Option{indexNames("a/index.html")}, []string{"Static.IndexNames"}},
+		{"dot-dot index name", "/", staticSite(), []Option{indexNames("..")}, []string{"Static.IndexNames"}},
+		{"fallback leaving the file system", "/", staticSite(), []Option{fallback("../index.html")}, []string{"Static.SPAFallback"}},
+		{"absolute fallback", "/", staticSite(), []Option{fallback("/index.html")}, []string{"Static.SPAFallback"}},
+		{"hidden fallback", "/", staticSite(), []Option{fallback(".env")}, []string{"Static.SPAFallback"}},
+		{"fallback with a backslash", "/", staticSite(), []Option{fallback(`a\index.html`)}, []string{"Static.SPAFallback"}},
+		{"directory-only fallback", "/", staticSite(), []Option{fallback("docs/")}, []string{"Static.SPAFallback"}},
+		{"header injection in CacheControl", "/", staticSite(), []Option{func(c *Settings) {
 			c.CacheControl = "max-age=60\r\nSet-Cookie: a=b"
 		}}, []string{"Static.CacheControl"}},
-		{"NUL in IndexCacheControl", "/", staticSite(), []StaticOption{func(c *StaticSettings) {
+		{"NUL in IndexCacheControl", "/", staticSite(), []Option{func(c *Settings) {
 			c.IndexCacheControl = "no-cache\x00"
 		}}, []string{"Static.IndexCacheControl"}},
-		{"refused option argument, then the config replaced", "/", staticSite(), []StaticOption{
-			func(c *StaticSettings) {
+		{"refused option argument, then the config replaced", "/", staticSite(), []Option{
+			func(c *Settings) {
 				c.Errs = append(c.Errs, errchain.NewConfigError("Static.FiberSendFileCache", time.Duration(0), "must be positive"))
 			},
-			func(c *StaticSettings) { c.StaticConfig = StaticConfig{} },
+			func(c *Settings) { c.Config = Config{} },
 		}, []string{"Static.FiberSendFileCache"}},
 		{
 			"several invalid settings", "assets", nil,
-			[]StaticOption{func(c *StaticSettings) { c.CacheControl = "a\nb" }},
+			[]Option{func(c *Settings) { c.CacheControl = "a\nb" }},
 			[]string{"Static.Prefix", "Static.FS", "Static.CacheControl"},
 		},
 	}
@@ -120,9 +120,9 @@ func TestNewStatic_Config(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			m, err := NewStatic(tt.prefix, tt.fsys, tt.opts...)
+			m, err := New(tt.prefix, tt.fsys, tt.opts...)
 			if err == nil {
-				t.Fatalf("NewStatic(%q) = %v, nil; want an error", tt.prefix, m)
+				t.Fatalf("New(%q) = %v, nil; want an error", tt.prefix, m)
 			}
 
 			if !errors.Is(err, errchain.ErrConfig) {
@@ -137,7 +137,7 @@ func TestNewStatic_Config(t *testing.T) {
 }
 
 // fallback returns an option setting SPAFallback.
-func fallback(name string) StaticOption { return func(c *StaticSettings) { c.SPAFallback = name } }
+func fallback(name string) Option { return func(c *Settings) { c.SPAFallback = name } }
 
 // TestStatic_Check covers the static-files / Scenario: Rejected static
 // configuration rows that read the file system: the fallback must be a
@@ -169,9 +169,9 @@ func TestStatic_Check(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			m, err := NewStatic("/", tt.fsys, fallback(tt.fallback))
+			m, err := New("/", tt.fsys, fallback(tt.fallback))
 			if err != nil {
-				t.Fatalf("NewStatic: %v", err)
+				t.Fatalf("New: %v", err)
 			}
 
 			err = m.Check()
@@ -192,28 +192,28 @@ func TestStatic_Check(t *testing.T) {
 }
 
 // configurerA and configurerB are the static configurer types the
-// StaticPrefixes rows name.
+// Prefixes rows name.
 type (
 	configurerA struct{}
 	configurerB struct{}
 )
 
-// TestStaticPrefixes_Add covers the configure-phase check gin and fiber
+// TestPrefixes_Add covers the configure-phase check gin and fiber
 // run for each static configurer: its configuration error or start-time
 // check, and a second mount of a prefix, naming the earlier one; the zero
 // value is ready to use.
-func TestStaticPrefixes_Add(t *testing.T) {
+func TestPrefixes_Add(t *testing.T) {
 	t.Parallel()
 
 	site := staticSite()
-	mount := func(prefix string, opts ...StaticOption) func() (*Static, error) {
-		return func() (*Static, error) { return NewStatic(prefix, site, opts...) }
+	mount := func(prefix string, opts ...Option) func() (*Mount, error) {
+		return func() (*Mount, error) { return New(prefix, site, opts...) }
 	}
 
 	type add struct {
 		c      any
 		prefix string
-		mount  func() (*Static, error)
+		mount  func() (*Mount, error)
 	}
 
 	tests := []struct {
@@ -227,18 +227,18 @@ func TestStaticPrefixes_Add(t *testing.T) {
 		{
 			"invalid configuration",
 			[]add{{configurerA{}, "assets", mount("assets")}},
-			`static "assets" (engine.configurerA): srvr: invalid configuration: Static.Prefix assets: must start with "/"`,
+			`static "assets" (static.configurerA): srvr: invalid configuration: Static.Prefix assets: must start with "/"`,
 		},
 		{
 			"failing start-time check",
-			[]add{{configurerA{}, "/", mount("/", func(c *StaticSettings) { c.SPAFallback = "missing.html" })}},
-			`static "/" (engine.configurerA): srvr: invalid configuration: Static.SPAFallback missing.html: does not exist in the file system`,
+			[]add{{configurerA{}, "/", mount("/", func(c *Settings) { c.SPAFallback = "missing.html" })}},
+			`static "/" (static.configurerA): srvr: invalid configuration: Static.SPAFallback missing.html: does not exist in the file system`,
 		},
 		{
 			"same prefix twice",
 			[]add{{configurerA{}, "/assets", mount("/assets")}, {configurerB{}, "/assets/", mount("/assets/")}},
-			`static "/assets/" (engine.configurerB): srvr: invalid configuration: Static.Prefix /assets/: ` +
-				`is already served by another static mount (static "/assets" (engine.configurerA))`,
+			`static "/assets/" (static.configurerB): srvr: invalid configuration: Static.Prefix /assets/: ` +
+				`is already served by another static mount (static "/assets" (static.configurerA))`,
 		},
 	}
 
@@ -247,7 +247,7 @@ func TestStaticPrefixes_Add(t *testing.T) {
 			t.Parallel()
 
 			var (
-				p   StaticPrefixes
+				p   Prefixes
 				err error
 			)
 
@@ -266,7 +266,7 @@ func TestStaticPrefixes_Add(t *testing.T) {
 	}
 }
 
-func TestNewStatic_Valid(t *testing.T) {
+func TestNew_Valid(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -285,9 +285,9 @@ func TestNewStatic_Valid(t *testing.T) {
 
 			site := staticSite()
 
-			m, err := NewStatic(tt.prefix, site)
+			m, err := New(tt.prefix, site)
 			if err != nil {
-				t.Fatalf("NewStatic(%q) = %v", tt.prefix, err)
+				t.Fatalf("New(%q) = %v", tt.prefix, err)
 			}
 
 			if m.Prefix() != tt.want {
@@ -355,16 +355,16 @@ type MyError struct{ msg string }
 
 func (e *MyError) Error() string { return e.msg }
 
-// staticDecision is the part of a StaticResult a test compares.
+// staticDecision is the part of a Result a test compares.
 type staticDecision struct {
-	answer       StaticAnswer
+	answer       Answer
 	name         string
 	contentType  string
 	cacheControl string
 	vary         string
 }
 
-func decisionOf(r StaticResult) staticDecision {
+func decisionOf(r Result) staticDecision {
 	return staticDecision{r.Answer, r.Name, r.ContentType, r.CacheControl, r.Vary}
 }
 
@@ -380,12 +380,12 @@ func TestStatic_Resolve(t *testing.T) {
 	var typedNil *MyError
 
 	served := func(name, ctype, cache string) staticDecision {
-		return staticDecision{answer: StaticFile, name: name, contentType: ctype, cacheControl: cache}
+		return staticDecision{answer: Found, name: name, contentType: ctype, cacheControl: cache}
 	}
-	notFound := staticDecision{answer: StaticNotFound}
-	notAllowed := staticDecision{answer: StaticMethodNotAllowed}
-	spa := []StaticOption{fallback("index.html")}
-	failed := staticDecision{answer: StaticFailed}
+	notFound := staticDecision{answer: NotFound}
+	notAllowed := staticDecision{answer: MethodNotAllowed}
+	spa := []Option{fallback("index.html")}
+	failed := staticDecision{answer: Failed}
 
 	const (
 		js   = "text/javascript; charset=utf-8"
@@ -393,12 +393,12 @@ func TestStatic_Resolve(t *testing.T) {
 		text = "text/plain; charset=utf-8"
 	)
 
-	fellBack := staticDecision{answer: StaticFile, name: "index.html", contentType: html, cacheControl: "no-cache", vary: "Accept"}
+	fellBack := staticDecision{answer: Found, name: "index.html", contentType: html, cacheControl: "no-cache", vary: "Accept"}
 
 	tests := []struct {
 		name   string
 		fsys   fs.FS
-		opts   []StaticOption
+		opts   []Option
 		method string
 		rest   string
 		accept string
@@ -435,7 +435,7 @@ func TestStatic_Resolve(t *testing.T) {
 		{name: "below a file", method: "GET", rest: "index.html/x", want: notFound},
 		{
 			name: "index name missing", method: "GET", rest: "",
-			opts: []StaticOption{func(c *StaticSettings) { c.IndexNames = []string{"home.html"} }}, want: notFound,
+			opts: []Option{func(c *Settings) { c.IndexNames = []string{"home.html"} }}, want: notFound,
 		},
 		{name: "4096-character name", method: "GET", rest: strings.Repeat("a", 4096) + ".js", want: notFound},
 		// Hostile paths, as decoded.
@@ -475,8 +475,8 @@ func TestStatic_Resolve(t *testing.T) {
 		},
 		{
 			name: "fallback with its own cache", method: "GET", rest: "dashboard", accept: "text/html",
-			opts: slices.Concat(spa, []StaticOption{func(c *StaticSettings) { c.IndexCacheControl = "no-store" }}),
-			want: staticDecision{answer: StaticFile, name: "index.html", contentType: html, cacheControl: "no-store", vary: "Accept"},
+			opts: slices.Concat(spa, []Option{func(c *Settings) { c.IndexCacheControl = "no-store" }}),
+			want: staticDecision{answer: Found, name: "index.html", contentType: html, cacheControl: "no-store", vary: "Accept"},
 		},
 		{
 			name: "fallback unreadable", method: "GET", rest: "dashboard", opts: spa, accept: "text/html", want: failed, errIs: fs.ErrPermission,
@@ -540,7 +540,7 @@ func TestStatic_Resolve(t *testing.T) {
 			}},
 		},
 		{
-			name: "file without Seek", method: "GET", rest: "app.js", want: failed, errText: "engine.noSeekFile cannot seek",
+			name: "file without Seek", method: "GET", rest: "app.js", want: failed, errText: "static.noSeekFile cannot seek",
 			fsys: faultFS{base: site, open: map[string]func() (fs.File, error){
 				"app.js": func() (fs.File, error) { f, err := appJS(); return noSeekFile{f}, err },
 			}},
@@ -590,9 +590,9 @@ func TestStatic_Resolve(t *testing.T) {
 				fsys = site
 			}
 
-			m, err := NewStatic("/assets", fsys, tt.opts...)
+			m, err := New("/assets", fsys, tt.opts...)
 			if err != nil {
-				t.Fatalf("NewStatic: %v", err)
+				t.Fatalf("New: %v", err)
 			}
 
 			res := m.Resolve(tt.method, tt.rest, tt.accept)
@@ -605,13 +605,13 @@ func TestStatic_Resolve(t *testing.T) {
 			}
 
 			switch {
-			case res.Answer == StaticFile && res.File == nil:
+			case res.Answer == Found && res.File == nil:
 				t.Errorf("served without an open file: %+v", res)
-			case res.Answer != StaticFile && res.File != nil:
+			case res.Answer != Found && res.File != nil:
 				t.Errorf("answer %v keeps an open file", res.Answer)
-			case res.Answer == StaticFailed && res.Err == nil:
+			case res.Answer == Failed && res.Err == nil:
 				t.Error("failed without an error")
-			case res.Answer != StaticFailed && res.Err != nil:
+			case res.Answer != Failed && res.Err != nil:
 				t.Errorf("answer %v with error %v", res.Answer, res.Err)
 			}
 
@@ -635,9 +635,9 @@ func TestStatic_ResolvePanics(t *testing.T) {
 		"app.js": func() (fs.File, error) { panic("boom") },
 	}}
 
-	m, err := NewStatic("/", fsys)
+	m, err := New("/", fsys)
 	if err != nil {
-		t.Fatalf("NewStatic: %v", err)
+		t.Fatalf("New: %v", err)
 	}
 
 	defer func() {
@@ -705,9 +705,9 @@ func FuzzStaticResolve(f *testing.F) {
 	site := staticSite()
 	site["secret"] = &fstest.MapFile{Data: []byte("SECRET")}
 
-	m, err := NewStatic("/", site, fallback("index.html"))
+	m, err := New("/", site, fallback("index.html"))
 	if err != nil {
-		f.Fatalf("NewStatic: %v", err)
+		f.Fatalf("New: %v", err)
 	}
 
 	f.Fuzz(func(t *testing.T, rest string) {
@@ -716,7 +716,7 @@ func FuzzStaticResolve(f *testing.F) {
 			defer res.File.Close()
 		}
 
-		if res.Answer != StaticFile {
+		if res.Answer != Found {
 			return
 		}
 
@@ -736,10 +736,10 @@ func FuzzStaticResolve(f *testing.F) {
 	})
 }
 
-// TestNewStatic_SendFileCache checks FiberSendFileCache: a positive value
+// TestNew_SendFileCache checks FiberSendFileCache: a positive value
 // is kept, zero is off and a negative value is refused; an engine without
 // an open-file cache refuses a positive one with RejectSendFileCache.
-func TestNewStatic_SendFileCache(t *testing.T) {
+func TestNew_SendFileCache(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -760,12 +760,12 @@ func TestNewStatic_SendFileCache(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			opts := []StaticOption{func(c *StaticSettings) { c.FiberSendFileCache = tt.cache }}
+			opts := []Option{func(c *Settings) { c.FiberSendFileCache = tt.cache }}
 			if tt.noCache {
 				opts = append(opts, RejectSendFileCache)
 			}
 
-			m, err := NewStatic("/", staticSite(), opts...)
+			m, err := New("/", staticSite(), opts...)
 			if tt.field != "" {
 				if got := configFields(err); !slices.Equal(got, []string{tt.field}) {
 					t.Fatalf("fields = %v, want [%s] (error %v)", got, tt.field, err)
@@ -775,7 +775,7 @@ func TestNewStatic_SendFileCache(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Fatalf("NewStatic = %v", err)
+				t.Fatalf("New = %v", err)
 			}
 
 			if got := m.SendFileCache(); got != tt.cache {
@@ -784,3 +784,11 @@ func TestNewStatic_SendFileCache(t *testing.T) {
 		})
 	}
 }
+
+// selfError is an error that unwraps to itself: a cyclic chain. It is also
+// declared in the internal/engine and internal/errchain tests: test types
+// cannot be shared across packages.
+type selfError struct{}
+
+func (selfError) Error() string   { return "self" }
+func (e selfError) Unwrap() error { return e }
