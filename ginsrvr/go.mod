@@ -6,7 +6,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/kartaladev/prblm v0.3.0
 	github.com/kartaladev/prblm/adapters/ginprblm v0.3.0
-	github.com/kartaladev/srvr v0.2.0
+	github.com/kartaladev/srvr v0.3.0
 	go.uber.org/goleak v1.3.0
 )
 
@@ -41,7 +41,3 @@ require (
 	golang.org/x/text v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
-
-// Development builds use the modules in this repository; RELEASING.md drops
-// these lines in the commit that is tagged.
-replace github.com/kartaladev/srvr => ../
