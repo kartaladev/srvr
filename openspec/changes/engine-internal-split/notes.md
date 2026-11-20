@@ -26,7 +26,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** group 1 applies D3 to the gopls-verified graph and records every merge or drop here.
 
 ### Owner decisions pending
-- **Status:** open: only the benchmark go-aheads (tasks 2.1, 6.1) remain; order and release decided (below), version decided at `pluggable-error-renderer`'s release
+- **Status:** closed: benchmark go-aheads given (2.1, 6.1); order and release decided (below); the version is decided at `pluggable-error-renderer`'s release
 - **Target:** engine-internal-split
 - **Context:** change order `engine-internal-split` -> `pluggable-error-renderer` -> `scrty-integration` (task 1.5; the owner edits AGENTS.md and `openspec/config.yaml`); release coordination with `pluggable-error-renderer`, which also proposes `v0.4.0` (task 1.6); release version at task 10.3; go-ahead before each benchmark run (tasks 2.1, 9.1).
 - **Suggested action:** ask in group 1; benchmarks only after the owner confirms no other benchmark session runs on the machine.

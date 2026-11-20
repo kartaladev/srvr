@@ -64,7 +64,7 @@
 
 ## 7. Release hand-off (no tag in this change)
 
-- [ ] 7.1 Prepare the hand-off (owner decision 2026-11-20: `engine-internal-split` and `pluggable-error-renderer` ship together as v0.4.0, released at the end of `pluggable-error-renderer`): CHANGELOG `[Unreleased]` holds this change's entries including the BREAKING import path and "upgrade every srvr module together" (design D6); `pluggable-error-renderer/notes.md` gets an entry naming the final internal packages and that its renderer types land in `internal/engine`; verify no tag was created (`git tag --contains HEAD` empty)
+- [x] 7.1 Prepare the hand-off (owner decision 2026-11-20: `engine-internal-split` and `pluggable-error-renderer` ship together as v0.4.0, released at the end of `pluggable-error-renderer`): CHANGELOG `[Unreleased]` holds this change's entries including the BREAKING import path and "upgrade every srvr module together" (design D6); `pluggable-error-renderer/notes.md` gets an entry naming the final internal packages and that its renderer types land in `internal/engine`; verify no tag was created (`git tag --contains HEAD` empty)
 
 ## Workflow follow-up
 

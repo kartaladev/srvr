@@ -48,3 +48,9 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** pluggable-error-renderer
 - **Context:** D8: `ErrorHook` becomes `func(ctx, err error, sent ErrorReport)`, `ErrorReport` a value struct (not a pointer, not an interface), so no allocation and safe to retain; zero report = no answer sent. D9: `srvr.log.schema` stays `1`. Design "D8 and D9 outcome" records the reasons; slice 6 adds a benchmark row with an error hook installed and requires zero added allocs/op.
 - **Suggested action:** none.
+
+### engine-internal-split applied: final internal packages
+- **Status:** open
+- **Target:** pluggable-error-renderer
+- **Context:** `engine-internal-split` (branch `refactor/engine-internal-split`) moved `engine` to `internal/engine` and extracted only `internal/errchain` (srvr's sentinels, `ConfigError`, `NewConfigError`, `RouteErrorf`, chain walking, guards, value text, redaction) and `internal/static` (static resolution; `engine.StaticFailure` maps its answers to errors). There is no `internal/problems`: the prblm handler, error hooks, access and triage records stay in `internal/engine`. Order pinned by `TestImportDirection` (`internal/paritytest/layout_test.go`): `tracectx` < `errchain` < `static` < `engine`. The two changes share the v0.4.0 release, which runs at the end of this change; `CHANGELOG.md` `[Unreleased]` already holds `engine-internal-split`'s entries.
+- **Suggested action:** this change's consolidation re-points every `engine/...` path in its design and tasks to `internal/engine/...` (renderer types and `Render` beside the prblm handler); a new sentinel goes to `internal/errchain`; adds `internal/...` packages only through `internalOrder` and the leak-walk list.
