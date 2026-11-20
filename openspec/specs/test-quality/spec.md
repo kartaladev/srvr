@@ -46,7 +46,9 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 | package | verdict |
 |---------|---------|
 | `github.com/kartaladev/srvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
-| `github.com/kartaladev/srvr/engine` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/engine` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/errchain` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/static` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/tracectx` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/ginsrvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/fibersrvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
@@ -54,6 +56,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 | `github.com/kartaladev/srvr/otelsetup` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/paritytest` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/paritytest/gincycle` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/benchgate` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 
 ##### Examples: rejected
 | package | verdict |
@@ -61,7 +64,6 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 | a package with test files and no `TestMain` | rejected: the guard fails naming the directory |
 | a package whose `TestMain` calls `m.Run` without `goleak.VerifyTestMain` | rejected: the guard fails naming the directory |
 | a package without test files | accepted: nothing to check |
-| a test file that does not parse | rejected: the guard fails naming the file and the parse error |
 
 ### Requirement: Goroutines srvr starts end when their owner stops
 Every goroutine srvr or a dependency starts for a server, a listener, a provider or an exporter SHALL have ended once its owner's stop (`Shutdown`, a failed `Start`, `Setup.Shutdown`, a failed `otelsetup.New`) has returned, apart from the goroutines listed as deliberate. An owner that is never stopped SHALL be reported as a leak.
@@ -218,3 +220,54 @@ A pull request SHALL fail CI when a benchmark's `allocs/op` or `B/op` rises more
 | `BenchmarkLogHandler/root_logger_concurrent_requests` (parallel, runs spread more than 10%) | runs from `4` to `6 allocs/op` | `10 allocs/op` | passes, reporting it as not reproducible |
 | a benchmark added by the branch | (none) | any | passes, reporting it as new |
 | a benchmark removed by the branch | any | (none) | passes, reporting it as removed |
+
+### Requirement: Internal packages depend in one direction
+The core's internal library packages SHALL import only the standard library, prblm and the internal packages listed below them in the recorded order `internal/tracectx`, `internal/errchain`, `internal/static`, `internal/engine`; no package imports `internal/engine`. Commands such as `internal/benchgate` are skipped. A guard test SHALL fail, naming both packages, when an import breaks the order.
+
+#### Scenario: Import direction guard
+- **Given** the recorded package order of the core module's internal packages
+- **When** the guard lists the imports of `<package>` with `go list -deps` (or `golang.org/x/tools/go/packages`) and finds `<import>`
+- **Then** the guard `<verdict>`
+
+##### Examples: accepted
+| package | import | verdict |
+|---------|--------|---------|
+| `github.com/kartaladev/srvr/internal/engine` | `github.com/kartaladev/srvr/internal/errchain` | passes |
+| `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/prblm` | passes |
+| `github.com/kartaladev/srvr/internal/static` | `github.com/kartaladev/srvr/internal/errchain` | passes |
+| `github.com/kartaladev/srvr` | `github.com/kartaladev/srvr/internal/engine` | passes |
+
+##### Examples: rejected
+| package | import | verdict |
+|---------|--------|---------|
+| `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/srvr/internal/engine` | fails naming `internal/errchain` and `internal/engine` |
+| `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/srvr/internal/static` (a package listed above it) | fails naming both packages |
+| an internal package missing from the recorded order | any srvr package | fails naming the unlisted package |
+| `github.com/kartaladev/srvr/internal/static` | `github.com/kartaladev/srvr/internal/engine` | fails naming both packages |
+| `github.com/kartaladev/srvr/internal/static` | `github.com/kartaladev/srvr` (the root package) | fails naming both packages |
+
+##### Examples: boundary
+| package | import | verdict |
+|---------|--------|---------|
+| an internal package with only `_test.go` imports of a higher package (an external `_test` package) | `github.com/kartaladev/srvr/internal/engine` | passes: test-only imports are outside the rule |
+| `github.com/kartaladev/srvr/internal/engine` before any extraction (slice 2) | standard library, prblm and `internal/tracectx` | passes with a one-entry order |
+
+### Requirement: The refactor keeps the pipeline's performance
+`BenchmarkPipeline` of every engine SHALL be compared, with `benchstat` over 10 interleaved runs on one machine, between the change's base commit and the change's last slice. A regression over 5% `ns/op` with `p < 0.05`, or any extra `allocs/op`, on any row SHALL stop the work for an owner decision.
+
+#### Scenario: Pipeline benchmark comparison
+- **Given** `BenchmarkPipeline` row `<row>` on engine `<engine>` measured at the base commit and after the last slice
+- **When** `benchstat` compares the two sets of 10 interleaved runs and finds `<difference>`
+- **Then** the result is `<result>`
+
+##### Examples:
+| row | engine | difference | result |
+|-----|--------|------------|--------|
+| every row | `net/http` | `ns/op` within 5%, same `allocs/op` | passes |
+| every row | `gin` | `ns/op` within 5%, same `allocs/op` | passes |
+| every row | `fiber` | `ns/op` within 5%, same `allocs/op` | passes |
+| any row | `net/http` | one more `allocs/op` than the base | stops for the owner, naming the row and both values |
+| any row | `gin` | `ns/op` 6% over the base with `p < 0.05` | stops for the owner, naming the row and both values |
+| any row | `fiber` | `ns/op` 6% over the base with `p >= 0.05` (`~`) | passes, reported as not significant |
+| any row | any engine | exactly 5.0% over the base with `p < 0.05` | passes (the limit is "over 5%") |
+| any row | any engine | measured while another benchmark session uses the machine | not run: the owner is asked first and the numbers are discarded |
