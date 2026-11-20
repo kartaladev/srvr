@@ -119,7 +119,7 @@ srvr SHALL guard the error against cyclic chains before calling the renderer, SH
 | returns a body of 1 MiB + 1 byte | `oversized_body` |
 | returns a 10-byte body without `Content-Type` | `missing_content_type` |
 | returns status `404`, no body and no headers | (none: a bare `404` is sent) |
-| returns after its context's 5-second deadline (the test shortens the deadline through `engine`'s test hook) | `deadline` |
+| returns after its context's 5-second deadline (the test shortens the deadline through `internal/engine`'s test hook) | `deadline` |
 | returns before the deadline while the client already disconnected | (none: sent as returned) |
 | returns a nil `Header` | (none: sent without extra headers) |
 | returns `Header` with `Content-Length: 999` and `Transfer-Encoding: chunked` | (none: those two are dropped, srvr sets `Content-Length` from the body) |
