@@ -13,7 +13,7 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

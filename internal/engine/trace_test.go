@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestStateFrom covers engine-support / Scenario: No request state outside

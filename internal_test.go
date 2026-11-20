@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestOptionPrecedence covers server-lifecycle / Scenario: Option and config

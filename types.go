@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // The configuration types, sentinel errors and request accessors of srvr

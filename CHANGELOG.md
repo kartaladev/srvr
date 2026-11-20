@@ -6,6 +6,15 @@ once tagged.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (API, `engine`, unstable before v1):** the package `github.com/kartaladev/srvr/engine`
+  moved to `github.com/kartaladev/srvr/internal/engine` and can no longer be imported from outside
+  srvr's modules. Use the `srvr` names instead (`srvr.Config`, `srvr.ErrConfig`, `srvr.ConfigError`,
+  `srvr.Option`, ...); they are unchanged. Upgrade every srvr module (`srvr`, `ginsrvr`,
+  `fibersrvr`, `otelsrvr`, `otelsetup`) to the same release: an older engine module imports the
+  removed path.
+
 ## [v0.3.0] - 2026-11-20
 
 ### Added

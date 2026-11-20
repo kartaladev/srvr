@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // logBoth registers GET /log writing a DEBUG and an INFO record through

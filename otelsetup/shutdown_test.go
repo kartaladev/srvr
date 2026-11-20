@@ -16,7 +16,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/otelsetup"
 	"go.opentelemetry.io/otel"
 )

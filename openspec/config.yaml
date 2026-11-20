@@ -37,8 +37,9 @@ context: |
   - Handlers report errors in each engine's native way and srvr renders every one through prblm:
     net/http handlers return error (func(w, r) error), fiber handlers return error
     (func(fiber.Ctx) error), gin handlers stay plain gin.HandlerFunc and report through c.Error.
-  - Shared pipeline pieces used by the engine modules live in the public package srvr/engine
-    (documented as unstable before v1), because separate modules cannot import core internal/.
+  - Shared pipeline pieces used by the engine modules live under srvr/internal/ (internal/engine
+    and its leaf packages): srvr's nested modules import them by path; outside modules cannot.
+    Consumers use the srvr aliases.
   - Plain constructors with functional options are the primary API; every option group also has a
     plain tagged config struct (json/yaml/env tags) that any loader can fill. srvr never reads
     environment variables or files itself.

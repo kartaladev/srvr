@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // inFlight sends GET url in the background and returns a channel with the

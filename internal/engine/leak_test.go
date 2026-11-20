@@ -13,7 +13,7 @@ import (
 	"go.uber.org/goleak"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // leakOptions are the goleak options of the engine package's test binary.

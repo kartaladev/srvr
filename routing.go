@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // HandlerFunc handles a request and reports failure by returning an error,

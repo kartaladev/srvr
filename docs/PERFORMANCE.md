@@ -11,10 +11,10 @@ versions, and what CI checks on every pull request.
 | `srvr` (`internal/tracectx`) | `BenchmarkNewTrace` | generating a new trace's ids, serial and parallel |
 | `ginsrvr` | `BenchmarkPipeline` | the same cases on gin |
 | `fibersrvr` | `BenchmarkPipeline` | the same cases on fiber through `app.Test`, plus a success whose access record is suppressed (`SkipPaths`) and an unmatched path whose record `WithUnmatchedRecordLimit` suppresses, except the body over the limit, which fasthttp rejects before fiber runs and `app.Test` reports as an error |
-| `srvr/engine` | `BenchmarkLogHandler` | srvr's log handler: 0, 1 and 3 `With` steps, with and without a `slog.Any` value, a logger from `LoggerFromContext` used for one record, and the root logger used by concurrent requests whose records interleave |
-| `srvr/engine` | `BenchmarkCorrelation` | grouped and ungrouped request records |
-| `srvr/engine` | `BenchmarkRedactSecrets` | the default redactor over error texts and a 32 KiB stack |
-| `srvr/engine` | `BenchmarkDebugBuffer` | a request logging five `DEBUG` records with the debug buffer off, on and succeeding, on and failing; on and failing with seven attributes per record, one a `slog.Any` value; on and failing with 150 records, past the default 100 |
+| `srvr/internal/engine` | `BenchmarkLogHandler` | srvr's log handler: 0, 1 and 3 `With` steps, with and without a `slog.Any` value, a logger from `LoggerFromContext` used for one record, and the root logger used by concurrent requests whose records interleave |
+| `srvr/internal/engine` | `BenchmarkCorrelation` | grouped and ungrouped request records |
+| `srvr/internal/engine` | `BenchmarkRedactSecrets` | the default redactor over error texts and a 32 KiB stack |
+| `srvr/internal/engine` | `BenchmarkDebugBuffer` | a request logging five `DEBUG` records with the debug buffer off, on and succeeding, on and failing; on and failing with seven attributes per record, one a `slog.Any` value; on and failing with 150 records, past the default 100 |
 | `otelsrvr` | `BenchmarkObserver` | the observer on one request: metrics, metrics and tracing, every instrument and tracing |
 
 Every benchmark reports `ns/op`, `B/op` and `allocs/op` and logs to
@@ -101,7 +101,7 @@ runs the benchmarks of every package that has any once, with
 `-cpuprofile` and `-memprofile`. `go test` profiles one package at a time,
 so the files are per package, named after its path in the repository:
 `bench/srvr.cpu` and `bench/srvr.mem` for the core package,
-`bench/engine.*`, `bench/ginsrvr.*`, `bench/fibersrvr.*` and
+`bench/internal-engine.*`, `bench/ginsrvr.*`, `bench/fibersrvr.*` and
 `bench/otelsrvr.*`. The test binary (`bench/<name>.test`) and the
 benchmark output (`bench/<name>.profile.txt`) are kept next to them.
 
@@ -110,8 +110,8 @@ Reading a profile:
 ```sh
 go tool pprof -top bench/srvr.cpu                                  # where CPU time goes
 go tool pprof -top -sample_index=alloc_objects bench/srvr.mem      # what allocates most often
-go tool pprof -top -sample_index=alloc_space bench/engine.mem      # what allocates most bytes
-go tool pprof -list 'RedactSecrets' bench/engine.cpu               # time per source line
+go tool pprof -top -sample_index=alloc_space bench/internal-engine.mem      # what allocates most bytes
+go tool pprof -list 'RedactSecrets' bench/internal-engine.cpu               # time per source line
 go tool pprof -http=localhost:8080 bench/srvr.cpu                  # flame graph in a browser
 ```
 
@@ -121,7 +121,7 @@ interest with `BENCH` (a package without a matching benchmark then gets an
 empty profile):
 
 ```sh
-go tool pprof -top -focus=RedactSecrets bench/engine.cpu
+go tool pprof -top -focus=RedactSecrets bench/internal-engine.cpu
 make profile MODULES=. BENCH=BenchmarkPipeline
 ```
 

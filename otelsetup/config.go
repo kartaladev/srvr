@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // ErrConfig is wrapped by every error New returns for invalid

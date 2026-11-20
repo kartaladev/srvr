@@ -13,8 +13,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/static"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/fibersrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // boomAPI is a configurer that panics.

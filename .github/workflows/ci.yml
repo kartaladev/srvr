@@ -51,7 +51,7 @@ jobs:
         if: matrix.go == 'stable'
         run: make vulncheck MODULES=${{ matrix.module }}
 
-  # Coverage of every package, the engine package included, from the tests
+  # Coverage of every package, the internal packages included, from the tests
   # of every module: workspace mode, so -coverpkg spans the modules.
   coverage:
     if: github.ref_type != 'tag'

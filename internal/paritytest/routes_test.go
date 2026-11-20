@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestParity_RouteListing: the same declared routes are listed alike on

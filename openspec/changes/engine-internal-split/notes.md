@@ -42,3 +42,9 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** engine-internal-split
 - **Context:** change order confirmed: `static-files` -> `engine-internal-split` -> `pluggable-error-renderer` -> `scrty-integration` (AGENTS.md and openspec/config.yaml updated). `engine-internal-split` and `pluggable-error-renderer` are released together as v0.4.0: the first change's release group does not tag; the release runs once, at the end of `pluggable-error-renderer`, after the owner confirms tags.
 - **Suggested action:** group 1 ticks the order and release-coordination tasks against this entry; refresh the release groups accordingly.
+
+### Benchmark baseline (tasks 2.1, 2.2)
+- **Status:** closed: recorded 2026-11-21
+- **Target:** engine-internal-split
+- **Context:** Go-ahead: the owner answered "continue" after being told the baseline waited for their confirmation that no other benchmark session was running (an earlier "not now" was lifted by it). Base commit `5ee3ee5` in a worktree (session scratchpad `base/`). Command, 10 times in a row per module (root including `engine`, `ginsrvr`, `fibersrvr`): `GOWORK=off go test -run '^$' -bench 'Pipeline|LogHandler|Correlation|RedactSecrets|DebugBuffer' -benchmem -count=1 ./...`. Machine: Apple M4 Pro (14 threads), darwin/arm64, Go 1.27.4; 16 min total. Raw output in the session scratchpad `bench-base/` (`r.txt` = root module, `ginsrvr.txt`, `fibersrvr.txt`); `benchstat` prints every row with 10 samples. Reference allocs/op: net/http success 20, handler_error 77, unmatched 103, panic 83, 32-link chain 340, static 53; gin success 20, handler_error 79, unmatched 83, static 40; fiber success 47, handler_error 105, unmatched 111, static 77; LogHandler 0 steps 0; Correlation ungrouped 752 B/op.
+- **Suggested action:** task 6.1 compares against these files (re-run base and branch interleaved, per D7).

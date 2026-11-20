@@ -64,7 +64,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 ## ADDED Requirements
 
 ### Requirement: Internal packages depend in one direction
-The core's internal packages SHALL form an acyclic graph with a recorded direction: `internal/engine` assembles the others and no other package imports it; each extracted package imports only the standard library, prblm and the internal packages listed below it, in the order `internal/tracectx`, `internal/errchain`, `internal/static`, `internal/engine`. A guard test SHALL fail, naming both packages, when an import breaks the recorded direction.
+The core's internal library packages SHALL import only the standard library, prblm and the internal packages listed below them in the recorded order `internal/tracectx`, `internal/errchain`, `internal/static`, `internal/engine`; no package imports `internal/engine`. Commands such as `internal/benchgate` are skipped. A guard test SHALL fail, naming both packages, when an import breaks the order.
 
 #### Scenario: Import direction guard
 - **Given** the recorded package order of the core module's internal packages

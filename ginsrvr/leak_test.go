@@ -13,7 +13,7 @@ import (
 
 // serveGoroutine is the function of srvr's serve goroutine, which a leak
 // report of a server never shut down names.
-const serveGoroutine = "github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serveOn"
+const serveGoroutine = "github.com/kartaladev/srvr/internal/engine.(*Lifecycle[...]).serveOn"
 
 // leakOptions are the goleak options of the ginsrvr test binary. gin
 // starts no long-lived goroutine of its own, so it ignores nothing.

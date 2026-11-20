@@ -36,7 +36,7 @@ var leakOptions = slices.Concat(serverLeakOptions, []goleak.Option{goleak.Ignore
 
 // serveGoroutine is the function of srvr's serve goroutine, which a leak
 // report of a server never shut down names.
-const serveGoroutine = "github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serveOn"
+const serveGoroutine = "github.com/kartaladev/srvr/internal/engine.(*Lifecycle[...]).serveOn"
 
 // The functions leakOptions ignores.
 const (

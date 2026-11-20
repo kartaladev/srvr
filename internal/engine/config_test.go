@@ -10,7 +10,7 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestEngineConfig covers engine-support / Scenario: Same validation on

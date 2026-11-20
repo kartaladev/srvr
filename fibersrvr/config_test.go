@@ -10,8 +10,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/fibersrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // upload is a route reading the whole body.

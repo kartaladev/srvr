@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // fakeRunner serves by accepting and closing connections until the

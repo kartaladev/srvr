@@ -12,7 +12,7 @@ import (
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/prblm/adapters/ginprblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // engineName names the gin engine in engine-specific option errors.

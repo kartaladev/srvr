@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 type routes func(*gin.RouterGroup)

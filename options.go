@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/prblm"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // WithConfig sets every field of [Config], a zero field meaning its

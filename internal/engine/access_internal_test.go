@@ -112,7 +112,7 @@ func TestFuncName(t *testing.T) {
 		fn   any
 		want string
 	}{
-		{"function", TestFuncName, "github.com/kartaladev/srvr/engine.TestFuncName"},
+		{"function", TestFuncName, "github.com/kartaladev/srvr/internal/engine.TestFuncName"},
 		{"nil function", nilFunc, ""},
 		{"nil", nil, ""},
 		{"not a function", "not a func", ""},

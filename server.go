@@ -11,7 +11,7 @@ import (
 	"slices"
 
 	"github.com/kartaladev/prblm"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // engineName names the net/http engine in engine-specific option errors.

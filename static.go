@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 type (

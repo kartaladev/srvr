@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestReexportedNames covers engine-support / Scenario: Re-exported names,

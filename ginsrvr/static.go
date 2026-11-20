@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // Static returns a configurer serving the files of fsys under prefix, such
