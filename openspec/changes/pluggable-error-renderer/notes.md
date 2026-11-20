@@ -25,8 +25,8 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** revisit with parity and benchmark data after this change.
 
 ### engine could be internal/engine: AGENTS.md's reason does not hold
-- **Status:** open (owner decision)
-- **Target:** unassigned (own change, or a slice of pluggable-error-renderer before its new types land in `engine`)
+- **Status:** adopted by engine-internal-split (consolidation 2026-11-20)
+- **Target:** engine-internal-split
 - **Context:** AGENTS.md and `engine`'s package godoc say `engine` is public "because separate modules cannot import core `internal/`". Go's internal rule is by import path, not module: a nested module under `github.com/kartaladev/srvr/` (ginsrvr, fibersrvr, otelsrvr, internal/paritytest) may import `github.com/kartaladev/srvr/internal/...`; only modules outside that path are refused (golang.org/x/tools/gopls does the same with x/tools/internal). Moving `engine` to `internal/engine` would hide it from consumers (no accidental dependency on an unstable API), while `srvr` keeps re-exporting what consumers need as aliases. It does not change the version coupling between engine modules and core (the same as today; mitigated by releasing all modules together). Cost: import changes in every engine module and paritytest, AGENTS.md and godoc corrections, breaking for anyone importing `engine` directly (documented as unsupported before v1).
 - **Evidence:** scratch probe (removed from the repo, in the session scratchpad): module `example.com/root` with `internal/x`; nested module `example.com/root/sub` importing `example.com/root/internal/x` with `GOWORK=off`: `go run .` prints `hi`; module `example.com/other`: `main.go:2:16: use of internal package example.com/root/internal/x not allowed`.
 - **Suggested action:** owner decides whether and when to move `engine` to `internal/engine`, and AGENTS.md's layout paragraph is corrected either way.

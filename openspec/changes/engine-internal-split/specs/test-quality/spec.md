@@ -43,7 +43,8 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 |---------|---------|
 | `github.com/kartaladev/srvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/engine` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
-| each package extracted from `internal/engine` (for example `github.com/kartaladev/srvr/internal/errchain`) | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/errchain` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/static` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/tracectx` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/ginsrvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/fibersrvr` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
@@ -51,6 +52,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 | `github.com/kartaladev/srvr/otelsetup` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/paritytest` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 | `github.com/kartaladev/srvr/internal/paritytest/gincycle` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
+| `github.com/kartaladev/srvr/internal/benchgate` | accepted: its `TestMain` calls `goleak.VerifyTestMain` |
 
 ##### Examples: rejected
 | package | verdict |
@@ -62,7 +64,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 ## ADDED Requirements
 
 ### Requirement: Internal packages depend in one direction
-The core's internal packages SHALL form an acyclic graph with a recorded direction: `internal/engine` assembles the others and no other package imports it; each extracted package imports only the standard library, prblm, `internal/tracectx` and the extracted packages listed below it. A guard test SHALL fail, naming both packages, when an import breaks the recorded direction.
+The core's internal packages SHALL form an acyclic graph with a recorded direction: `internal/engine` assembles the others and no other package imports it; each extracted package imports only the standard library, prblm and the internal packages listed below it, in the order `internal/tracectx`, `internal/errchain`, `internal/static`, `internal/engine`. A guard test SHALL fail, naming both packages, when an import breaks the recorded direction.
 
 #### Scenario: Import direction guard
 - **Given** the recorded package order of the core module's internal packages
@@ -81,9 +83,10 @@ The core's internal packages SHALL form an acyclic graph with a recorded directi
 | package | import | verdict |
 |---------|--------|---------|
 | `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/srvr/internal/engine` | fails naming `internal/errchain` and `internal/engine` |
-| `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/srvr/internal/logging` (a package listed above it) | fails naming both packages |
+| `github.com/kartaladev/srvr/internal/errchain` | `github.com/kartaladev/srvr/internal/static` (a package listed above it) | fails naming both packages |
 | an internal package missing from the recorded order | any srvr package | fails naming the unlisted package |
-| `github.com/kartaladev/srvr/internal/logging` | `github.com/kartaladev/srvr` (the root package) | fails naming both packages |
+| `github.com/kartaladev/srvr/internal/static` | `github.com/kartaladev/srvr/internal/engine` | fails naming both packages |
+| `github.com/kartaladev/srvr/internal/static` | `github.com/kartaladev/srvr` (the root package) | fails naming both packages |
 
 ##### Examples: boundary
 | package | import | verdict |
