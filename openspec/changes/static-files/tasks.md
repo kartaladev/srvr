@@ -149,6 +149,7 @@ Owner decision 2026-11-20: srvr's release requires prblm v0.3.0, done in this ch
 - [x] 7.4 Adapt srvr where 7.3 is RED (minimal change per failing test), update godoc that names v0.2.1 behaviour (`options.go` hook notes, `engine/core.go`, `engine/access.go`), and add a `CHANGELOG.md` `[Unreleased]` entry naming the prblm upgrade and any behaviour a consumer sees
 - [x] 7.5 Verify locally: `make check` and `make cover` pass in every module; `openspec validate static-files --strict` passes; gopls diagnostics clean
 - [x] 7.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `chore(core): upgrade prblm to v0.3.0` (a behaviour change from 7.4 gets its own `fix` or `feat` commit); push and open the PR; verify with `git log -2 --stat`
+- [x] 7.7 Fix fibersrvr's record of a panic whose value's `Unwrap` panics (notes.md "fiber: a panic whose value's Unwrap panics is recorded as an error"): RED by dropping the pinned fiber row of `TestParity_UnwalkablePanic` and a `TestPanicOf_StandIn` row in `engine`; GREEN by letting `panicOf` see through `*engine.unresolvable`; `CHANGELOG.md` `[Unreleased]` Fixed entry
 
 ## 8. Slice: release
 

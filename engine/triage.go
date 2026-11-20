@@ -271,8 +271,14 @@ func GuardChain(err error) error {
 // prblm adapter that hands srvr its own wrapper type, the
 // *prblm.PanicError the wrapper unwraps to. The walk is bounded like
 // walkChain and survives a panicking Unwrap, because errors.As would loop
-// on a cyclic chain.
+// on a cyclic chain. srvr's stand-in for an unwalkable chain is seen
+// through, so [GuardChain] does not hide a recovered panic whose value's
+// Unwrap panics.
 func panicOf(err error) (*prblm.PanicError, bool) {
+	if u, ok := err.(*unresolvable); ok { //nolint:errorlint // the stand-in srvr made, not one it wraps.
+		err = u.err
+	}
+
 	found := findInChain(err, func(e error) bool {
 		_, ok := e.(*prblm.PanicError) //nolint:errorlint // this walk is the bounded errors.As.
 

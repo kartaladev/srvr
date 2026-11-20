@@ -205,16 +205,9 @@ func TestParity_UnwalkablePanic(t *testing.T) {
 		name      string
 		value     any
 		valueType string // the record's exception.type
-		// fiberError marks the row fibersrvr records as a returned error,
-		// not a panic: its guard replaces fiberprblm's recovered panic,
-		// whose chain it cannot walk, with srvr's stand-in, which hides
-		// the panic (a defect from before prblm v0.3.0, pinned here and
-		// recorded in openspec/changes/static-files/notes.md, "fiber: a
-		// panic whose value's Unwrap panics is recorded as an error").
-		fiberError bool
 	}{
-		{"value whose Unwrap panics", fmt.Errorf("w: %w", &unwrapPanicError{}), "*fmt.wrapError", true},
-		{"value whose Is panics", isPanicError{}, "paritytest.isPanicError", false},
+		{"value whose Unwrap panics", fmt.Errorf("w: %w", &unwrapPanicError{}), "*fmt.wrapError"},
+		{"value whose Is panics", isPanicError{}, "paritytest.isPanicError"},
 	}
 
 	for _, tt := range tests {
@@ -232,14 +225,6 @@ func TestParity_UnwalkablePanic(t *testing.T) {
 				}
 
 				r := one(t, logs)
-				if e.name == "fiber" && tt.fiberError {
-					if r["msg"] != "http.request.failed" || r["level"] != "ERROR" || r["error.kind"] != nil {
-						t.Fatalf("record %v, want the pinned fiber error record", brief(r))
-					}
-
-					return
-				}
-
 				if r["msg"] != "http.request.failed" || r["level"] != "ERROR" || r["error.kind"] != "panic" ||
 					r["exception.type"] != tt.valueType {
 					t.Fatalf("record %v, want a panic record with exception.type %s", brief(r), tt.valueType)

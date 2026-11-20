@@ -107,6 +107,9 @@ once tagged.
   panic of the method. srvr's hook no longer calls `errors.Is` on the reported error to recognise
   prblm's notes, so an error whose `Is` method panics is recorded too. Notes are matched by identity
   only: a consumer error whose own `Is` method claims to be a prblm note is recorded, not dropped.
+- fibersrvr: a handler panic whose value's `Unwrap` method panics is recorded as a panic
+  (`error.kind` `panic`, `exception.type` of the value, stack trace) like on net/http and gin, not as
+  a returned error; the response stays the safe 500 problem.
 
 ## [v0.2.0] - 2026-11-19
 
