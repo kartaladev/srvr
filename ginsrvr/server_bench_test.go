@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -33,13 +36,14 @@ func errorChain(n int) error {
 // request stage) with logging to io.Discard: a success, a handler error
 // rendered as a 500 problem, an unmatched path answered as a 404 problem,
 // a panic recovered as a 500, a body over MaxRequestBodyBytes answered
-// 413, a 32-link error chain and a success from a client sending a
-// User-Agent that WithoutAccessLogUserAgent leaves out of the record.
+// 413, a 32-link error chain, a success from a client sending a
+// User-Agent that WithoutAccessLogUserAgent leaves out of the record, and
+// a file a static mount serves from disk.
 // Each case runs sequentially and, as
 // "<case> parallel", from GOMAXPROCS goroutines with b.RunParallel.
 func BenchmarkPipeline(b *testing.B) {
 	for _, bc := range pipelineCases {
-		h := pipelineHandler(b, bc.opts...)
+		h := pipelineHandler(b, bc.static, bc.opts...)
 
 		b.Run(bc.name, func(b *testing.B) {
 			req := bc.request(b)
@@ -69,8 +73,9 @@ func BenchmarkPipeline(b *testing.B) {
 
 // pipelineHandler returns the handler of a server built with opts that
 // logs to io.Discard and limits request bodies to benchBodyLimit, routing
-// the paths of pipelineCases.
-func pipelineHandler(b *testing.B, opts ...srvr.Option) http.Handler {
+// the paths of pipelineCases, and with static, serving benchSite at
+// /assets.
+func pipelineHandler(b *testing.B, static bool, opts ...srvr.Option) http.Handler {
 	b.Helper()
 
 	srv, err := New(append([]srvr.Option{srvr.WithLogOutput(io.Discard), srvr.WithMaxRequestBodyBytes(benchBodyLimit)}, opts...)...)
@@ -80,7 +85,7 @@ func pipelineHandler(b *testing.B, opts ...srvr.Option) http.Handler {
 
 	chain := errorChain(32)
 
-	if _, err := srv.configure([]srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
+	confs := []srvr.RouteConfigurer[*gin.RouterGroup]{routes(func(g *gin.RouterGroup) {
 		g.GET("/ok", func(c *gin.Context) { c.Status(http.StatusOK) })
 		g.GET("/fail", func(c *gin.Context) { _ = c.Error(errors.New("boom")) })
 		g.GET("/panic", func(*gin.Context) { panic("boom") })
@@ -90,11 +95,29 @@ func pipelineHandler(b *testing.B, opts ...srvr.Option) http.Handler {
 			}
 		})
 		g.GET("/chain", func(c *gin.Context) { _ = c.Error(chain) })
-	})}); err != nil {
+	})}
+	if static {
+		confs = append(confs, Static("/assets", benchSite(b)))
+	}
+
+	if _, err := srv.configure(confs); err != nil {
 		b.Fatal(err)
 	}
 
 	return srv.handler()
+}
+
+// benchSite returns a directory file system holding app.js, as a build
+// directory served from disk is.
+func benchSite(b *testing.B) fs.FS {
+	b.Helper()
+
+	dir := b.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log(1)"), 0o644); err != nil {
+		b.Fatal(err)
+	}
+
+	return os.DirFS(dir)
 }
 
 // pipelineCase is one request of BenchmarkPipeline.
@@ -104,6 +127,9 @@ type pipelineCase struct {
 	status             int
 	// userAgent is the request's User-Agent header, none when empty.
 	userAgent string
+	// static adds a static mount of benchSite at /assets, which only its
+	// case gets, so the others measure a server without one.
+	static bool
 	// opts are the case's server options besides the benchmark's own.
 	opts []srvr.Option
 }
@@ -123,6 +149,7 @@ var pipelineCases = []pipelineCase{
 		name: "user agent omitted", method: http.MethodGet, path: "/ok", status: http.StatusOK,
 		userAgent: "bench-client/1.0", opts: []srvr.Option{srvr.WithoutAccessLogUserAgent()},
 	},
+	{name: "static", method: http.MethodGet, path: "/assets/app.js", status: http.StatusOK, static: true},
 }
 
 // request returns the case's request. serve rewinds its body, so it is

@@ -60,7 +60,7 @@ func TestFiberConfigHook(t *testing.T) {
 		t.Parallel()
 
 		srv, _ := newServer(t, fibersrvr.WithFiberConfig(func(c *fiber.Config) { c.ErrorHandler = nil }))
-		if res := serve(t, srv, upload, http.MethodGet, "/fail", nil, nil); res.status != 500 || res.problem == nil {
+		if res := serve(t, srv, http.MethodGet, "/fail", nil, nil, upload); res.status != 500 || res.problem == nil {
 			t.Fatalf("response %d %s, want a problem", res.status, res.body)
 		}
 	})
@@ -113,7 +113,7 @@ func TestFiberConfig(t *testing.T) {
 	for _, tt := range accepted {
 		t.Run(tt.name, func(t *testing.T) {
 			srv, logs := newServer(t, tt.opts...)
-			serve(t, srv, routes(func(r fiber.Router) { r.Get("/x", ok) }), http.MethodGet, "/x", nil, nil)
+			serve(t, srv, http.MethodGet, "/x", nil, nil, routes(func(r fiber.Router) { r.Get("/x", ok) }))
 
 			if got := len(logs.access(t)) == 0; got != tt.warn {
 				t.Fatalf("INFO access record suppressed %v, want %v", got, tt.warn)

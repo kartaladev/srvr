@@ -123,7 +123,7 @@ func ginServer(t *testing.T, conf func(*gin.RouterGroup), opts ...srvr.Option) (
 
 // newGinServer, newFiberServer and newNetServer build one engine with conf,
 // logging to logs, without starting it.
-func newGinServer(t *testing.T, logs *logBuffer, conf func(*gin.RouterGroup), opts ...srvr.Option) server {
+func newGinServer(t *testing.T, logs *logBuffer, conf func(*gin.RouterGroup), opts ...srvr.Option) *ginsrvr.Server {
 	t.Helper()
 
 	srv, err := ginsrvr.New(options(logs, opts)...)
@@ -157,7 +157,7 @@ func fiberServerIdle(t *testing.T, idle time.Duration, conf func(fiber.Router), 
 	return run(t, newFiberServer(t, logs, idle, conf, opts...)), logs
 }
 
-func newFiberServer(t *testing.T, logs *logBuffer, idle time.Duration, conf func(fiber.Router), opts ...srvr.Option) server {
+func newFiberServer(t *testing.T, logs *logBuffer, idle time.Duration, conf func(fiber.Router), opts ...srvr.Option) *fibersrvr.Server {
 	t.Helper()
 
 	srv, err := fibersrvr.New(options(logs, opts)...)
@@ -183,7 +183,7 @@ func netServer(t *testing.T, conf func(*srvr.Group), opts ...srvr.Option) (strin
 	return run(t, newNetServer(t, logs, conf, opts...)), logs
 }
 
-func newNetServer(t *testing.T, logs *logBuffer, conf func(*srvr.Group), opts ...srvr.Option) server {
+func newNetServer(t *testing.T, logs *logBuffer, conf func(*srvr.Group), opts ...srvr.Option) *srvr.Server {
 	t.Helper()
 
 	srv, err := srvr.New(options(logs, opts)...)
@@ -290,6 +290,36 @@ func start(t *testing.T, srv server) (string, func()) {
 	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr(), stop
+}
+
+// startFailure starts srv and returns Start's error, failing the test if
+// the server becomes ready, Start does not return, or its error does not
+// wrap srvr.ErrRouteConfig.
+func startFailure(t *testing.T, srv server) error {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Start(ctx) }()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, srvr.ErrRouteConfig) {
+			t.Fatalf("Start = %v, want an error wrapping srvr.ErrRouteConfig", err)
+		}
+
+		return err
+	case <-srv.Ready():
+		cancel()
+		t.Fatalf("Start became ready, want a failure; it returned %v once stopped", <-done)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return")
+	}
+
+	return nil
 }
 
 func must(t *testing.T, err error) {

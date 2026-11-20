@@ -29,11 +29,11 @@ func TestDebugBuffer_FiberReuse(t *testing.T) {
 		})
 	})
 
-	if got := serve(t, srv, conf, http.MethodGet, "/a", nil, nil).status; got != http.StatusOK {
+	if got := serve(t, srv, http.MethodGet, "/a", nil, nil, conf).status; got != http.StatusOK {
 		t.Fatalf("A: status %d", got)
 	}
 
-	if got := serve(t, srv, conf, http.MethodGet, "/b", nil, nil).status; got != http.StatusInternalServerError {
+	if got := serve(t, srv, http.MethodGet, "/b", nil, nil, conf).status; got != http.StatusInternalServerError {
 		t.Fatalf("B: status %d", got)
 	}
 

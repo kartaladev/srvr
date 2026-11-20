@@ -223,13 +223,15 @@ func TestFiberStreamThenError(t *testing.T) {
 	t.Parallel()
 
 	srv, logs := newServer(t)
-	res := serve(t, srv, routes(func(r fiber.Router) {
-		r.Get("/s", func(c fiber.Ctx) error {
-			_ = c.SendStream(strings.NewReader("streamed"))
+	res := serve(t, srv,
 
-			return errors.New("late")
-		})
-	}), http.MethodGet, "/s", nil, nil)
+		http.MethodGet, "/s", nil, nil, routes(func(r fiber.Router) {
+			r.Get("/s", func(c fiber.Ctx) error {
+				_ = c.SendStream(strings.NewReader("streamed"))
+
+				return errors.New("late")
+			})
+		}))
 
 	recs := logs.access(t)
 	if res.body != "streamed" || len(recs) != 1 || recs[0]["srvr.response.committed"] != true {

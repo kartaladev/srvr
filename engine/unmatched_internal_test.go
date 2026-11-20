@@ -89,3 +89,38 @@ func TestUnmatchedLimiter(t *testing.T) {
 		t.Fatal("no limit must be a nil limiter reporting 0")
 	}
 }
+
+// TestRequestState_MarkRouterAnswered: the mark forgets a route an
+// earlier stage recorded, as a static mount's miss needs (static-files
+// design D5), and a route or location set after it is ignored, as
+// fibersrvr's request stage sets them after the chain.
+func TestRequestState_MarkRouterAnswered(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name, route string
+	}{
+		{"no route recorded", ""},
+		{"route recorded by an earlier stage", "/assets/{path...}"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := &RequestState{route: tt.route}
+			r.MarkRouterAnswered()
+
+			if !r.routerAnswered || r.Matched() {
+				t.Errorf("routerAnswered %v, Matched %v; want true, false", r.routerAnswered, r.Matched())
+			}
+
+			r.SetRoute("/assets/*")
+			r.SetLocation(Location{function: "f"})
+
+			if r.Matched() || r.Location() != (Location{}) {
+				t.Errorf("after the mark: route %q, location %+v; want none", r.Route(), r.Location())
+			}
+		})
+	}
+}

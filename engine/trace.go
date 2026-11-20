@@ -83,14 +83,28 @@ type RequestState struct {
 // syntax, or "" when no route matched.
 func (r *RequestState) Route() string { return r.route }
 
-// SetRoute records the route pattern the engine's router matched.
-func (r *RequestState) SetRoute(pattern string) { r.route = pattern }
+// SetRoute records the route pattern the engine's router matched. Once
+// [RequestState.MarkRouterAnswered] marked the request it does nothing: an
+// answer of the router means no route matched, even for an engine whose
+// stage records the route after the chain, such as fiber's after a static
+// mount's miss.
+func (r *RequestState) SetRoute(pattern string) {
+	if !r.routerAnswered {
+		r.route = pattern
+	}
+}
 
 // Location returns the code location of the matched route's handler.
 func (r *RequestState) Location() Location { return r.location }
 
 // SetLocation records the code location of the matched route's handler.
-func (r *RequestState) SetLocation(loc Location) { r.location = loc }
+// Like [RequestState.SetRoute], it does nothing once the request is marked
+// as answered by the router.
+func (r *RequestState) SetLocation(loc Location) {
+	if !r.routerAnswered {
+		r.location = loc
+	}
+}
 
 // Matched reports whether a route matched the request.
 func (r *RequestState) Matched() bool { return r.route != "" }
@@ -132,10 +146,26 @@ func (r *RequestState) MarkCommitted() {
 
 // MarkRouterAnswered records that the router itself answered the request
 // because no route matched: net/http's unmatched interception, gin's no-route
-// chains, or fiber's router returning fiber.ErrNotFound or
-// fiber.ErrMethodNotAllowed. Only such a request counts towards the
+// chains, fiber's router returning fiber.ErrNotFound or
+// fiber.ErrMethodNotAllowed, or a static mount answering 404 or 405, which
+// is the router's answer for the paths it serves. Only such a request counts towards the
 // unmatched-record limit; a 404 or 405 consumer code reported never does.
-func (r *RequestState) MarkRouterAnswered() { r.routerAnswered = true }
+// It also forgets the route an earlier stage recorded, and later
+// [RequestState.SetRoute] calls do nothing: an answer of the router means
+// no route matched.
+func (r *RequestState) MarkRouterAnswered() {
+	r.routerAnswered = true
+	r.route = ""
+}
+
+// MarkRouterAnswered marks the request of ctx as answered by the router
+// ([RequestState.MarkRouterAnswered]); outside srvr's pipeline, including
+// for a nil ctx, it does nothing.
+func MarkRouterAnswered(ctx context.Context) {
+	if req := requestFrom(ctx); req != nil {
+		req.MarkRouterAnswered()
+	}
+}
 
 // StateFrom returns the request state of ctx, and false outside srvr's
 // pipeline, including for a nil ctx.

@@ -164,8 +164,12 @@ func configFields(err error) []string {
 		return fields
 	}
 
-	if ce, ok := errors.AsType[*srvr.ConfigError](err); ok {
+	if ce, ok := err.(*srvr.ConfigError); ok { //nolint:errorlint // walking the tree on purpose
 		return []string{ce.Field}
+	}
+
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return configFields(wrapped.Unwrap())
 	}
 
 	return nil

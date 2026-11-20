@@ -8,17 +8,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
+	"github.com/kartaladev/srvr/fibersrvr"
+	"github.com/kartaladev/srvr/ginsrvr"
 )
 
 const (
@@ -435,169 +440,307 @@ func TestParity_Exceptions(t *testing.T) {
 			t.Fatalf("read = %v, want no answer within 400ms", err)
 		}
 	})
-}
 
-// TestClientClosedRequest_Parity covers error-responses / Scenario: Client
-// closed request on every engine: a handler that returns context.Canceled
-// after its client went away. fiber cannot observe the disconnect, so its
-// request context stays live and the error stays a 500 (engine-parity /
-// Scenario: Documented differences).
-func TestClientClosedRequest_Parity(t *testing.T) {
-	t.Parallel()
+	t.Run("fiber refuses a consumer catch-all beside Static(\"/\"), net/http and gin let it win", func(t *testing.T) {
+		t.Parallel()
 
-	tests := []struct {
-		engine string
-		// start registers GET /x, which closes entered and returns once its
-		// client is gone: net/http and gin see their request context end,
-		// fiber (blind to the disconnect) waits for the test to close gone.
-		start  func(t *testing.T, entered, gone chan struct{}) (string, *logBuffer)
-		status float64
-		level  string
-	}{
-		{"net/http", func(t *testing.T, entered, _ chan struct{}) (string, *logBuffer) {
-			t.Helper()
+		site := mapSite()
+		catchAll := "catch-all"
 
-			return netServer(t, func(g *srvr.Group) {
-				g.GET("/x", func(_ http.ResponseWriter, r *http.Request) error {
-					close(entered)
-					<-r.Context().Done()
-
-					return fmt.Errorf("query: %w", context.Canceled)
-				})
-			})
-		}, 499, "WARN"},
-		{"gin", func(t *testing.T, entered, _ chan struct{}) (string, *logBuffer) {
-			t.Helper()
-
-			return ginServer(t, func(g *gin.RouterGroup) {
-				g.GET("/x", func(c *gin.Context) {
-					close(entered)
-					<-c.Request.Context().Done()
-					_ = c.Error(fmt.Errorf("query: %w", context.Canceled))
-				})
-			})
-		}, 499, "WARN"},
-		{"fiber", func(t *testing.T, entered, gone chan struct{}) (string, *logBuffer) {
-			t.Helper()
-
-			return fiberServer(t, func(r fiber.Router) {
-				r.Get("/x", func(fiber.Ctx) error {
-					close(entered)
-					// fasthttp never cancels: the handler gives up itself.
-					<-gone
-
-					return fmt.Errorf("query: %w", context.Canceled)
-				})
-			})
-		}, 500, "ERROR"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.engine, func(t *testing.T) {
-			t.Parallel()
-
-			entered, gone := make(chan struct{}), make(chan struct{})
-			base, logs := tt.start(t, entered, gone)
-			disconnecting(t, base, "/x", entered)
-			close(gone)
-
-			r := one(t, logs)
-			problem, _ := r["problem"].(map[string]any)
-			if r["msg"] != "http.request.failed" || r["level"] != tt.level || problem["status"] != tt.status {
-				t.Fatalf("record %v, want http.request.failed at %s with problem.status %v", r, tt.level, tt.status)
-			}
+		netSrv := newNetServer(t, &logBuffer{}, func(g *srvr.Group) {
+			g.GET("/{path...}", func(w http.ResponseWriter, _ *http.Request) error { _, err := io.WriteString(w, catchAll); return err })
 		})
-	}
-}
+		must(t, netSrv.Register(srvr.Static("/", site)))
 
-// TestClientClosedRequest_ForcedDrain pins design D11 / Forced drain: a
-// handler still running when the drain deadline passes sees its request
-// context cancelled (net/http and gin by the closed connection, fiber by
-// srvr's cancelled base context) and returns context.Canceled, which is
-// answered 499 at WARN on every engine.
-func TestClientClosedRequest_ForcedDrain(t *testing.T) {
-	t.Parallel()
+		ginSrv := newGinServer(t, &logBuffer{}, func(g *gin.RouterGroup) {
+			g.GET("/*any", func(c *gin.Context) { c.String(http.StatusOK, catchAll) })
+		})
+		must(t, ginSrv.Register(ginsrvr.Static("/", site)))
 
-	canceled := fmt.Errorf("query: %w", context.Canceled)
-	drain := srvr.WithShutdownTimeout(50 * time.Millisecond)
+		for _, s := range []struct {
+			name string
+			srv  server
+		}{{"net/http", netSrv}, {"gin", ginSrv}} {
+			base := run(t, s.srv)
+			for _, m := range []struct{ method, body string }{{http.MethodGet, catchAll}, {http.MethodHead, ""}} {
+				res, body, err := send(t, m.method, base+"/app.js", nil)
+				must(t, err)
+				if res.StatusCode != http.StatusOK || string(body) != m.body {
+					t.Errorf("%s: %s /app.js = %d %q, want 200 %q (the consumer's catch-all)", s.name, m.method, res.StatusCode, body, m.body)
+				}
+			}
+		}
 
-	tests := []struct {
-		engine string
-		// build registers GET /x, which closes entered and returns canceled
-		// once its request context ends.
-		build func(t *testing.T, logs *logBuffer, entered chan struct{}) server
-	}{
-		{"net/http", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
-			t.Helper()
+		fiberSrv := newFiberServer(t, &logBuffer{}, idleWorkerDuration, func(r fiber.Router) {
+			r.Get("/*", func(c fiber.Ctx) error { return c.SendString(catchAll) })
+		})
+		must(t, fiberSrv.Register(fibersrvr.Static("/", site)))
 
-			return newNetServer(t, logs, func(g *srvr.Group) {
-				g.GET("/x", func(_ http.ResponseWriter, r *http.Request) error {
-					close(entered)
-					<-r.Context().Done()
+		if err := startFailure(t, fiberSrv); !strings.Contains(err.Error(), `"GET /*"`) {
+			t.Errorf("fiber Start = %v, want it to name the duplicate route GET /*", err)
+		}
+	})
 
-					return canceled
-				})
-			}, drain)
-		}},
-		{"gin", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
-			t.Helper()
+	t.Run("net/http redirects a raw dot segment or empty element in a static path, gin and fiber answer 404", func(t *testing.T) {
+		t.Parallel()
 
-			return newGinServer(t, logs, func(g *gin.RouterGroup) {
-				g.GET("/x", func(c *gin.Context) {
-					close(entered)
-					<-c.Request.Context().Done()
-					_ = c.Error(canceled)
-				})
-			}, drain)
-		}},
-		{"fiber", func(t *testing.T, logs *logBuffer, entered chan struct{}) server {
-			t.Helper()
+		plan := mount("/assets", os.DirFS(dirSite(t)))
+		targets := []struct {
+			target string
+			// netStatus and netLocation are net/http's answer; gin and
+			// fiber answer 404 without a Location.
+			netStatus   int
+			netLocation string
+		}{
+			{"/assets/../secret.txt", http.StatusTemporaryRedirect, "/secret.txt"},
+			{"/assets//app.js", http.StatusTemporaryRedirect, "/assets/app.js"},
+		}
 
-			return newFiberServer(t, logs, idleWorkerDuration, func(r fiber.Router) {
-				r.Get("/x", func(c fiber.Ctx) error {
-					close(entered)
-					<-c.Context().Done()
+		for _, e := range engines {
+			base := run(t, staticServer(t, e.name, &logBuffer{}, plan))
 
-					return canceled
-				})
-			}, drain)
-		}},
-	}
+			for _, tt := range targets {
+				status, location := http.StatusNotFound, ""
+				if e.name == "net/http" {
+					status, location = tt.netStatus, tt.netLocation
+				}
 
-	for _, tt := range tests {
-		t.Run(tt.engine, func(t *testing.T) {
-			t.Parallel()
+				res, body := raw(t, base, "GET "+tt.target+" HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", nil)
+				if res.StatusCode != status || res.Header.Get("Location") != location || strings.Contains(string(body), "SECRET") {
+					t.Errorf("%s: GET %s = %d Location %q %.80q, want %d %q", e.name, tt.target, res.StatusCode, res.Header.Get("Location"), body, status, location)
+				}
+			}
+		}
+	})
 
-			logs, entered := &logBuffer{}, make(chan struct{})
-			base, stop := start(t, tt.build(t, logs, entered))
+	t.Run("fiber's file cache is a fiber opt-in, net/http and gin refuse FiberSendFileCache", func(t *testing.T) {
+		t.Parallel()
 
-			sent := make(chan struct{})
-			go func() {
-				defer close(sent)
-				_, _, _ = send(t, http.MethodGet, base+"/x", nil)
-			}()
+		// The cache's staleness and its cleaner outliving Shutdown are
+		// pinned by fibersrvr's TestStatic_SendFileCache; this binary
+		// serves no file from a cached mount, so the cleaner never starts.
+		plan := mount("/", mapSite(), srvr.WithStaticConfig(srvr.StaticConfig{FiberSendFileCache: time.Hour}))
+		refuses := map[string]bool{"net/http": true, "gin": true, "fiber": false}
 
-			receiveWithin(t, entered, "the handler did not start")
-			stop()
+		for _, e := range engines {
+			srv := staticServer(t, e.name, &logBuffer{}, plan)
+			if !refuses[e.name] {
+				run(t, srv)
 
-			r := one(t, logs)
-			problem, _ := r["problem"].(map[string]any)
-			if r["msg"] != "http.request.failed" || r["level"] != "WARN" || problem["status"] != float64(499) {
-				t.Errorf("record %v, want http.request.failed at WARN with problem.status 499", r)
+				continue
 			}
 
-			receiveWithin(t, sent, "the client did not return")
-		})
-	}
+			err := startFailure(t, srv)
+			if ce, ok := errors.AsType[*srvr.ConfigError](err); !ok || ce.Field != "Static.FiberSendFileCache" || ce.Value != time.Hour.String() {
+				t.Errorf("%s: Start = %v, want a *srvr.ConfigError for Static.FiberSendFileCache 1h0m0s", e.name, err)
+			}
+		}
+	})
+
+	t.Run("an encoded slash at the end of a static prefix is routed as each router does", func(t *testing.T) {
+		t.Parallel()
+
+		unescape := fibersrvr.WithFiberConfig(func(c *fiber.Config) { c.UnescapePath = true })
+		plan := mount("/assets", mapSite())
+		tests := []struct {
+			engine string
+			opts   []srvr.Option
+			status int
+			// body is the file served, "" for the 404 problem (fiber's is
+			// its router's, without detail: otel-observability notes.md
+			// "Unmatched 404 problems differ between net/http and
+			// gin/fiber").
+			body string
+		}{
+			{"net/http", nil, http.StatusNotFound, ""},
+			{"fiber", nil, http.StatusNotFound, ""},
+			{"gin", nil, http.StatusOK, "console.log(1)"},
+			{"fiber", []srvr.Option{unescape}, http.StatusOK, "console.log(1)"},
+		}
+
+		for _, tt := range tests {
+			base := run(t, staticServer(t, tt.engine, &logBuffer{}, plan, tt.opts...))
+
+			res, body, err := send(t, http.MethodGet, base+"/assets%2Fapp.js", nil)
+			must(t, err)
+
+			if res.StatusCode != tt.status || (tt.body != "" && string(body) != tt.body) {
+				t.Errorf("%s (with %d options): GET /assets%%2Fapp.js = %d %.200q, want %d %q", tt.engine, len(tt.opts), res.StatusCode, body, tt.status, tt.body)
+			}
+
+			if tt.body == "" && !isNotFoundProblem(res, body) {
+				t.Errorf("%s: GET /assets%%2Fapp.js = %q %.200q, want the 404 problem", tt.engine, res.Header.Get("Content-Type"), body)
+			}
+		}
+	})
+
+	t.Run("fiber opens a served file again by name, net/http and gin serve the file they opened", func(t *testing.T) {
+		t.Parallel()
+
+		type answer struct {
+			status int
+			level  any
+			route  bool
+		}
+
+		served := answer{http.StatusOK, "INFO", true}
+		tests := []struct {
+			name string
+			n    int64
+			err  error
+			// fiber is fiber's answer; every other engine serves the file.
+			fiber answer
+		}{
+			{"unreadable before fiber's open", 1, fs.ErrPermission, answer{http.StatusNotFound, "WARN", false}},
+			{"removed before fiber's open", 1, fs.ErrNotExist, answer{http.StatusNotFound, "WARN", false}},
+			{"removed before fasthttp's second open", 2, fs.ErrNotExist, answer{http.StatusInternalServerError, "ERROR", true}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				for _, e := range engines {
+					logs := &logBuffer{}
+					base := run(t, staticServer(t, e.name, logs, mount("/assets", opensAfter(tt.n, tt.err))))
+
+					res, _, err := send(t, http.MethodGet, base+"/assets/app.js", nil)
+					must(t, err)
+
+					want := served
+					if e.name == "fiber" {
+						want = tt.fiber
+					}
+
+					r := one(t, logs)
+					if got := (answer{res.StatusCode, r["level"], r["http.route"] != nil}); got != want {
+						t.Errorf("%s: got %+v, want %+v", e.name, got, want)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("fiber answers a lasting permission error at its reopen as an unmatched miss", func(t *testing.T) {
+		t.Parallel()
+
+		// Evidence for notes.md "fiber: a lasting fs.ErrPermission on
+		// fasthttp's reopen is answered 404 and loses its cause": every
+		// request's second open of app.js, fasthttp's, fails with
+		// fs.ErrPermission while srvr's first succeeds. The record names
+		// no permission error, has no route and is counted by the
+		// unmatched-record limit like a scanner's miss.
+		site := mapSite()
+
+		var opened atomic.Int64
+
+		reopenDenied := faultFS{base: site, open: map[string]func() (fs.File, error){"app.js": func() (fs.File, error) {
+			if opened.Add(1)%2 == 0 {
+				return nil, &fs.PathError{Op: "open", Path: "app.js", Err: fs.ErrPermission}
+			}
+
+			return site.Open("app.js")
+		}}}
+
+		logs := &logBuffer{}
+		base := run(t, staticServer(t, "fiber", logs, mount("/assets", reopenDenied), srvr.WithUnmatchedRecordLimit(1, time.Minute)))
+
+		for range 3 {
+			res, _, err := send(t, http.MethodGet, base+"/assets/app.js", nil)
+			must(t, err)
+			if res.StatusCode != http.StatusNotFound {
+				t.Fatalf("status %d, want 404", res.StatusCode)
+			}
+		}
+
+		recs := logs.accessWithin(t, 300*time.Millisecond)
+		if len(recs) != 1 {
+			t.Fatalf("%d access records, want 1 (the other 2 suppressed by the limit): %v", len(recs), recs)
+		}
+
+		if r := recs[0]; r["exception.message"] != "prblm: not found" || r["http.route"] != nil || r["level"] != "WARN" {
+			t.Errorf("record %v, want exception.message \"prblm: not found\", no http.route, WARN", r)
+		}
+	})
+
+	t.Run("fiber removes encoded dot segments before routing, net/http and gin route the raw path", func(t *testing.T) {
+		t.Parallel()
+
+		type answer struct {
+			status int
+			// instance is the 404 problem's instance, "" for the 200.
+			instance string
+			// route is the access record's http.route, nil for a miss.
+			route any
+		}
+
+		tests := []struct {
+			target string
+			// raw is the answer of net/http and gin, which route the raw
+			// path; fiber is fiber's, which routes the normalised path.
+			raw, fiber answer
+		}{
+			{"/%2e%2e/nope", answer{http.StatusNotFound, "/../nope", nil}, answer{http.StatusNotFound, "/nope", nil}},
+			{"/x/%2e%2e/items/1", answer{http.StatusNotFound, "/x/../items/1", nil}, answer{http.StatusOK, "", "/items/:id"}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.target, func(t *testing.T) {
+				t.Parallel()
+
+				for _, e := range engines {
+					base, logs := e.start(t, succeeds)
+
+					res, body := raw(t, base, "GET "+tt.target+" HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", nil)
+
+					var p struct {
+						Instance string `json:"instance"`
+					}
+					if res.StatusCode == http.StatusNotFound {
+						if !isNotFoundProblem(res, body) {
+							t.Errorf("%s: GET %s = %q %.200q, want the 404 problem", e.name, tt.target, res.Header.Get("Content-Type"), body)
+						}
+						_ = json.Unmarshal(body, &p) // a bad body leaves Instance "", failing the comparison below
+					}
+
+					want := tt.raw
+					if e.name == "fiber" {
+						want = tt.fiber
+					}
+
+					if got := (answer{res.StatusCode, p.Instance, one(t, logs)["http.route"]}); got != want {
+						t.Errorf("%s: GET %s = %+v, want %+v", e.name, tt.target, got, want)
+					}
+				}
+			})
+		}
+	})
 }
 
-// receiveWithin waits up to 5s for ch to be closed, failing with msg.
-func receiveWithin(t *testing.T, ch <-chan struct{}, msg string) {
-	t.Helper()
+// opensAfter returns a site whose app.js opens normally n times, then
+// fails with err: the file changed after srvr's resolution, while fiber's
+// file server opens it again by name.
+func opensAfter(n int64, err error) fs.FS {
+	site := mapSite()
 
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatal(msg)
+	var opened atomic.Int64
+
+	return faultFS{base: site, open: map[string]func() (fs.File, error){"app.js": func() (fs.File, error) {
+		if opened.Add(1) > n {
+			return nil, err
+		}
+
+		return site.Open("app.js")
+	}}}
+}
+
+// isNotFoundProblem reports whether res is a 404 problem.
+func isNotFoundProblem(res *http.Response, body []byte) bool {
+	var p struct {
+		Title  string `json:"title"`
+		Status int    `json:"status"`
 	}
+
+	return res.Header.Get("Content-Type") == "application/problem+json" &&
+		json.Unmarshal(body, &p) == nil && p.Title == "Not Found" && p.Status == http.StatusNotFound
 }

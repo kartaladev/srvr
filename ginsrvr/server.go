@@ -30,6 +30,9 @@ type Server struct {
 	// location, resolved once by the configure phase and only read while
 	// serving.
 	locations map[uintptr]engine.Location
+	// statics are the static mounts the configure phase installed in gin's
+	// no-route chain, nil without one; only read while serving.
+	statics *staticMounts
 }
 
 var _ srvr.RouteRegistrar[*gin.RouterGroup] = (*Server)(nil)
@@ -149,28 +152,43 @@ func assertSettings(e *gin.Engine) {
 
 // requestStage is srvr's outermost gin stage. Before the chain runs, so
 // that a request aborted with http.ErrAbortHandler keeps them, it records
-// the matched route and its handler's location in the request state, or
-// that the router answers a request no route matched; and
+// the matched route and its handler's location in the request state, the
+// pattern of the static mount containing the path of a request no route
+// matched (see [Static]), or that the router answers a request no route
+// matched; and
 // it sorts the Allow header gin set for a 405 (in the order its method
 // trees were created), so the problem rendered inside carries it like
 // net/http.
 func (s *Server) requestStage(c *gin.Context) {
+	allowReadOnly := false
+
 	state, ok := engine.StateFrom(c.Request.Context())
 	if ok {
 		if route := c.FullPath(); route != "" {
 			state.SetRoute(route)
 			state.SetLocation(s.locations[handlerKey(c.Handler())])
+		} else if s.statics != nil {
+			// gin's no-route or no-method chain, which ends with the
+			// static dispatcher after the root group's consumer
+			// middleware: begin decides whether a mount answers, and only
+			// the dispatcher, if it runs, can tell a miss (design D5).
+			allowReadOnly = s.statics.begin(c, state)
 		} else {
-			// Only srvr's stages run in gin's no-route and no-method
-			// chains, so the router answers this request.
+			// Without a static mount only srvr's stages run in gin's
+			// no-route and no-method chains, so the router answers this
+			// request.
 			state.MarkRouterAnswered()
 		}
 	}
 
 	if allow := c.Writer.Header().Get("Allow"); allow != "" {
 		methods := strings.Split(allow, ", ")
+		if allowReadOnly {
+			methods = append(methods, http.MethodGet, http.MethodHead)
+		}
+
 		slices.Sort(methods)
-		c.Writer.Header().Set("Allow", strings.Join(methods, ", "))
+		c.Writer.Header().Set("Allow", strings.Join(slices.Compact(methods), ", "))
 	}
 
 	c.Next()
@@ -247,11 +265,22 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx)
 // the routes it added, resolves the handlers' locations and returns the
 // route listing, each route attributed to the configurer that added it.
 func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup]) (engine.Routes, error) {
-	var routes engine.Routes
+	var (
+		routes  engine.Routes
+		statics staticMounts
+	)
 
 	before := s.engine.Routes()
 
 	for _, c := range configurers {
+		if sc, ok := c.(*staticConfigurer); ok {
+			if err := statics.add(sc); err != nil {
+				return nil, err
+			}
+
+			continue
+		}
+
 		if err := engine.Configure(c, &s.engine.RouterGroup); err != nil {
 			return nil, err
 		}
@@ -270,7 +299,17 @@ func (s *Server) configure(configurers []srvr.RouteConfigurer[*gin.RouterGroup])
 		s.locations[handlerKey(r.HandlerFunc)] = engine.FuncLocation(r.HandlerFunc)
 	}
 
-	return engine.CollapseMethods(routes, anyMethods()), nil
+	if len(statics.mounts) > 0 {
+		// After the loop, so the rebuilt no-route and no-method chains
+		// include every middleware consumers added to the root group; only
+		// with a mount, so a server without one keeps gin's chains as they
+		// were.
+		s.engine.NoRoute(statics.serve)
+		s.engine.NoMethod(statics.serve)
+		s.statics = &statics
+	}
+
+	return append(engine.CollapseMethods(routes, anyMethods()), statics.routes()...), nil
 }
 
 // anyMethods returns the method set of gin's RouterGroup.Any, fresh on

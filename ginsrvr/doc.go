@@ -47,4 +47,8 @@
 //     completes. On net/http and fiber such an error gets a 500 problem.
 //     An error with a cyclic chain that reaches c.Errors in any other way
 //     is still answered with the safe 500 problem.
+//   - [Static] mounts are served from gin's no-route and no-method chains,
+//     so root-group middleware runs around the mounts even when added
+//     after Static, and, once a server has a mount, also for requests gin
+//     answers with its own 404 or 405.
 package ginsrvr

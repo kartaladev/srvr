@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"strings"
 
@@ -311,4 +312,104 @@ func ExampleDebugBufferConfig() {
 	// Output:
 	// {Enabled:true Level: FlushStatus:400 MaxRecords:50 MaxBytes:0 TotalBytes:0}
 	// New: <nil>
+}
+
+// ExampleStatic serves an embedded site under /assets.
+func ExampleStatic() {
+	site, err := fs.Sub(embedded, "testdata/static") // //go:embed testdata/static
+	if err != nil {
+		panic(err)
+	}
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		panic(err)
+	}
+
+	if err := srv.Register(srvr.Static("/assets", site)); err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Start(ctx) }()
+	<-srv.Ready()
+
+	for _, path := range []string{"/assets/app.js", "/assets", "/assets/missing.js"} {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+path, nil)
+
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			panic(err)
+		}
+
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+		fmt.Println(strings.TrimSpace(fmt.Sprint(path, " ", res.StatusCode, " ", res.Header.Get("Content-Type"), " ", res.Header.Get("Cache-Control"))))
+	}
+
+	cancel()
+	fmt.Println("Start returned", <-done)
+
+	// Output:
+	// /assets/app.js 200 text/javascript; charset=utf-8
+	// /assets 200 text/html; charset=utf-8 no-cache
+	// /assets/missing.js 404 application/problem+json no-store
+	// Start returned <nil>
+}
+
+// ExampleWithSPAFallback serves a single-page app: files as they are, and
+// index.html for client-side routes a browser navigates to.
+func ExampleWithSPAFallback() {
+	site, err := fs.Sub(embedded, "testdata/static")
+	if err != nil {
+		panic(err)
+	}
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		panic(err)
+	}
+
+	err = srv.Register(srvr.Static("/", site,
+		srvr.WithSPAFallback("index.html"),
+		srvr.WithStaticCacheControl("public, max-age=31536000, immutable"), // hashed build assets
+	))
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() { done <- srv.Start(ctx) }()
+	<-srv.Ready()
+
+	for _, r := range []struct{ path, accept string }{
+		{"/app.js", "*/*"},
+		{"/dashboard", "text/html"}, // a browser navigation: the app
+		{"/dashboard", "*/*"},       // fetch's default: a 404 problem, not HTML
+	} {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+r.path, nil)
+		req.Header.Set("Accept", r.accept)
+
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			panic(err)
+		}
+
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+		fmt.Println(r.path, r.accept, res.StatusCode, res.Header.Get("Cache-Control"))
+	}
+
+	cancel()
+	fmt.Println("Start returned", <-done)
+
+	// Output:
+	// /app.js */* 200 public, max-age=31536000, immutable
+	// /dashboard text/html 200 no-cache
+	// /dashboard */* 404 no-store
+	// Start returned <nil>
 }
