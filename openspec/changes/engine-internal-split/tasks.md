@@ -57,10 +57,10 @@
 
 ## 6. Benchmark comparison, documentation and end-to-end verification
 
-- [ ] 6.1 ASK THE OWNER whether another benchmark session is running and wait for the go-ahead; then run the D7 comparison (test-quality / Scenario: Pipeline benchmark comparison): base worktree vs branch, 10 interleaved runs, `benchstat`; record the table in `notes.md`; STOP for the owner on a regression over 5% `ns/op` with `p < 0.05` or any extra `allocs/op`
-- [ ] 6.2 Documentation: AGENTS.md layout paragraph lists the final internal packages (only the layout and coverage text; the change order is the owner's, task 1.5), `docs/PERFORMANCE.md` benchmark table packages, each package's godoc states its responsibility, README only if it mentions `engine` (verify with a search), CHANGELOG `[Unreleased]` complete; verify `go vet ./...` and `go test -run Example ./...` pass in every module
-- [ ] 6.3 End-to-end verification locally (GitHub CI is disabled by the owner): `make check` and `make cover` from the root; every hot path in design Hot Paths covered (`go tool cover -func`); `govulncheck ./...` in every module; `openspec validate engine-internal-split --strict`; gopls diagnostics clean
-- [ ] 6.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `docs: document the internal package layout`; verify with `git log -1 --stat`
+- [x] 6.1 ASK THE OWNER whether another benchmark session is running and wait for the go-ahead; then run the D7 comparison (test-quality / Scenario: Pipeline benchmark comparison): base worktree vs branch, 10 interleaved runs, `benchstat`; record the table in `notes.md`; STOP for the owner on a regression over 5% `ns/op` with `p < 0.05` or any extra `allocs/op`
+- [x] 6.2 Documentation: AGENTS.md layout paragraph lists the final internal packages (only the layout and coverage text; the change order is the owner's, task 1.5), `docs/PERFORMANCE.md` benchmark table packages, each package's godoc states its responsibility, README only if it mentions `engine` (verify with a search), CHANGELOG `[Unreleased]` complete; verify `go vet ./...` and `go test -run Example ./...` pass in every module
+- [x] 6.3 End-to-end verification locally (GitHub CI is disabled by the owner): `make check` and `make cover` from the root; every hot path in design Hot Paths covered (`go tool cover -func`); `govulncheck ./...` in every module; `openspec validate engine-internal-split --strict`; gopls diagnostics clean
+- [x] 6.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `docs: document the internal package layout`; verify with `git log -1 --stat`
 
 ## 7. Release hand-off (no tag in this change)
 

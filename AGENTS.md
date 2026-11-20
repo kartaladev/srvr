@@ -7,7 +7,7 @@ Go library (`github.com/kartaladev/srvr`, Go 1.27) for running HTTP servers on a
 Multi-module repository; `go.work` is for development only.
 
 - `github.com/kartaladev/srvr` - core and the net/http engine. Depends at runtime only on the standard library and prblm; test-only dependencies such as goleak are allowed.
-- `srvr/internal/...` - the shared pipeline pieces the engine modules use: `internal/engine` (assembly: configuration, per-request state, records, log handler, lifecycle), and the leaves it builds on. Go's internal rule is by import path, so srvr's nested modules import them and modules outside `github.com/kartaladev/srvr/` cannot; consumers use the `srvr` aliases.
+- `srvr/internal/...` - the shared pipeline pieces the engine modules use: `internal/engine` (assembly: configuration, per-request state, records, log handler, lifecycle, static failure mapping) built on the leaves `internal/static` (static file resolution), `internal/errchain` (srvr's error values and safe error inspection) and `internal/tracectx` (trace context); `internal/paritytest` (TestImportDirection) pins that order. Go's internal rule is by import path, so srvr's nested modules import them and modules outside `github.com/kartaladev/srvr/` cannot; consumers use the `srvr` aliases.
 - `srvr/ginsrvr` (gin), `srvr/fibersrvr` (fiber v3) - one engine module each.
 - `srvr/otelsrvr` - opt-in metrics and tracing (OpenTelemetry API only); `srvr/otelsetup` - opt-in SDK and exporter wiring.
 - `srvr/security` - opt-in scrty bridge.
