@@ -13,6 +13,12 @@ import (
 	"github.com/kartaladev/prblm"
 )
 
+// isPanicsError is an error whose Is method panics.
+type isPanicsError struct{}
+
+func (isPanicsError) Error() string { return "is panics" }
+func (isPanicsError) Is(error) bool { panic("Is panicked") }
+
 // TestRecordFailure checks which hook reports become the request's failure.
 func TestRecordFailure(t *testing.T) {
 	t.Parallel()
@@ -35,6 +41,8 @@ func TestRecordFailure(t *testing.T) {
 		{"a note is not a failure", []report{{fmt.Errorf("%w: 200", prblm.ErrInvalidStatus), sent}, {boom, sent}}, boom},
 		{"a panic without problem gives way to an error with one", []report{{panicked, nil}, {boom, sent}}, boom},
 		{"a late panic alone stays", []report{{panicked, nil}}, panicked},
+		{"an unwalkable note is not a failure", []report{{fmt.Errorf("%w: budget", prblm.ErrUnwalkableError), sent}, {boom, sent}}, boom},
+		{"an error whose Is panics is recorded", []report{{isPanicsError{}, sent}}, isPanicsError{}},
 		{"the first error with a problem wins", []report{{boom, sent}, {panicked, nil}, {errors.New("later"), sent}}, boom},
 	}
 

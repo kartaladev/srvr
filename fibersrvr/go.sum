@@ -8,10 +8,10 @@ github.com/gofiber/utils/v2 v2.6.4 h1:VsC3hEFZXk2JO6I/+FZ1OdZzMX4COPgwwrFaDAey3+
 github.com/gofiber/utils/v2 v2.6.4/go.mod h1:SpYvWEQlYmZzzpuSfQX0gUiPSoxpOKldiEmVDzdl8Ds=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/kartaladev/prblm v0.2.1 h1:vW8GV9X3po+69gEzvXZbl3ZRTvGHoyk7bj/UZONZj8Q=
-github.com/kartaladev/prblm v0.2.1/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
-github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0 h1:Q9a1qPiAp35QRW8Ys6Gv+f3GyczycHRVs+3rTaF6c/g=
-github.com/kartaladev/prblm/adapters/fiberprblm v0.2.0/go.mod h1:TfECXb1QnQSa4Fiz+leqjBnqaAn7DQgKPUeIcyeyJKU=
+github.com/kartaladev/prblm v0.3.0 h1:JQQrIMJv+5aaSjFctWh+U0KIbfzvXjv+s0kN7pRaKlQ=
+github.com/kartaladev/prblm v0.3.0/go.mod h1:bQDdtl9XrTdC32zjhtEm31UUA8D/Vz+dG9Kk0/qsJIQ=
+github.com/kartaladev/prblm/adapters/fiberprblm v0.3.0 h1:17bHmFMocFEF200G9ra3f9de0Mh7gUeZkpKBayQoCcw=
+github.com/kartaladev/prblm/adapters/fiberprblm v0.3.0/go.mod h1:67IJwheM3Gx00qP12iMmvM3UG7tmrrQOJn3UpgJPs24=
 github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
 github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/mattn/go-colorable v0.1.16 h1:+2YjeAe7xP1OQbZW1jERPWWCDLlNqFNCvjiqGiAt84A=

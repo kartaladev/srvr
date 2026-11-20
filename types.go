@@ -63,7 +63,12 @@ type (
 	ShutdownPhase = engine.ShutdownPhase
 	// ErrorHook is called for every error the server answers with a
 	// problem, with the problem sent (nil for a note about a problem that
-	// was not sent, such as a panic after the response started).
+	// was not sent, such as a panic after the response started). It also
+	// receives prblm's notes, which srvr does not record as the request's
+	// failure: a mistake in rendering (prblm.ErrInvalidStatus and the
+	// like), and, before the error itself, a note wrapping
+	// prblm.ErrUnwalkableError when prblm cannot walk the error's chain
+	// and sent the safe 500 problem instead.
 	ErrorHook = engine.ErrorHook
 )
 

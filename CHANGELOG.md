@@ -81,6 +81,36 @@ once tagged.
 - `engine.RequestState.MarkRouterAnswered` (package `engine`, unstable before v1) also clears the
   route an earlier stage recorded: an answer of the router means no route matched.
 
+### Changed
+
+- Requires `github.com/kartaladev/prblm` v0.3.0 (was v0.2.1) in every module, `ginsrvr` requires
+  `prblm/adapters/ginprblm` v0.3.0 (was v0.2.1) and `fibersrvr` requires `prblm/adapters/fiberprblm`
+  v0.3.0 (was v0.2.0). What a consumer sees:
+  - An error whose `Unwrap`, `Is` or `As` method panics, or whose chain is more than 1,000 entries
+    deep or wide, gets the safe 500 problem at once, even when a mapper would have matched it; before,
+    another resolution step could still map it, and a chain too deep for srvr's cycle guard was walked
+    without a bound.
+  - `errors.Join(prblm.WithStatus(err, 418), prblm.ErrNotFound)` answers 418 (was 404): the first of
+    a status hint and a sentinel in `errors.Is` order decides.
+  - A `Cache-Control` or `Vary` header a handler set under a non-canonical key (`w.Header()["cache-control"]`)
+    is merged as that header: the problem response carries one line of it, not two.
+  - A typed nil in an error chain is skipped: a typed-nil `*prblm.Received` gives 500, not 502.
+  - Error hooks (`srvr.WithErrorHook`, prblm hooks) receive a note wrapping `prblm.ErrUnwalkableError`
+    before an error prblm cannot walk, instead of `*prblm.PanicError` reports for a panicking method;
+    ginprblm's `Recovery` reports the `*prblm.PanicError` itself rather than a wrapper.
+
+### Fixed
+
+- The access record and observers of a request whose error prblm cannot walk describe that error,
+  not prblm's note about it: with prblm v0.3.0 the record of a chain over 1,000 entries named
+  `*prblm.unwalkableNoteError`, and that of an error whose `Is` or `As` method panics was recorded as a
+  panic of the method. srvr's hook no longer calls `errors.Is` on the reported error to recognise
+  prblm's notes, so an error whose `Is` method panics is recorded too. Notes are matched by identity
+  only: a consumer error whose own `Is` method claims to be a prblm note is recorded, not dropped.
+- fibersrvr: a handler panic whose value's `Unwrap` method panics is recorded as a panic
+  (`error.kind` `panic`, `exception.type` of the value, stack trace) like on net/http and gin, not as
+  a returned error; the response stays the safe 500 problem.
+
 ## [v0.2.0] - 2026-11-19
 
 ### Changed

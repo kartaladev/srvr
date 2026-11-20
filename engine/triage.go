@@ -271,19 +271,40 @@ func GuardChain(err error) error {
 // prblm adapter that hands srvr its own wrapper type, the
 // *prblm.PanicError the wrapper unwraps to. The walk is bounded like
 // walkChain and survives a panicking Unwrap, because errors.As would loop
-// on a cyclic chain.
+// on a cyclic chain. srvr's stand-in for an unwalkable chain is seen
+// through, so [GuardChain] does not hide a recovered panic whose value's
+// Unwrap panics.
 func panicOf(err error) (*prblm.PanicError, bool) {
+	if u, ok := err.(*unresolvable); ok { //nolint:errorlint // the stand-in srvr made, not one it wraps.
+		err = u.err
+	}
+
+	found := findInChain(err, func(e error) bool {
+		_, ok := e.(*prblm.PanicError) //nolint:errorlint // this walk is the bounded errors.As.
+
+		return ok
+	})
+	pe, ok := found.(*prblm.PanicError) //nolint:errorlint // found by the walk above.
+
+	return pe, ok
+}
+
+// findInChain returns the first error of err's chain, breadth first, that
+// match accepts, or nil. The walk visits at most maxChainErrors errors and
+// survives a panicking Unwrap, because errors.Is and errors.As would loop
+// on a cyclic chain or crash.
+func findInChain(err error, match func(error) bool) error {
 	level := []error{err}
 	for seen := 0; len(level) > 0 && seen < maxChainErrors; {
 		var next []error
 
 		for _, e := range level {
-			if pe, ok := e.(*prblm.PanicError); ok { //nolint:errorlint // this walk is the bounded errors.As.
-				return pe, true
+			if match(e) {
+				return e
 			}
 
 			if seen++; seen == maxChainErrors {
-				return nil, false
+				return nil
 			}
 
 			children, _ := unwrap(e)
@@ -293,7 +314,7 @@ func panicOf(err error) (*prblm.PanicError, bool) {
 		level = next
 	}
 
-	return nil, false
+	return nil
 }
 
 // fingerprint returns 16 hex characters derived from parts, never from

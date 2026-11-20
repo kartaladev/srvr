@@ -139,15 +139,27 @@
   - REFACTOR: reuse `engines`, `raw`, `one` and `isNotFoundProblem`
   - Note: fiber v3.7.0 itself normalises the path (RFC 3986 §6.2.2, `normalizeRequestPath`), not fasthttp; see notes.md "fiber: a problem's instance is the path with encoded dot segments removed". This task gets its own `/simplify` and commit (`docs(fibersrvr): document encoded dot segments as an engine-parity difference`), left to the coordinator
 
-## 7. Slice: release
+## 7. Slice: core: upgrade prblm to v0.3.0
 
-- [ ] 7.1 Precondition: this change is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
-- [ ] 7.2 Prepare: move the `CHANGELOG.md` `## [Unreleased]` entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, and dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
-- [ ] 7.3 STOP for the owner: present the proposed version (`v0.3.0`: new public API in every engine module), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
-- [ ] 7.4 Release in `RELEASING.md` order: tag the core module and push; in each released module (`ginsrvr`, `fibersrvr`, `otelsrvr`, then `otelsetup`) require that core version, drop the `replace`, run its checks with `GOWORK=off`, commit, tag `<module>/<version>` and push; verify the CI `release` job passes for every tag
-- [ ] 7.5 Restore the development `replace` lines on `main` in one commit that also runs `go mod tidy` in `internal/paritytest`; verify `make check` passes and `main` CI is green
-- [ ] 7.6 Publish the GitHub Release page (RELEASING.md step 6) with the modules table and the version's changelog section; verify with `gh release view <version>`
-- [ ] 7.7 Verify through the module proxy (`GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m` for every released module) and build a scratch consumer outside the repository that serves an `embed.FS` with each engine's `Static`; record the result in `notes.md`
+Owner decision 2026-11-20: srvr's release requires prblm v0.3.0, done in this change as its own group on branch `chore/upgrade-prblm-v0.3.0`. prblm v0.3.0 changes behaviour only, no API (prblm CHANGELOG `## [0.3.0]`, see notes.md "prblm v0.3.0 upgrade"). GitHub CI is disabled (runner minutes); every check runs locally.
+
+- [x] 7.1 Precondition: prblm `v0.3.0` is tagged (done 2026-11-20, commit `678dfc5`, served by proxy.golang.org) and `adapters/ginprblm` `v0.3.0` and `adapters/fiberprblm` `v0.3.0` are tagged; the core upgrade (7.2-7.5) may start before the adapters (prblm's maintainer checked that ginprblm v0.2.1 and fiberprblm v0.2.0 build and vet against core v0.3.0), but the group's commit (7.6) waits for them, since the older adapters keep their own unbounded error walks; verify each with `GOWORK=off GOPROXY=https://proxy.golang.org go list -m <module>@v0.3.0`
+- [x] 7.2 Upgrade: `go get` the three prblm modules at `v0.3.0` in core, `ginsrvr`, `fibersrvr`, `otelsrvr`, then `go mod tidy` in those, `otelsetup` and `internal/paritytest`; verify `go mod tidy -diff` is empty and `go list -m github.com/kartaladev/prblm` shows `v0.3.0` in every module
+- [x] 7.3 Prove each prblm behaviour change that reaches srvr with a test (AGENTS.md rule 2), RED before any production change: (a) an error whose `Unwrap` panics: hooks now get an `ErrUnwalkableError` note before the error; check srvr's hook records the request's failure (status, `error.kind`, `exception.*`) and not the note, and that `otelsrvr`'s `*prblm.PanicError` lookups still hold; (b) a looping or over-deep chain answers the safe `500` with one `ERROR` record; (c) `errors.Join(prblm.WithStatus(x, 418), prblm.ErrNotFound)` answers `418`; (d) a handler that wrote `Cache-Control` under a non-canonical key keeps one `Cache-Control` line (static `no-cache` headers included); each on every engine where it applies; record RED/GREEN or "no change needed" per item in notes.md
+- [x] 7.4 Adapt srvr where 7.3 is RED (minimal change per failing test), update godoc that names v0.2.1 behaviour (`options.go` hook notes, `engine/core.go`, `engine/access.go`), and add a `CHANGELOG.md` `[Unreleased]` entry naming the prblm upgrade and any behaviour a consumer sees
+- [x] 7.5 Verify locally: `make check` and `make cover` pass in every module; `openspec validate static-files --strict` passes; gopls diagnostics clean
+- [x] 7.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `chore(core): upgrade prblm to v0.3.0` (a behaviour change from 7.4 gets its own `fix` or `feat` commit); push and open the PR; verify with `git log -2 --stat`
+- [x] 7.7 Fix fibersrvr's record of a panic whose value's `Unwrap` panics (notes.md "fiber: a panic whose value's Unwrap panics is recorded as an error"): RED by dropping the pinned fiber row of `TestParity_UnwalkablePanic` and a `TestPanicOf_StandIn` row in `engine`; GREEN by letting `panicOf` see through `*engine.unresolvable`; `CHANGELOG.md` `[Unreleased]` Fixed entry
+
+## 8. Slice: release
+
+- [ ] 8.1 Precondition: this change, including group 7, is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
+- [ ] 8.2 Prepare: move the `CHANGELOG.md` `## [Unreleased]` entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, and dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
+- [ ] 8.3 STOP for the owner: present the proposed version (`v0.3.0`: new public API in every engine module), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [ ] 8.4 Release in `RELEASING.md` order: tag the core module and push; in each released module (`ginsrvr`, `fibersrvr`, `otelsrvr`, then `otelsetup`) require that core version, drop the `replace`, run its checks with `GOWORK=off`, commit, tag `<module>/<version>` and push; verify the CI `release` job passes for every tag
+- [ ] 8.5 Restore the development `replace` lines on `main` in one commit that also runs `go mod tidy` in `internal/paritytest`; verify `make check` passes and `main` CI is green
+- [ ] 8.6 Publish the GitHub Release page (RELEASING.md step 6) with the modules table and the version's changelog section; verify with `gh release view <version>`
+- [ ] 8.7 Verify through the module proxy (`GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m` for every released module) and build a scratch consumer outside the repository that serves an `embed.FS` with each engine's `Static`; record the result in `notes.md`
 
 ## Workflow follow-up
 

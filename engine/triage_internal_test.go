@@ -211,6 +211,33 @@ func TestPanicOf_Bounded(t *testing.T) {
 	}
 }
 
+// TestPanicOf_StandIn: srvr's stand-in for an unwalkable chain does not
+// hide the panic it stands in for (fibersrvr guards fiberprblm's recovered
+// panic before rendering it).
+func TestPanicOf_StandIn(t *testing.T) {
+	t.Parallel()
+
+	pe := &prblm.PanicError{Value: fmt.Errorf("w: %w", panicUnwrapError{})}
+	tests := []struct {
+		name string
+		err  error
+		want *prblm.PanicError
+	}{
+		{"a panic whose value's Unwrap panics", GuardChain(fmt.Errorf("recovered: %w", pe)), pe},
+		{"a cyclic error", GuardChain(selfError{}), nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got, _ := panicOf(tt.err); got != tt.want {
+				t.Errorf("panicOf(%T) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 type panicUnwrapError struct{}
 
 func (panicUnwrapError) Error() string { return "x" }
