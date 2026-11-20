@@ -393,6 +393,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **RED:** `cd internal/paritytest && GOWORK=off go test -count=1 -run TestParity_UnwalkablePanic .` with the fiber pin (`fiberError`) removed: `--- FAIL: TestParity_UnwalkablePanic/fiber_value_whose_Unwrap_panics: record map[error.chain:[fiberprblm.recoveredError *prblm.PanicError *fmt.wrapError *paritytest.unwrapPanicError] error.type:*paritytest.unwrapPanicError exception.message:Internal Server Error level:ERROR msg:http.request.failed srvr.error.truncated:true], want a panic record with exception.type *fmt.wrapError`. Unit, `cd engine && GOWORK=off go test -count=1 -run TestPanicOf_StandIn .`: `--- FAIL: TestPanicOf_StandIn/a_panic_whose_value's_Unwrap_panics: panicOf(*engine.unresolvable) = <nil>, want prblm: recovered panic: w: x`.
 - **GREEN:** `go test -race -count=5` of `TestPanicOf` (engine) and `TestParity_Unwalkable` (internal/paritytest) pass; the fiber row now also checks observer `ErrorKind` `panic`.
 
+### Release decision (task 8.3, 2026-11-20)
+- **Status:** closed: owner confirmed
+- **Target:** static-files
+- **Context:** 8.1: PR #18 (this change, groups 1-6) and PR #20 (group 7, prblm v0.3.0) are merged; `main` is at `4e2a693`. 8.2/8.3: the owner explicitly confirmed version `v0.3.0` (new public API in every engine module: `srvr.Static`, `ginsrvr.Static`, `fibersrvr.Static`; prblm v0.3.0) for core, `ginsrvr`, `fibersrvr`, `otelsrvr` and `otelsetup`, pushing the tags `v0.3.0`, `ginsrvr/v0.3.0`, `fibersrvr/v0.3.0`, `otelsrvr/v0.3.0`, `otelsetup/v0.3.0` in RELEASING.md order, and publishing the GitHub Release. The changelog lands through a pull request from `release/prepare-v0.3.0`, as v0.2.0's did.
+- **Deviation (owner request):** GitHub Actions CI is disabled (runner minutes). Wherever a task requires the CI `release` job or `main` CI, the local equivalent is run instead: `make check` from the root, and the release guard (the tagged module's `go.mod` has no `replace`). The 8.2 dry run in a scratch clone was not repeated; each real step is gated by `make check` and the guard before its tag.
+- **Evidence:** on `main` at `4e2a693`: `make check` passed (lint through `--allow-parallel-runners`), `make cover` passed (core total 99.3%, engine 99.8%).
+- **Suggested action:** none.
+
 ## /simplify (task 7.6)
 
 Quality pass on the prblm v0.3.0 upgrade diff (`engine/access.go`, `engine/triage.go`, `engine/core.go`, `types.go`, `CHANGELOG.md`, `internal/paritytest/prblm_test.go`).
