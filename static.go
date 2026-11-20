@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 type (
@@ -171,7 +172,7 @@ type staticConfigurer struct {
 func (c *staticConfigurer) Configure(g *Group) {
 	// Reads the file system, which the consumer may fill until Start.
 	if err := engine.CheckStatic(c.mount, c.err); err != nil {
-		g.b.errs = append(g.b.errs, engine.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
+		g.b.errs = append(g.b.errs, errchain.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
 
 		return
 	}
@@ -183,7 +184,7 @@ func (c *staticConfigurer) Configure(g *Group) {
 	}
 
 	if err := g.b.statics.Claim(joined, g.b.owner, c.prefix); err != nil {
-		g.b.errs = append(g.b.errs, engine.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
+		g.b.errs = append(g.b.errs, errchain.RouteErrorf("static %q (%s): %w", c.prefix, g.b.owner, err))
 
 		return
 	}

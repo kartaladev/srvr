@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // LogConfig configures srvr's logger. Consumers use it as srvr.LogConfig
@@ -86,7 +88,7 @@ func newLogHandler(ls *LogSettings) *logHandler {
 func parseLevel(field, name string) (slog.Level, error) {
 	var l slog.Level
 	if err := l.UnmarshalText([]byte(name)); err != nil {
-		return l, NewConfigError(field, strconv.Quote(name), "is not a log/slog level such as debug, info, warn, error or info-4")
+		return l, errchain.NewConfigError(field, strconv.Quote(name), "is not a log/slog level such as debug, info, warn, error or info-4")
 	}
 
 	return l, nil
@@ -126,7 +128,7 @@ func validateLog(s *Settings) error {
 	}
 
 	if ls.Format != "" && !strings.EqualFold(ls.Format, "json") && !isText(ls.Format) {
-		errs = append(errs, NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
+		errs = append(errs, errchain.NewConfigError("Format", strconv.Quote(ls.Format), "is not json or text"))
 	}
 
 	return errors.Join(errs...)
@@ -180,7 +182,7 @@ func (ls *LogSettings) checkOwnHandler() error {
 		{"Output", ls.Output != nil},
 	} {
 		if c.set {
-			errs = append(errs, NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler"))
+			errs = append(errs, errchain.NewConfigError(c.field, "set", "cannot be combined with "+ls.HandlerFrom+": it belongs to that handler"))
 		}
 	}
 
@@ -649,7 +651,7 @@ func (t *truncator) attr(a slog.Attr) slog.Attr {
 		case error:
 			// The handler would format the error again; the text is ready,
 			// read guarded against a typed nil and a panicking Error.
-			s, cut := cutString(errorText(x), t.maxBytes)
+			s, cut := cutString(errchain.ErrorText(x), t.maxBytes)
 			t.cut = t.cut || cut
 
 			return slog.String(a.Key, s)
@@ -664,7 +666,7 @@ func (t *truncator) attr(a slog.Attr) slog.Attr {
 // capAny returns v unchanged when its formatted text fits maxBytes (the
 // base handler then renders it as usual), and that text cut otherwise. Its
 // formatting is guarded: a value whose String panics becomes the
-// ValueText placeholder. A negative maxBytes keeps every value.
+// errchain.ValueText placeholder. A negative maxBytes keeps every value.
 func (t *truncator) capAny(key string, v slog.Value) slog.Attr {
 	if t.maxBytes < 0 {
 		return slog.Attr{Key: key, Value: v}
@@ -677,7 +679,7 @@ func (t *truncator) capAny(key string, v slog.Value) slog.Attr {
 		return slog.Attr{Key: key, Value: v}
 	}
 
-	text, panicked := valueText(v.Any())
+	text, panicked := errchain.TryValueText(v.Any())
 	if panicked {
 		return slog.String(key, text)
 	}

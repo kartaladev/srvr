@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // The configuration types, sentinel errors and request accessors of srvr
@@ -22,7 +23,7 @@ type (
 	// errors.As reads its Field, Value and Reason, and it matches
 	// [ErrConfig]. Several invalid fields are joined, the first found
 	// first.
-	ConfigError = engine.ConfigError
+	ConfigError = errchain.ConfigError
 	// Route is one route a configurer declared: method ("" for every
 	// method), pattern in the engine's syntax and the configurer's Go type.
 	Route = engine.Route
@@ -87,21 +88,21 @@ const (
 var (
 	// ErrConfig is wrapped by every error New returns for invalid
 	// configuration. The message names the offending field and value.
-	ErrConfig = engine.ErrConfig
+	ErrConfig = errchain.ErrConfig
 	// ErrServerStarted is returned by Start and Register once the server
 	// has been started.
-	ErrServerStarted = engine.ErrServerStarted
+	ErrServerStarted = errchain.ErrServerStarted
 	// ErrServerClosed is returned by Start and Register once the server has
 	// stopped or was shut down before it started.
-	ErrServerClosed = engine.ErrServerClosed
+	ErrServerClosed = errchain.ErrServerClosed
 	// ErrRouteConfig is wrapped by the error Register or Start returns for
 	// a broken route configuration: a nil configurer, an invalid or
 	// conflicting pattern, or a configurer that panics.
-	ErrRouteConfig = engine.ErrRouteConfig
+	ErrRouteConfig = errchain.ErrRouteConfig
 	// ErrShutdownHook is wrapped by the error Start or Shutdown returns
 	// when a shutdown hook failed: it returned an error, panicked or
 	// outlived its budget.
-	ErrShutdownHook = engine.ErrShutdownHook
+	ErrShutdownHook = errchain.ErrShutdownHook
 )
 
 // TraceFromContext returns the trace context of a request handled by the

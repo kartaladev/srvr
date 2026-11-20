@@ -10,6 +10,7 @@ import (
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // WithConfig sets every field of [Config], a zero field meaning its
@@ -30,7 +31,7 @@ func WithAddr(addr string) Option {
 func WithMaxHeaderBytes(n int) Option {
 	return func(s *engine.Settings) {
 		if n == 0 {
-			s.Errs = append(s.Errs, engine.NewConfigError("MaxHeaderBytes", n, "must be positive"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("MaxHeaderBytes", n, "must be positive"))
 		}
 
 		s.MaxHeaderBytes = n
@@ -65,8 +66,8 @@ func WithMaxHeaderBytes(n int) Option {
 // used as ln returns them.
 func WithListener(ln net.Listener) Option {
 	return func(s *engine.Settings) {
-		if engine.IsNil(ln) {
-			s.Errs = append(s.Errs, engine.NewConfigError("Listener", engine.TypeName(ln), "is nil"))
+		if errchain.IsNil(ln) {
+			s.Errs = append(s.Errs, errchain.NewConfigError("Listener", errchain.TypeName(ln), "is nil"))
 
 			return
 		}
@@ -86,7 +87,7 @@ func WithListener(ln net.Listener) Option {
 func WithRouteCheck(check RouteCheck) Option {
 	return func(s *engine.Settings) {
 		if check == nil {
-			s.Errs = append(s.Errs, engine.NewConfigError("RouteCheck", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("RouteCheck", "<nil>", "is nil"))
 
 			return
 		}
@@ -173,9 +174,9 @@ func WithShutdownHook(phase ShutdownPhase, fn func(ctx context.Context) error) O
 	return func(s *engine.Settings) {
 		switch {
 		case phase != BeforeDrain && phase != AfterDrain:
-			s.Errs = append(s.Errs, engine.NewConfigError("ShutdownPhase", phase, "is not BeforeDrain or AfterDrain"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("ShutdownPhase", phase, "is not BeforeDrain or AfterDrain"))
 		case fn == nil:
-			s.Errs = append(s.Errs, engine.NewConfigError("ShutdownHook", phase, "function is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("ShutdownHook", phase, "function is nil"))
 		default:
 			s.Hooks = append(s.Hooks, engine.Hook{Phase: phase, Fn: fn})
 		}
@@ -291,7 +292,7 @@ func WithLogLevel(l slog.Level) Option {
 func WithLogLevelVar(lv *slog.LevelVar) Option {
 	return func(s *engine.Settings) {
 		if lv == nil {
-			s.Errs = append(s.Errs, engine.NewConfigError("LevelVar", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("LevelVar", "<nil>", "is nil"))
 
 			return
 		}
@@ -323,8 +324,8 @@ func WithLogMaxAttrBytes(n int) Option {
 // standard output, where a log agent ships them. w must not be nil.
 func WithLogOutput(w io.Writer) Option {
 	return func(s *engine.Settings) {
-		if engine.IsNil(w) {
-			s.Errs = append(s.Errs, engine.NewConfigError("Output", "<nil>", "is nil"))
+		if errchain.IsNil(w) {
+			s.Errs = append(s.Errs, errchain.NewConfigError("Output", "<nil>", "is nil"))
 
 			return
 		}
@@ -352,7 +353,7 @@ func WithLogHandler(h slog.Handler) Option {
 func WithLogger(l *slog.Logger) Option {
 	return func(s *engine.Settings) {
 		if l == nil {
-			s.Errs = append(s.Errs, engine.NewConfigError("Logger", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("Logger", "<nil>", "is nil"))
 
 			return
 		}
@@ -373,8 +374,8 @@ func WithSetDefaultLogger() Option {
 // setLogHandler makes h the base handler of s, set by the option named
 // from; a nil or typed-nil h is an error naming field.
 func setLogHandler(s *engine.Settings, field, from string, h slog.Handler) {
-	if engine.IsNil(h) {
-		s.Errs = append(s.Errs, engine.NewConfigError(field, engine.TypeName(h), "is nil"))
+	if errchain.IsNil(h) {
+		s.Errs = append(s.Errs, errchain.NewConfigError(field, errchain.TypeName(h), "is nil"))
 
 		return
 	}
@@ -416,7 +417,7 @@ func WithProblemOptions(opts ...prblm.Option) Option {
 func WithErrorHook(fn ErrorHook) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {
-			s.Errs = append(s.Errs, engine.NewConfigError("ErrorHook", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("ErrorHook", "<nil>", "is nil"))
 
 			return
 		}
@@ -428,7 +429,7 @@ func WithErrorHook(fn ErrorHook) Option {
 // WithErrorRedactor applies fn to exception.message and
 // exception.stacktrace before they are logged, for example to mask e-mail
 // addresses in database errors. fn replaces srvr's default redactor
-// ([engine.RedactSecrets], which masks URL query values and secret-looking
+// ([errchain.RedactSecrets], which masks URL query values and secret-looking
 // key=value pairs), so a consumer redactor that should keep that masking
 // calls it itself. It applies to request failure records and
 // to the lifecycle records server.failed and server.shutdown_hook.failed,
@@ -444,7 +445,7 @@ func WithErrorHook(fn ErrorHook) Option {
 func WithErrorRedactor(fn func(string) string) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {
-			s.Errs = append(s.Errs, engine.NewConfigError("ErrorRedactor", "<nil>", "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("ErrorRedactor", "<nil>", "is nil"))
 
 			return
 		}
@@ -456,7 +457,7 @@ func WithErrorRedactor(fn func(string) string) Option {
 // WithoutErrorRedaction writes exception.message and exception.stacktrace
 // unredacted, which loosens a safety default: by default srvr masks URL
 // query values and secret-looking key=value pairs in error text (see
-// [engine.RedactSecrets]), because credentials in error text must not reach
+// [errchain.RedactSecrets]), because credentials in error text must not reach
 // the logs. Options apply in order: a later [WithErrorRedactor] replaces
 // this, and this replaces an earlier one.
 func WithoutErrorRedaction() Option {
@@ -503,7 +504,7 @@ func WithDebugBuffer(opts ...DebugBufferOption) Option {
 
 		for i, opt := range opts {
 			if opt == nil {
-				s.Errs = append(s.Errs, engine.NewConfigError("DebugBufferOption", i, "is nil"))
+				s.Errs = append(s.Errs, errchain.NewConfigError("DebugBufferOption", i, "is nil"))
 
 				continue
 			}

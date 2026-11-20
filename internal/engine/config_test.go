@@ -11,6 +11,7 @@ import (
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // TestEngineConfig covers engine-support / Scenario: Same validation on
@@ -101,8 +102,8 @@ func TestSrvrNamesAreEngineDeclarations(t *testing.T) {
 	}
 
 	_, err = srvr.New(invalid)
-	if !errors.Is(err, engine.ErrConfig) {
-		t.Errorf("srvr.New error %v does not match engine.ErrConfig", err)
+	if !errors.Is(err, errchain.ErrConfig) {
+		t.Errorf("srvr.New error %v does not match errchain.ErrConfig", err)
 	}
 }
 

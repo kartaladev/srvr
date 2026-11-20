@@ -16,6 +16,7 @@ import (
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 	"github.com/valyala/fasthttp"
 )
 
@@ -121,7 +122,7 @@ func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConf
 func WithSendFileCache(d time.Duration) srvr.StaticOption {
 	return func(s *engine.StaticSettings) {
 		if d <= 0 {
-			s.Errs = append(s.Errs, engine.NewConfigError("Static.FiberSendFileCache", d,
+			s.Errs = append(s.Errs, errchain.NewConfigError("Static.FiberSendFileCache", d,
 				"WithSendFileCache needs a positive duration; leave it out to keep the file cache off"))
 
 			return

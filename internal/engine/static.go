@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // StaticConfig configures a static mount, the files of an fs.FS served
@@ -82,8 +83,8 @@ type Static struct {
 }
 
 // NewStatic returns the mount of fsys under prefix, configured by opts
-// applied in order to a zero StaticConfig, or an error wrapping ErrConfig
-// joining one *ConfigError per invalid setting: StaticOption (a nil
+// applied in order to a zero StaticConfig, or an error wrapping errchain.ErrConfig
+// joining one *errchain.ConfigError per invalid setting: StaticOption (a nil
 // option), Static.Prefix, Static.FS, Static.CacheControl and
 // Static.IndexCacheControl (a control character other than a tab, which
 // could inject a header), Static.IndexNames and Static.SPAFallback (not a
@@ -109,8 +110,8 @@ func NewStatic(prefix string, fsys fs.FS, opts ...StaticOption) (*Static, error)
 		errs = append(errs, err)
 	}
 
-	if IsNil(fsys) {
-		errs = append(errs, NewConfigError("Static.FS", fsys, "must not be nil"))
+	if errchain.IsNil(fsys) {
+		errs = append(errs, errchain.NewConfigError("Static.FS", fsys, "must not be nil"))
 	}
 
 	for _, err := range []error{
@@ -173,7 +174,7 @@ func applyStaticOptions(opts []StaticOption) (StaticConfig, error) {
 
 	for i, opt := range opts {
 		if opt == nil {
-			s.Errs = append(s.Errs, NewConfigError("StaticOption", i, "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("StaticOption", i, "is nil"))
 
 			continue
 		}
@@ -190,7 +191,7 @@ func applyStaticOptions(opts []StaticOption) (StaticConfig, error) {
 // Static.Prefix.
 func staticPrefix(prefix string) (string, error) {
 	invalid := func(reason string) (string, error) {
-		return "", NewConfigError("Static.Prefix", prefix, reason)
+		return "", errchain.NewConfigError("Static.Prefix", prefix, reason)
 	}
 
 	switch {
@@ -249,11 +250,11 @@ func (p *StaticPrefixes) Add(c any, prefix string, m *Static, err error) error {
 
 	// Reads the file system, which the consumer may fill until Start.
 	if err := CheckStatic(m, err); err != nil {
-		return RouteErrorf("%s: %w", name, err)
+		return errchain.RouteErrorf("%s: %w", name, err)
 	}
 
 	if err := p.Claim(m.Prefix(), name, prefix); err != nil {
-		return RouteErrorf("%s: %w", name, err)
+		return errchain.RouteErrorf("%s: %w", name, err)
 	}
 
 	return nil
@@ -261,13 +262,13 @@ func (p *StaticPrefixes) Add(c any, prefix string, m *Static, err error) error {
 
 // Claim records owner as the mount serving key, a mount's full
 // normalised prefix, and returns nil; when an earlier mount claimed key,
-// it returns a *ConfigError naming Static.Prefix with value prefix, the
+// it returns a *errchain.ConfigError naming Static.Prefix with value prefix, the
 // prefix as the consumer passed it, and that mount's owner. The net/http
 // engine claims the prefix joined with its group's; Add claims the
 // mount's own.
 func (p *StaticPrefixes) Claim(key, owner, prefix string) error {
 	if earlier, dup := p.owners[key]; dup {
-		return NewConfigError("Static.Prefix", prefix, "is already served by another static mount ("+earlier+")")
+		return errchain.NewConfigError("Static.Prefix", prefix, "is already served by another static mount ("+earlier+")")
 	}
 
 	if p.owners == nil {
@@ -285,7 +286,7 @@ func (p *StaticPrefixes) Len() int { return len(p.owners) }
 // Check reads the file system for the settings that need it, during an
 // engine's configure phase: the SPA fallback must be a regular file. A
 // file system that panics or fails is reported, never raised. It returns
-// nil or a *ConfigError naming Static.SPAFallback.
+// nil or a *errchain.ConfigError naming Static.SPAFallback.
 func (s *Static) Check() (err error) {
 	name := s.cfg.SPAFallback
 	if name == "" {
@@ -294,7 +295,7 @@ func (s *Static) Check() (err error) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = NewConfigError("Static.SPAFallback", name, "reading it panicked: "+ValueText(v))
+			err = errchain.NewConfigError("Static.SPAFallback", name, "reading it panicked: "+errchain.ValueText(v))
 		}
 	}()
 
@@ -302,11 +303,11 @@ func (s *Static) Check() (err error) {
 
 	switch {
 	case statErr != nil && missOrError(statErr) == nil:
-		return NewConfigError("Static.SPAFallback", name, "does not exist in the file system")
+		return errchain.NewConfigError("Static.SPAFallback", name, "does not exist in the file system")
 	case statErr != nil:
-		return NewConfigError("Static.SPAFallback", name, "cannot be read: "+errorText(statErr))
+		return errchain.NewConfigError("Static.SPAFallback", name, "cannot be read: "+errchain.ErrorText(statErr))
 	case !info.Mode().IsRegular():
-		return NewConfigError("Static.SPAFallback", name, "is not a regular file")
+		return errchain.NewConfigError("Static.SPAFallback", name, "is not a regular file")
 	default:
 		return nil
 	}
@@ -317,17 +318,17 @@ func (s *Static) Check() (err error) {
 // another one.
 func validateHeaderValue(field, v string) error {
 	if strings.ContainsFunc(v, func(r rune) bool { return r != '\t' && unicode.IsControl(r) }) {
-		return NewConfigError(field, v, "must not contain control characters")
+		return errchain.NewConfigError(field, v, "must not contain control characters")
 	}
 
 	return nil
 }
 
-// validateSendFileCache returns nil or a *ConfigError naming
+// validateSendFileCache returns nil or a *errchain.ConfigError naming
 // Static.FiberSendFileCache for a negative d.
 func validateSendFileCache(d time.Duration) error {
 	if d < 0 {
-		return NewConfigError("Static.FiberSendFileCache", d, "must not be negative; 0 keeps the file cache off")
+		return errchain.NewConfigError("Static.FiberSendFileCache", d, "must not be negative; 0 keeps the file cache off")
 	}
 
 	return nil
@@ -340,7 +341,7 @@ func validateSendFileCache(d time.Duration) error {
 // configuration every other option built.
 func RejectSendFileCache(s *StaticSettings) {
 	if d := s.FiberSendFileCache; d > 0 {
-		s.Errs = append(s.Errs, NewConfigError("Static.FiberSendFileCache", d,
+		s.Errs = append(s.Errs, errchain.NewConfigError("Static.FiberSendFileCache", d,
 			"is supported only by fibersrvr.Static; this engine has no file cache, so it must be 0"))
 	}
 }
@@ -354,7 +355,7 @@ func validateFallbackName(name string) error {
 	}
 
 	if n, dirOnly, ok := requestName(name); !ok || dirOnly || n != name {
-		return NewConfigError("Static.SPAFallback", name, `must be a visible file name inside the file system, such as "index.html"`)
+		return errchain.NewConfigError("Static.SPAFallback", name, `must be a visible file name inside the file system, such as "index.html"`)
 	}
 
 	return nil
@@ -365,7 +366,7 @@ func validateFallbackName(name string) error {
 func validateIndexNames(names []string) error {
 	for _, n := range names {
 		if !isFileName(n) {
-			return NewConfigError("Static.IndexNames", n, "must be a single file name, without / and not . or ..")
+			return errchain.NewConfigError("Static.IndexNames", n, "must be a single file name, without / and not . or ..")
 		}
 	}
 
@@ -736,7 +737,7 @@ func openFailure(err error) StaticResult {
 // returns without matching fs.ErrNotExist. An error whose chain cannot be
 // walked is never a miss.
 func missOrError(err error) error {
-	if hasCycle(err) {
+	if errchain.HasCycle(err) {
 		return err
 	}
 

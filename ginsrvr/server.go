@@ -13,6 +13,7 @@ import (
 	"github.com/kartaladev/prblm/adapters/ginprblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // engineName names the gin engine in engine-specific option errors.
@@ -116,14 +117,14 @@ func newEngine(core *engine.Core, hooks []any, requestStage gin.HandlerFunc) (*g
 func applyHook(e *gin.Engine, h any) (err error) {
 	hook, _ := h.(func(*gin.Engine))
 	if hook == nil {
-		return engine.NewConfigError("WithGinEngine", "<nil>", "hook is nil")
+		return errchain.NewConfigError("WithGinEngine", "<nil>", "hook is nil")
 	}
 
 	name := engine.FuncLocation(hook).Function()
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = engine.NewConfigError("WithGinEngine", name, "hook panicked: "+engine.ValueText(v))
+			err = errchain.NewConfigError("WithGinEngine", name, "hook panicked: "+errchain.ValueText(v))
 		}
 	}()
 
@@ -132,7 +133,7 @@ func applyHook(e *gin.Engine, h any) (err error) {
 	hook(e)
 
 	if len(e.Handlers) != handlers || len(e.Routes()) != routes {
-		return engine.NewConfigError("WithGinEngine", name,
+		return errchain.NewConfigError("WithGinEngine", name,
 			"hook added middleware or routes, which would run outside srvr's pipeline; use Register")
 	}
 
@@ -350,7 +351,7 @@ func handlerKey(h gin.HandlerFunc) uintptr { return engine.FuncPointer(h) }
 func checkHandlers(routes gin.RoutesInfo, c srvr.RouteConfigurer[*gin.RouterGroup]) error {
 	for _, r := range routes {
 		if r.HandlerFunc == nil {
-			return engine.RouteErrorf("%q (%T): handler is nil", r.Method+" "+r.Path, c)
+			return errchain.RouteErrorf("%q (%T): handler is nil", r.Method+" "+r.Path, c)
 		}
 	}
 

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // staticSite is the test file tree of the static-files design ("Test
@@ -38,9 +40,9 @@ func staticSite() fstest.MapFS {
 	}
 }
 
-// configFields returns the Field of every *ConfigError joined in err.
+// configFields returns the Field of every *errchain.ConfigError joined in err.
 func configFields(err error) []string {
-	if ce, ok := err.(*ConfigError); ok { //nolint:errorlint // walking the joined tree on purpose
+	if ce, ok := err.(*errchain.ConfigError); ok { //nolint:errorlint // walking the joined tree on purpose
 		return []string{ce.Field}
 	}
 
@@ -103,7 +105,7 @@ func TestNewStatic_Config(t *testing.T) {
 		}}, []string{"Static.IndexCacheControl"}},
 		{"refused option argument, then the config replaced", "/", staticSite(), []StaticOption{
 			func(c *StaticSettings) {
-				c.Errs = append(c.Errs, NewConfigError("Static.FiberSendFileCache", time.Duration(0), "must be positive"))
+				c.Errs = append(c.Errs, errchain.NewConfigError("Static.FiberSendFileCache", time.Duration(0), "must be positive"))
 			},
 			func(c *StaticSettings) { c.StaticConfig = StaticConfig{} },
 		}, []string{"Static.FiberSendFileCache"}},
@@ -123,8 +125,8 @@ func TestNewStatic_Config(t *testing.T) {
 				t.Fatalf("NewStatic(%q) = %v, nil; want an error", tt.prefix, m)
 			}
 
-			if !errors.Is(err, ErrConfig) {
-				t.Errorf("error %v does not wrap ErrConfig", err)
+			if !errors.Is(err, errchain.ErrConfig) {
+				t.Errorf("error %v does not wrap errchain.ErrConfig", err)
 			}
 
 			if got := configFields(err); !slices.Equal(got, tt.fields) {
@@ -181,7 +183,7 @@ func TestStatic_Check(t *testing.T) {
 				return
 			}
 
-			ce, ok := errors.AsType[*ConfigError](err)
+			ce, ok := errors.AsType[*errchain.ConfigError](err)
 			if !ok || ce.Field != "Static.SPAFallback" || ce.Value != tt.fallback || !strings.Contains(ce.Reason, tt.reason) {
 				t.Errorf("Check = %v, want a Static.SPAFallback error for %q containing %q", err, tt.fallback, tt.reason)
 			}
@@ -257,7 +259,7 @@ func TestStaticPrefixes_Add(t *testing.T) {
 			switch {
 			case tt.want == "" && err != nil:
 				t.Errorf("Add = %v, want nil", err)
-			case tt.want != "" && (!errors.Is(err, ErrRouteConfig) || !strings.HasSuffix(err.Error(), tt.want)):
+			case tt.want != "" && (!errors.Is(err, errchain.ErrRouteConfig) || !strings.HasSuffix(err.Error(), tt.want)):
 				t.Errorf("Add = %v, want a route error ending with %s", err, tt.want)
 			}
 		})

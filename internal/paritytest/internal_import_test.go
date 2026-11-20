@@ -110,6 +110,12 @@ func TestInternalImport(t *testing.T) {
 			fails:  []string{"use of internal package github.com/kartaladev/srvr/internal/engine not allowed"},
 		},
 		{
+			name:   "outside module importing internal/errchain",
+			module: "example.com/consumer",
+			source: "package main\n\nimport _ \"github.com/kartaladev/srvr/internal/errchain\"\n\nfunc main() {}\n",
+			fails:  []string{"use of internal package github.com/kartaladev/srvr/internal/errchain not allowed"},
+		},
+		{
 			name:   "outside module importing the removed engine path",
 			module: "example.com/consumer",
 			source: "package main\n\nimport _ \"github.com/kartaladev/srvr/engine\"\n\nfunc main() {}\n",

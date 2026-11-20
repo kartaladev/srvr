@@ -37,13 +37,13 @@
 
 ## 4. Slice: extract `internal/errchain`
 
-- [ ] 4.1 Precondition: 1.3 kept `errchain` (with the guards folded in); verify `design.md` D2 lists it, else skip this group and record why in `notes.md`
-- [ ] 4.2 The guard pins `errchain` as a leaf (test-quality / Scenario: Import direction guard, the `internal/errchain` rows); verify `go test -race -run TestImportDirection` passes
+- [x] 4.1 Precondition: 1.3 kept `errchain` (with the guards folded in); verify `design.md` D2 lists it, else skip this group and record why in `notes.md`
+- [x] 4.2 The guard pins `errchain` as a leaf (test-quality / Scenario: Import direction guard, the `internal/errchain` rows); verify `go test -race -run TestImportDirection` passes
   - RED: add `internal/errchain` below `internal/engine` in the recorded order and a row asserting the package exists; expected failure: the package is missing
   - GREEN: move srvr's error values (`ErrConfig`, `ErrServerStarted`, `ErrServerClosed`, `ErrRouteConfig`, `ErrShutdownHook`, `ConfigError`, `NewConfigError`, `RouteErrorf`) and `walkChain`, `findInChain`, `GuardChain`, `TypeName`, `ValueText`, `IsNil`, `FuncPointer`, `RedactSecrets`, `fingerprint`, `topFrame` with their helpers, tests, fuzz tests and `BenchmarkRedactSecrets` (design D2); `srvr`'s aliases point at `errchain` step by step with gopls, `go test -race ./...` in every touched module after each step; `otelsrvr` and `otelsetup` import `errchain`
   - REFACTOR: name smells from the move (a now-exported helper used once: Inline Function back into its caller's package); count exported names against D3.2; then `/simplify`
-- [ ] 4.3 Verify: `make check`, `make cover` (no moved function loses coverage), the leak guard lists the package (test-quality leak-check rows), gopls diagnostics clean
-- [ ] 4.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(engine): extract internal/errchain`; verify with `git log -1 --stat`
+- [x] 4.3 Verify: `make check`, `make cover` (no moved function loses coverage), the leak guard lists the package (test-quality leak-check rows), gopls diagnostics clean
+- [x] 4.4 Run `/simplify`, apply what holds up, re-run the tests, then commit `refactor(engine): extract internal/errchain`; verify with `git log -1 --stat`
 
 ## 5. Slice: extract `internal/static`
 

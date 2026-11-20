@@ -14,6 +14,7 @@ import (
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -96,7 +97,7 @@ func configErrorColon(field, value, reason string) error {
 // recovered panic value v, with v as Cause when it is a usable error (see
 // panicCause).
 func panicError(field, value string, v any) error {
-	return &ConfigError{Field: field, Value: value, Reason: "panicked: " + engine.ValueText(v), Cause: panicCause(v)}
+	return &ConfigError{Field: field, Value: value, Reason: "panicked: " + errchain.ValueText(v), Cause: panicCause(v)}
 }
 
 // panicCause returns the recovered panic value v when it is an error that
@@ -104,12 +105,12 @@ func panicError(field, value string, v any) error {
 // otherwise: a value that is not an error, a typed nil (it carries no
 // cause), or an error whose chain cycles or whose Unwrap panics (errors.Is
 // would loop or crash). An error whose Error method panics is kept:
-// errors.Is never calls Error, and the text goes through engine.ValueText.
+// errors.Is never calls Error, and the text goes through errchain.ValueText.
 // otelsrvr and otelsetup each keep a copy, so engine's public API does not
 // grow for it.
 func panicCause(v any) error {
 	err, ok := v.(error)
-	if !ok || engine.IsNil(err) {
+	if !ok || errchain.IsNil(err) {
 		return nil
 	}
 
@@ -204,12 +205,12 @@ func WithTracing() Option {
 func (s *settings) validate() error {
 	var errs []error
 
-	if engine.IsNil(s.meterProvider) {
-		errs = append(errs, configError("MeterProvider", engine.TypeName(s.meterProvider), "is nil"))
+	if errchain.IsNil(s.meterProvider) {
+		errs = append(errs, configError("MeterProvider", errchain.TypeName(s.meterProvider), "is nil"))
 	}
 
-	if engine.IsNil(s.tracerProvider) {
-		errs = append(errs, configError("TracerProvider", engine.TypeName(s.tracerProvider), "is nil"))
+	if errchain.IsNil(s.tracerProvider) {
+		errs = append(errs, configError("TracerProvider", errchain.TypeName(s.tracerProvider), "is nil"))
 	}
 
 	if s.propagatorErr != nil {
@@ -226,13 +227,13 @@ func (s *settings) validate() error {
 // validatePropagator rejects a nil or typed-nil propagator and one whose
 // Fields panics.
 func validatePropagator(p propagation.TextMapPropagator) (err error) {
-	if engine.IsNil(p) {
-		return configError("Propagator", engine.TypeName(p), "is nil")
+	if errchain.IsNil(p) {
+		return configError("Propagator", errchain.TypeName(p), "is nil")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = panicError("Propagator", engine.TypeName(p), v)
+			err = panicError("Propagator", errchain.TypeName(p), v)
 		}
 	}()
 
@@ -373,7 +374,7 @@ func New(opts ...Option) (*Observer, error) {
 func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = panicError("TracerProvider", engine.TypeName(tp), v)
+			err = panicError("TracerProvider", errchain.TypeName(tp), v)
 		}
 	}()
 
@@ -385,7 +386,7 @@ func tracer(tp trace.TracerProvider) (t trace.Tracer, err error) {
 func newObserver(mp metric.MeterProvider, cfg Config) (o *Observer, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			o, err = nil, panicError("MeterProvider", engine.TypeName(mp), v)
+			o, err = nil, panicError("MeterProvider", errchain.TypeName(mp), v)
 		}
 	}()
 
@@ -576,7 +577,7 @@ func spanName(method attribute.KeyValue, route string) string {
 // or "panic" when srvr does not have it (an aborted request).
 func panicType(res srvr.ResultInfo) string {
 	if pe, ok := errors.AsType[*prblm.PanicError](res.Err); ok && pe != nil {
-		return engine.TypeName(pe.Value)
+		return errchain.TypeName(pe.Value)
 	}
 
 	return "panic"
@@ -635,7 +636,7 @@ func errorType(res srvr.ResultInfo) string {
 func semconvErrorType(err error) (t string) {
 	defer func() {
 		if recover() != nil {
-			t = engine.TypeName(err)
+			t = errchain.TypeName(err)
 		}
 	}()
 

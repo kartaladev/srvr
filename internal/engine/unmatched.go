@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // UnmatchedLimitConfig limits the http.request.failed records of requests
@@ -37,9 +39,9 @@ func validateUnmatchedLimit(s *Settings) error {
 
 	switch {
 	case c.Burst < 0:
-		return NewConfigError("UnmatchedLimit.Burst", c.Burst, "must not be negative (0 means no limit)")
+		return errchain.NewConfigError("UnmatchedLimit.Burst", c.Burst, "must not be negative (0 means no limit)")
 	case c.Burst > 0 && c.Interval <= 0:
-		return NewConfigError("UnmatchedLimit.Interval", c.Interval, "must be above zero when Burst is set")
+		return errchain.NewConfigError("UnmatchedLimit.Interval", c.Interval, "must be above zero when Burst is set")
 	default:
 		return nil
 	}

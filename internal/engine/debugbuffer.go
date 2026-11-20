@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // DebugBufferConfig configures per-request debug buffering (see
@@ -126,7 +128,7 @@ func validateDebugBuffer(s *Settings) error {
 	if c.Level != "" {
 		level, err := parseLevel("DebugBuffer.Level", c.Level)
 		if logLevel, static := s.Log.staticLevel(); err == nil && static && level > logLevel {
-			err = NewConfigError("DebugBuffer.Level", strconv.Quote(c.Level),
+			err = errchain.NewConfigError("DebugBuffer.Level", strconv.Quote(c.Level),
 				"is above the log level "+logLevel.String()+": it would buffer records that are written anyway")
 		}
 
@@ -134,7 +136,7 @@ func validateDebugBuffer(s *Settings) error {
 	}
 
 	if c.FlushStatus != 0 && (c.FlushStatus < 100 || c.FlushStatus > 599) {
-		errs = append(errs, NewConfigError("DebugBuffer.FlushStatus", c.FlushStatus, "is not an HTTP status in 100-599 (0 means the default 500)"))
+		errs = append(errs, errchain.NewConfigError("DebugBuffer.FlushStatus", c.FlushStatus, "is not an HTTP status in 100-599 (0 means the default 500)"))
 	}
 
 	errs = append(errs,
@@ -144,7 +146,7 @@ func validateDebugBuffer(s *Settings) error {
 	)
 
 	if total, maxBytes := cmp.Or(c.TotalBytes, defaultBufferTotal), cmp.Or(c.MaxBytes, defaultBufferBytes); total >= 0 && total < maxBytes {
-		errs = append(errs, NewConfigError("DebugBuffer.TotalBytes", total,
+		errs = append(errs, errchain.NewConfigError("DebugBuffer.TotalBytes", total,
 			"is below DebugBuffer.MaxBytes "+strconv.Itoa(maxBytes)+": one request could never fill its buffer"))
 	}
 
@@ -155,7 +157,7 @@ func validateDebugBuffer(s *Settings) error {
 // means the default, is negative.
 func notNegative(field string, v int) error {
 	if v < 0 {
-		return NewConfigError(field, v, "must not be negative (0 means the default)")
+		return errchain.NewConfigError(field, v, "must not be negative (0 means the default)")
 	}
 
 	return nil
@@ -206,7 +208,7 @@ func attrSize(a slog.Attr) int {
 			size += attrSize(m)
 		}
 	case slog.KindAny, slog.KindLogValuer:
-		text, _ := valueText(v.Any())
+		text, _ := errchain.TryValueText(v.Any())
 		size += len(text)
 	default: // a number, time, duration or bool
 		size += wordSize

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"reflect"
 	"slices"
 
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // Core is the resolved, validated configuration of one server and the
@@ -36,7 +36,7 @@ type Core struct {
 
 // ResolveConfig applies opts in argument order, fills the defaults and
 // validates the result. Invalid configuration returns an error wrapping
-// [ErrConfig] that names every offending field and value; nothing is
+// [errchain.ErrConfig] that names every offending field and value; nothing is
 // silently replaced by a default.
 func ResolveConfig(opts []Option) (*Core, error) {
 	s, errs := newSettings(opts)
@@ -105,7 +105,7 @@ func (c *Core) ProblemOptions() []prblm.Option {
 
 // EngineOptions returns, in order, the values of the engine-specific
 // options for engine. An engine-specific option of another engine is an
-// error wrapping [ErrConfig] naming that option: configuration is never
+// error wrapping [errchain.ErrConfig] naming that option: configuration is never
 // silently ignored.
 func (c *Core) EngineOptions(engine string) ([]any, error) {
 	var (
@@ -115,7 +115,7 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 
 	for _, o := range c.settings.engineOpts {
 		if o.engine != engine {
-			errs = append(errs, NewConfigError("Option", o.name, "belongs to the "+o.engine+" engine, not "+engine))
+			errs = append(errs, errchain.NewConfigError("Option", o.name, "belongs to the "+o.engine+" engine, not "+engine))
 
 			continue
 		}
@@ -124,44 +124,6 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 	}
 
 	return values, errors.Join(errs...)
-}
-
-// The sentinel errors of every srvr engine, documented on the names
-// package srvr re-exports them under (srvr.ErrConfig and so on), so
-// errors.Is matches either name.
-var (
-	// ErrConfig is wrapped by every error construction returns for invalid
-	// configuration, and by Start for a nil context or a faulty listener.
-	ErrConfig = errors.New("srvr: invalid configuration")
-	// ErrServerStarted is returned by Start and Register once the server
-	// has been started.
-	ErrServerStarted = errors.New("srvr: server already started")
-	// ErrServerClosed is returned by Start and Register once the server
-	// has stopped, and by a Start that Shutdown interrupted.
-	ErrServerClosed = errors.New("srvr: server closed")
-	// ErrRouteConfig is wrapped by the error Start returns when a
-	// configurer panics or registers an invalid route, or a route check
-	// fails.
-	ErrRouteConfig = errors.New("srvr: invalid route configuration")
-	// ErrShutdownHook is wrapped by every shutdown hook failure Start and
-	// Shutdown return.
-	ErrShutdownHook = errors.New("srvr: shutdown hook failed")
-)
-
-// IsNil reports whether v is nil or an interface holding a nil pointer,
-// map, slice, function or channel (a typed nil).
-func IsNil(v any) bool {
-	if v == nil {
-		return true
-	}
-
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface, reflect.UnsafePointer:
-		return rv.IsNil()
-	default:
-		return false
-	}
 }
 
 // ErrorHook is called for every error the server answers with a problem,
@@ -176,11 +138,11 @@ type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
 
 // newProblems builds a problem handler from opts and returns an invalid
 // option, which makes prblm.NewHandler panic, as an error wrapping
-// ErrConfig.
+// errchain.ErrConfig.
 func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = NewConfigError("ProblemOptions", v, "is invalid")
+			err = errchain.NewConfigError("ProblemOptions", v, "is invalid")
 		}
 	}()
 

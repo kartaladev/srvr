@@ -19,6 +19,7 @@ import (
 	"github.com/kartaladev/prblm/adapters/fiberprblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 	"github.com/valyala/fasthttp"
 )
 
@@ -150,13 +151,13 @@ func bodyLimit(n int64) int {
 func applyHook(cfg *fiber.Config, h any) (err error) {
 	hook, _ := h.(func(*fiber.Config))
 	if hook == nil {
-		return engine.NewConfigError("WithFiberConfig", "<nil>", "hook is nil")
+		return errchain.NewConfigError("WithFiberConfig", "<nil>", "hook is nil")
 	}
 
 	defer func() {
 		if v := recover(); v != nil {
-			err = engine.NewConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(),
-				"hook panicked: "+engine.ValueText(v))
+			err = errchain.NewConfigError("WithFiberConfig", engine.FuncLocation(hook).Function(),
+				"hook panicked: "+errchain.ValueText(v))
 		}
 	}()
 
@@ -344,7 +345,7 @@ func (o *routeOwners) addMounted() error {
 func readInternals(read func() error) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = internalsError("reading fiber's internals panicked: %s", engine.ValueText(v))
+			err = internalsError("reading fiber's internals panicked: %s", errchain.ValueText(v))
 		}
 	}()
 
@@ -436,7 +437,7 @@ func (f fiberField) unreadable(problem string) error {
 // internalsError returns an error wrapping srvr.ErrRouteConfig for fiber
 // internals srvr cannot read, naming the fiber version.
 func internalsError(format string, args ...any) error {
-	return engine.RouteErrorf("fiber %s: cannot read fiber's internals for the route listing: %s",
+	return errchain.RouteErrorf("fiber %s: cannot read fiber's internals for the route listing: %s",
 		fiberVersion(), fmt.Sprintf(format, args...))
 }
 
@@ -615,7 +616,7 @@ func (o *routeOwners) duplicate(cfg *fiber.Config) error {
 	for _, r := range o.routes {
 		key := r.Method + " " + matchKey(r.Pattern, cfg)
 		if earlier, dup := first[key]; dup {
-			return engine.RouteErrorf("%q (%s) duplicates %q (%s); fiber would serve only the first",
+			return errchain.RouteErrorf("%q (%s) duplicates %q (%s); fiber would serve only the first",
 				r.Method+" "+r.Pattern, r.Configurer, earlier.Method+" "+earlier.Pattern, earlier.Configurer)
 		}
 
