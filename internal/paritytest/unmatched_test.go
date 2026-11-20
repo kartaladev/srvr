@@ -12,7 +12,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/otelsrvr"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 )

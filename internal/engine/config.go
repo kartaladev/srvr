@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // Config holds the server settings that a configuration loader can fill.
@@ -83,7 +84,7 @@ type Settings struct {
 	Access AccessLogConfig
 	// Service names the service in lifecycle and failed records.
 	Service ServiceConfig
-	// Redactor is applied to error text; RedactSecrets unless an option
+	// Redactor is applied to error text; errchain.RedactSecrets unless an option
 	// set another.
 	Redactor func(string) string
 	// ReadBuild reads the binary's build information: debug.ReadBuildInfo,
@@ -108,31 +109,6 @@ type Settings struct {
 	// engineOpts are the engine-specific options, each read only by the
 	// engine it names (see Only).
 	engineOpts []engineOpt
-}
-
-// ConfigError is the error construction returns for one invalid field:
-// errors.As reads Field, Value and Reason, and errors.Is matches
-// [ErrConfig].
-type ConfigError struct {
-	// Field names the setting, such as "Level" or "Listener".
-	Field string
-	// Value is the offending value's text.
-	Value string
-	// Reason says what is wrong with it.
-	Reason string
-}
-
-func (e *ConfigError) Error() string {
-	return ErrConfig.Error() + ": " + e.Field + " " + e.Value + ": " + e.Reason
-}
-
-// Unwrap returns [ErrConfig].
-func (e *ConfigError) Unwrap() error { return ErrConfig }
-
-// NewConfigError returns a *ConfigError naming field and value, whose text
-// is read through ValueText: a value may be consumer code.
-func NewConfigError(field string, value any, reason string) error {
-	return &ConfigError{Field: field, Value: ValueText(value), Reason: reason}
 }
 
 // Option configures a server of any srvr engine; consumers use it as
@@ -165,7 +141,7 @@ func newSettings(opts []Option) (Settings, []error) {
 
 	for i, opt := range opts {
 		if opt == nil {
-			s.Errs = append(s.Errs, NewConfigError("Option", i, "is nil"))
+			s.Errs = append(s.Errs, errchain.NewConfigError("Option", i, "is nil"))
 
 			continue
 		}
@@ -180,12 +156,12 @@ func newSettings(opts []Option) (Settings, []error) {
 
 // resolveDefaults fills the defaults chosen after every option applied
 // and copies what the caller still owns, so no option has to remember to:
-// the error redactor is RedactSecrets unless an option set one, and the
+// the error redactor is errchain.RedactSecrets unless an option set one, and the
 // access log's SkipPaths is a copy, so changing the caller's slice after
 // New never changes which records are written.
 func (s *Settings) resolveDefaults() {
 	if s.Redactor == nil {
-		s.Redactor = RedactSecrets
+		s.Redactor = errchain.RedactSecrets
 	}
 
 	s.Access.SkipPaths = slices.Clone(s.Access.SkipPaths)
@@ -222,11 +198,11 @@ func validateAddr(s *Settings) error {
 
 	_, port, err := net.SplitHostPort(s.Addr)
 	if err != nil {
-		return NewConfigError("Addr", strconv.Quote(s.Addr), err.Error())
+		return errchain.NewConfigError("Addr", strconv.Quote(s.Addr), err.Error())
 	}
 
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return NewConfigError("Addr", strconv.Quote(s.Addr), fmt.Sprintf("port %q is not a number in 0-65535", port))
+		return errchain.NewConfigError("Addr", strconv.Quote(s.Addr), fmt.Sprintf("port %q is not a number in 0-65535", port))
 	}
 
 	return nil
@@ -238,10 +214,10 @@ func validateListener(s *Settings) error {
 	if s.Listener != nil && s.Addr != "" {
 		addr, err := listenerAddr(s.Listener)
 		if err != nil {
-			addr = TypeName(s.Listener)
+			addr = errchain.TypeName(s.Listener)
 		}
 
-		return NewConfigError("Listener", addr, fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
+		return errchain.NewConfigError("Listener", addr, fmt.Sprintf("cannot be combined with Addr %q", s.Addr))
 	}
 
 	return nil
@@ -249,7 +225,7 @@ func validateListener(s *Settings) error {
 
 func validateShutdownTimeout(s *Settings) error {
 	if s.ShutdownTimeout < 0 {
-		return NewConfigError("ShutdownTimeout", s.ShutdownTimeout, "must not be negative")
+		return errchain.NewConfigError("ShutdownTimeout", s.ShutdownTimeout, "must not be negative")
 	}
 
 	return nil
@@ -257,7 +233,7 @@ func validateShutdownTimeout(s *Settings) error {
 
 func validateMaxHeaderBytes(s *Settings) error {
 	if s.MaxHeaderBytes < 0 {
-		return NewConfigError("MaxHeaderBytes", s.MaxHeaderBytes, "must not be negative")
+		return errchain.NewConfigError("MaxHeaderBytes", s.MaxHeaderBytes, "must not be negative")
 	}
 
 	return nil
@@ -269,8 +245,8 @@ func validateObservers(s *Settings) error {
 	var errs []error
 
 	for i, o := range s.Observers {
-		if IsNil(o) {
-			errs = append(errs, NewConfigError("Observer", fmt.Sprintf("%d (%T)", i, o), "is nil"))
+		if errchain.IsNil(o) {
+			errs = append(errs, errchain.NewConfigError("Observer", fmt.Sprintf("%d (%T)", i, o), "is nil"))
 		}
 	}
 

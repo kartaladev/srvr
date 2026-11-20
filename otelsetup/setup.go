@@ -13,7 +13,8 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
@@ -341,7 +342,7 @@ func (h *exportErrorHandler) Handle(err error) {
 		return
 	}
 
-	kind := engine.TypeName(err)
+	kind := errchain.TypeName(err)
 	if !h.due(kind) {
 		return
 	}
@@ -354,7 +355,7 @@ func (h *exportErrorHandler) Handle(err error) {
 	h.logger.LogAttrs(context.Background(), slog.LevelWarn, "otel.export.failed",
 		slog.Int("srvr.log.schema", engine.LogSchemaVersion), // adding this event kept the version
 		slog.String("error.type", kind),
-		slog.String("exception.message", engine.RedactSecrets(engine.ValueText(err))),
+		slog.String("exception.message", errchain.RedactSecrets(errchain.ValueText(err))),
 	)
 }
 

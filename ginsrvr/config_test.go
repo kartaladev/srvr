@@ -12,8 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/ginsrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestGinConfig covers engine-support / Scenario: Same validation on every

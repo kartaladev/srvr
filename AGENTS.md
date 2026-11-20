@@ -7,7 +7,7 @@ Go library (`github.com/kartaladev/srvr`, Go 1.27) for running HTTP servers on a
 Multi-module repository; `go.work` is for development only.
 
 - `github.com/kartaladev/srvr` - core and the net/http engine. Depends at runtime only on the standard library and prblm; test-only dependencies such as goleak are allowed.
-- `srvr/engine` - public package (unstable before v1) holding the shared pipeline pieces the engine modules use, because separate modules cannot import core `internal/`.
+- `srvr/internal/...` - the shared pipeline pieces the engine modules use: `internal/engine` (assembly: configuration, per-request state, records, log handler, lifecycle, static failure mapping) built on the leaves `internal/static` (static file resolution), `internal/errchain` (srvr's error values and safe error inspection) and `internal/tracectx` (trace context); `internal/paritytest` (TestImportDirection) pins that order. Go's internal rule is by import path, so srvr's nested modules import them and modules outside `github.com/kartaladev/srvr/` cannot; consumers use the `srvr` aliases.
 - `srvr/ginsrvr` (gin), `srvr/fibersrvr` (fiber v3) - one engine module each.
 - `srvr/otelsrvr` - opt-in metrics and tracing (OpenTelemetry API only); `srvr/otelsetup` - opt-in SDK and exporter wiring.
 - `srvr/security` - opt-in scrty bridge.
@@ -28,7 +28,7 @@ For every behaviour, in small steps:
 
 Never write production code without a failing test that demands it. Never refactor on red.
 
-There is no coverage percentage threshold, but every hot path must be tested and the coverage checked, not assumed: `make cover` from the root (workspace mode, `-coverpkg=github.com/kartaladev/srvr/...`, so the shared `engine` package counts the engine modules' tests; it prints the engine total), or per module `go test -coverpkg=./... -coverprofile=c.out ./... && go tool cover -func=c.out`. Hot paths: the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, `Start` and `Shutdown`, and log record construction including error-chain walking and redaction.
+There is no coverage percentage threshold, but every hot path must be tested and the coverage checked, not assumed: `make cover` from the root (workspace mode, `-coverpkg=github.com/kartaladev/srvr/...`, so the shared internal packages count the engine modules' tests; it prints the internal total), or per module `go test -coverpkg=./... -coverprofile=c.out ./... && go tool cover -func=c.out`. Hot paths: the request pipeline in each engine (trace context, access log, observer, recovery, error rendering), route registration and pattern joining, `Start` and `Shutdown`, and log record construction including error-chain walking and redaction.
 
 Every module's tests run under goleak: each test package has a `TestMain` calling `goleak.VerifyTestMain` (a guard in `internal/paritytest` enforces it), and a goroutine that outlives its test is excused only by a named, commented ignore of one function in that package's `leakOptions`. A new goroutine started by srvr needs a test proving it ends when its owner stops.
 

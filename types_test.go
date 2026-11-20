@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // TestReexportedNames covers engine-support / Scenario: Re-exported names,
@@ -26,7 +27,7 @@ func TestReexportedNames(t *testing.T) {
 		{"srvr.ShutdownPhase", reflect.TypeFor[srvr.ShutdownPhase](), reflect.TypeFor[engine.ShutdownPhase]()},
 		{"srvr.ErrorHook", reflect.TypeFor[srvr.ErrorHook](), reflect.TypeFor[engine.ErrorHook]()},
 		{"srvr.Option", reflect.TypeFor[srvr.Option](), reflect.TypeFor[engine.Option]()},
-		{"srvr.ConfigError", reflect.TypeFor[srvr.ConfigError](), reflect.TypeFor[engine.ConfigError]()},
+		{"srvr.ConfigError", reflect.TypeFor[srvr.ConfigError](), reflect.TypeFor[errchain.ConfigError]()},
 		{"srvr.RouteCheck", reflect.TypeFor[srvr.RouteCheck](), reflect.TypeFor[engine.RouteCheck]()},
 		{"srvr.Routes", reflect.TypeFor[srvr.Routes](), reflect.TypeFor[engine.Routes]()},
 		{"srvr.Route", reflect.TypeFor[srvr.Route](), reflect.TypeFor[engine.Route]()},

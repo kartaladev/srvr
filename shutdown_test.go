@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestShutdown_Drain covers server-lifecycle / Scenario: Drain within and beyond the deadline.

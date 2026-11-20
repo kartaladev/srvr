@@ -28,7 +28,7 @@ var leakOptions []goleak.Option
 func TestMain(m *testing.M) { goleak.VerifyTestMain(m, leakOptions...) }
 
 // serveGoroutine is the function of srvr's goroutine serving a listener.
-const serveGoroutine = "github.com/kartaladev/srvr/engine.(*Lifecycle[...]).serveOn"
+const serveGoroutine = "github.com/kartaladev/srvr/internal/engine.(*Lifecycle[...]).serveOn"
 
 // findLeaks runs goleak.Find with leakOptions plus extra, without
 // appending to the shared leakOptions slice.

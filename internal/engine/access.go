@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // failure is why a request failed: the error srvr's prblm hook received,
@@ -54,7 +55,7 @@ func prblmNotes() [6]error {
 // recorded, not dropped.
 func isNote(err error) bool {
 	all := prblmNotes()
-	return findInChain(err, func(e error) bool { return slices.Contains(all[:], e) }) != nil
+	return errchain.FindInChain(err, func(e error) bool { return slices.Contains(all[:], e) }) != nil
 }
 
 // recordFailure keeps the failure of the request in ctx. The first failure

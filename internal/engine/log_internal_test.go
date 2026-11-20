@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // TestLogHandler_TargetCache: a request logger reuses its target between
@@ -171,8 +173,8 @@ func TestCapAny_FormattingPanics(t *testing.T) {
 	}
 
 	tr := truncator{maxBytes: 1024}
-	if got := tr.capAny("v", slog.AnyValue(panickyFormat{})); got.Value.String() != panicFormatting {
-		t.Fatalf("capAny = %v, want %q", got.Value, panicFormatting)
+	if got := tr.capAny("v", slog.AnyValue(panickyFormat{})); got.Value.String() != errchain.PanicFormatting {
+		t.Fatalf("capAny = %v, want %q", got.Value, errchain.PanicFormatting)
 	}
 }
 

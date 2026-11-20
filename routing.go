@@ -7,7 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
+	"github.com/kartaladev/srvr/internal/static"
 )
 
 // HandlerFunc handles a request and reports failure by returning an error,
@@ -57,7 +59,7 @@ type builder struct {
 	owner string
 	// statics records the joined prefix of every static mount registered
 	// so far, with the configurer that registered it.
-	statics engine.StaticPrefixes
+	statics static.Prefixes
 	// served is what the installed routes serve, filled in by the
 	// server once they are installed; static mounts read it while
 	// serving.
@@ -93,7 +95,7 @@ type Group struct {
 // followed by mw.
 func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 	if !isPath(prefix) {
-		g.b.errs = append(g.b.errs, engine.RouteErrorf("group prefix %q does not start with \"/\"", prefix))
+		g.b.errs = append(g.b.errs, errchain.RouteErrorf("group prefix %q does not start with \"/\"", prefix))
 	}
 
 	sub := &Group{b: g.b, prefix: collapseSlashes(g.prefix + prefix), middleware: slices.Clone(g.middleware)}
@@ -107,7 +109,7 @@ func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 func (g *Group) Use(mw ...Middleware) {
 	for i, m := range mw {
 		if m == nil {
-			g.b.errs = append(g.b.errs, engine.RouteErrorf("middleware %d added to group %q is nil", i, g.prefix))
+			g.b.errs = append(g.b.errs, errchain.RouteErrorf("middleware %d added to group %q is nil", i, g.prefix))
 		}
 	}
 
@@ -135,7 +137,7 @@ func (g *Group) Handle(method, path string, h HandlerFunc) {
 // it writes is sent as is.
 func (g *Group) Mount(path string, h http.Handler) {
 	var loc engine.Location
-	if !engine.IsNil(h) {
+	if !errchain.IsNil(h) {
 		loc = engine.HandlerLocation(h)
 		if n := segments(g.prefix); n > 0 {
 			h = stripSegments(n, h)
@@ -206,8 +208,8 @@ func (g *Group) addListed(method, listMethod, path string, h http.Handler, loc e
 	}
 
 	rt := route{method: method, listMethod: listMethod, pattern: pattern, middleware: g.middleware, owner: g.b.owner, location: loc}
-	if engine.IsNil(h) {
-		g.b.errs = append(g.b.errs, engine.RouteErrorf("%q (%s): handler is nil", rt.key(), rt.owner))
+	if errchain.IsNil(h) {
+		g.b.errs = append(g.b.errs, errchain.RouteErrorf("%q (%s): handler is nil", rt.key(), rt.owner))
 
 		return
 	}
@@ -236,7 +238,7 @@ func (g *Group) DELETE(path string, h HandlerFunc) { g.Handle(http.MethodDelete,
 // the trailing slash that gives a pattern its subtree meaning.
 func joinPattern(prefix, path string) (string, error) {
 	if !isPath(path) {
-		return "", engine.RouteErrorf("path %q does not start with \"/\"", path)
+		return "", errchain.RouteErrorf("path %q does not start with \"/\"", path)
 	}
 
 	joined := collapseSlashes(prefix + path)
@@ -268,7 +270,7 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 	for i, rt := range routes {
 		h, err := chain(rt.handler, rt.middleware)
 		if err != nil {
-			return engine.RouteErrorf("%q (%s): %w", rt.key(), rt.owner, err)
+			return errchain.RouteErrorf("%q (%s): %w", rt.key(), rt.owner, err)
 		}
 
 		h = withRoute(rt, h)
@@ -280,11 +282,11 @@ func installRoutes(mux *http.ServeMux, routes []route) error {
 
 		for _, earlier := range routes[:i] {
 			if conflicts(earlier.key(), rt.key()) {
-				return engine.RouteErrorf("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
+				return errchain.RouteErrorf("%q (%s) conflicts with %q (%s): %v", rt.key(), rt.owner, earlier.key(), earlier.owner, v)
 			}
 		}
 
-		return engine.RouteErrorf("%q (%s): %v", rt.key(), rt.owner, v)
+		return errchain.RouteErrorf("%q (%s): %v", rt.key(), rt.owner, v)
 	}
 
 	return nil
@@ -332,11 +334,11 @@ func chain(h http.Handler, middleware []Middleware) (http.Handler, error) {
 func applyMiddleware(mw Middleware, h http.Handler) (wrapped http.Handler, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			wrapped, err = nil, errors.New("panicked: "+engine.ValueText(v))
+			wrapped, err = nil, errors.New("panicked: "+errchain.ValueText(v))
 		}
 	}()
 
-	if wrapped = mw(h); engine.IsNil(wrapped) {
+	if wrapped = mw(h); errchain.IsNil(wrapped) {
 		return nil, errors.New("returned a nil handler")
 	}
 

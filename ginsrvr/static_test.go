@@ -28,8 +28,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/ginsrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // siteFiles is the test file tree of the static-files design ("Test

@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
 	"github.com/kartaladev/srvr/ginsrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // boomAPI is a configurer that panics.

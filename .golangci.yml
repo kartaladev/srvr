@@ -46,7 +46,7 @@ linters:
       context-todo: true
     depguard:
       rules:
-        # AGENTS.md rule 7: the core module (root, engine, internal/tracectx)
+        # AGENTS.md rule 7: the core module (root and its internal packages)
         # depends at runtime only on the standard library and prblm.
         core:
           files:

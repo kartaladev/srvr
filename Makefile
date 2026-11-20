@@ -32,14 +32,15 @@ verify:
 vulncheck:
 	$(call each,$(GOVULNCHECK) ./...)
 
-# cover runs every module's tests in workspace mode (go.work), so the engine
-# packages count the coverage the engine modules' tests give them, and
-# prints each function and the engine package's total.
+# cover runs every module's tests in workspace mode (go.work), so the core's
+# internal packages count the coverage the engine modules' tests give them,
+# and prints each function and the internal packages' total (the test-only
+# paritytest and the benchgate command excluded).
 cover:
 	go test -coverpkg=github.com/kartaladev/srvr/... -coverprofile=c.out github.com/kartaladev/srvr/...
 	go tool cover -func=c.out
-	@awk -F'[: ,]' 'NR > 1 && $$1 ~ /\/srvr\/engine\// { key = $$1 ":" $$2 "," $$3; n[key] = $$4; if ($$5 > 0) hit[key] = 1 } \
-		END { for (k in n) { total += n[k]; if (k in hit) covered += n[k] }; printf "engine: %.1f%% of statements\n", 100 * covered / total }' c.out
+	@awk -F'[: ,]' 'NR > 1 && $$1 ~ /\/srvr\/internal\// && $$1 !~ /\/internal\/(paritytest|benchgate)\// { key = $$1 ":" $$2 "," $$3; n[key] = $$4; if ($$5 > 0) hit[key] = 1 } \
+		END { for (k in n) { total += n[k]; if (k in hit) covered += n[k] }; printf "internal: %.1f%% of statements\n", 100 * covered / total }' c.out
 
 check: vet lint test tidy-check verify vulncheck
 
@@ -77,7 +78,7 @@ bench:
 # profile runs the benchmarks of every package that has any once, writing
 # a CPU and a memory profile per package, named by outname: go test
 # profiles one package at a time. BENCH_DIR/srvr.cpu is the core
-# package's, BENCH_DIR/engine.mem, BENCH_DIR/ginsrvr.cpu and so on. Read
+# package's, BENCH_DIR/internal-engine.mem, BENCH_DIR/ginsrvr.cpu and so on. Read
 # one with `go tool pprof -top BENCH_DIR/<name>.cpu`.
 profile:
 	@mkdir -p $(BENCH_DIR)

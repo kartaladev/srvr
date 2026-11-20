@@ -14,7 +14,7 @@ import (
 const recordedHeader = "goos: linux\ngoarch: amd64\npkg: %s\ncpu: AMD EPYC 7763 64-Core Processor\n"
 
 const (
-	enginePkg = "github.com/kartaladev/srvr/engine"
+	enginePkg = "github.com/kartaladev/srvr/internal/engine"
 	corePkg   = "github.com/kartaladev/srvr"
 )
 

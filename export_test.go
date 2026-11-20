@@ -3,7 +3,7 @@ package srvr
 import (
 	"runtime/debug"
 
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // WithBuildInfo makes the server read build information with read instead

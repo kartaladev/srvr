@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // Runner serves the routes of one started server on a listener: the
@@ -50,9 +52,9 @@ func (st state) startable() error {
 	case stateNew:
 		return nil
 	case stateStarting, stateRunning:
-		return ErrServerStarted
+		return errchain.ErrServerStarted
 	default:
-		return ErrServerClosed
+		return errchain.ErrServerClosed
 	}
 }
 
@@ -76,7 +78,7 @@ type Lifecycle[C any] struct {
 	mu   sync.Mutex
 	st   state
 	addr string
-	// interrupt cancels, with cause ErrServerClosed, the context the
+	// interrupt cancels, with cause errchain.ErrServerClosed, the context the
 	// starting steps (route checks, binding) receive; set while starting.
 	interrupt context.CancelCauseFunc
 	// run is the serving part of a running server, nil before.
@@ -95,11 +97,11 @@ func NewLifecycle[C any](c *Core) *Lifecycle[C] {
 }
 
 // Register keeps conf for the configure phase while the server is new,
-// and returns [ErrServerStarted] or [ErrServerClosed] otherwise. A nil or
-// typed-nil conf returns an error wrapping [ErrRouteConfig] in any state.
+// and returns [errchain.ErrServerStarted] or [errchain.ErrServerClosed] otherwise. A nil or
+// typed-nil conf returns an error wrapping [errchain.ErrRouteConfig] in any state.
 func (l *Lifecycle[C]) Register(conf C) error {
-	if IsNil(conf) {
-		return RouteErrorf("configurer %T is nil", conf)
+	if errchain.IsNil(conf) {
+		return errchain.RouteErrorf("configurer %T is nil", conf)
 	}
 
 	l.mu.Lock()
@@ -135,7 +137,7 @@ func (l *Lifecycle[C]) Addr() string {
 // engine shares.
 func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) (Runner, Routes, error)) error {
 	if ctx == nil {
-		return NewConfigError("Start context", "<nil>", "is nil")
+		return errchain.NewConfigError("Start context", "<nil>", "is nil")
 	}
 
 	// stepCtx is what the starting steps receive: Shutdown cancels it.
@@ -170,7 +172,7 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 
 	addr, err := listenerAddr(ln)
 	if err != nil {
-		return l.fail(ctx, NewConfigError("Listener", TypeName(ln), err.Error()))
+		return l.fail(ctx, errchain.NewConfigError("Listener", errchain.TypeName(ln), err.Error()))
 	}
 
 	r := l.serve(ctx, ln, addr, runner)
@@ -218,12 +220,12 @@ func (l *Lifecycle[C]) begin(interrupt context.CancelCauseFunc) error {
 // interrupted reports whether Shutdown interrupted the starting steps that
 // receive stepCtx.
 func interrupted(stepCtx context.Context) bool {
-	return errors.Is(context.Cause(stepCtx), ErrServerClosed)
+	return errors.Is(context.Cause(stepCtx), errchain.ErrServerClosed)
 }
 
 // closeInterrupted closes a server whose start Shutdown interrupted:
 // nothing was served, so only the AfterDrain hooks run, and Start returns
-// ErrServerClosed with their failures. A listener Start already bound (ln;
+// errchain.ErrServerClosed with their failures. A listener Start already bound (ln;
 // nil when none) is closed; a WithListener listener is closed either way.
 // It is not a failure, so no server.failed record is written.
 func (l *Lifecycle[C]) closeInterrupted(ctx context.Context, ln net.Listener) error {
@@ -233,7 +235,7 @@ func (l *Lifecycle[C]) closeInterrupted(ctx context.Context, ln net.Listener) er
 
 	l.closeUnserved(ctx, ln)
 
-	return errors.Join(ErrServerClosed, l.hookErr)
+	return errors.Join(errchain.ErrServerClosed, l.hookErr)
 }
 
 // fail ends a Start that failed before serving: nothing was served, so
@@ -247,7 +249,7 @@ func (l *Lifecycle[C]) fail(ctx context.Context, err error) error {
 
 // logFailed writes server.failed for err, the error Start returns.
 func (l *Lifecycle[C]) logFailed(ctx context.Context, err error) {
-	l.core.logEvent(ctx, slog.LevelError, eventFailed, l.core.exceptionMessage(errorText(err)))
+	l.core.logEvent(ctx, slog.LevelError, eventFailed, l.core.exceptionMessage(errchain.ErrorText(err)))
 }
 
 // closeUnserved closes a server that served nothing: it closes ln, the
@@ -286,15 +288,15 @@ func (l *Lifecycle[C]) listen(ctx context.Context) (net.Listener, error) {
 func listenerAddr(ln net.Listener) (addr string, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			addr, err = "", errors.New("reading its address panicked: "+ValueText(v))
+			addr, err = "", errors.New("reading its address panicked: "+errchain.ValueText(v))
 		}
 	}()
 
 	switch a := ln.Addr(); {
 	case a == nil:
 		return "", errors.New("its address is nil")
-	case IsNil(a):
-		return "", errors.New("its address is a nil " + TypeName(a))
+	case errchain.IsNil(a):
+		return "", errors.New("its address is a nil " + errchain.TypeName(a))
 	default:
 		return a.String(), nil
 	}
@@ -425,7 +427,7 @@ func (l *Lifecycle[C]) stopRun(drainCtx context.Context, r *run) {
 // contract every engine shares.
 func (l *Lifecycle[C]) Shutdown(ctx context.Context) error {
 	if ctx == nil {
-		return NewConfigError("Shutdown context", "<nil>", "is nil")
+		return errchain.NewConfigError("Shutdown context", "<nil>", "is nil")
 	}
 
 	l.mu.Lock()
@@ -447,7 +449,7 @@ func (l *Lifecycle[C]) Shutdown(ctx context.Context) error {
 		l.st = stateStopping
 		interrupt := l.interrupt
 		l.mu.Unlock()
-		interrupt(ErrServerClosed)
+		interrupt(errchain.ErrServerClosed)
 
 		return l.wait(ctx, true)
 	case stateRunning:
@@ -512,7 +514,7 @@ type guardedListener struct {
 func (l *guardedListener) Accept() (conn net.Conn, err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			conn, err = nil, NewConfigError("Listener", TypeName(l.Listener), "Accept panicked: "+ValueText(v))
+			conn, err = nil, errchain.NewConfigError("Listener", errchain.TypeName(l.Listener), "Accept panicked: "+errchain.ValueText(v))
 		}
 	}()
 
@@ -668,17 +670,6 @@ type Location struct {
 // Function returns the qualified function name, or "" when unknown.
 func (l Location) Function() string { return l.function }
 
-// FuncPointer returns the code pointer of fn, a function value, as a key
-// for tables built once per route: the same function gives the same key.
-func FuncPointer(fn any) uintptr {
-	v := reflect.ValueOf(fn)
-	if v.Kind() != reflect.Func {
-		return 0
-	}
-
-	return v.Pointer()
-}
-
 // FuncLocation returns the Location of fn. A method value resolves to its
 // "-fm" wrapper, whose suffix is removed; an unknown PC yields the zero
 // Location, never an invented one.
@@ -716,7 +707,7 @@ func HandlerLocation(h http.Handler) Location {
 		loc = FuncLocation(m.Func.Interface())
 	}
 
-	loc.function = TypeName(h) + ".ServeHTTP"
+	loc.function = errchain.TypeName(h) + ".ServeHTTP"
 
 	return loc
 }
@@ -763,7 +754,7 @@ type Hook struct {
 }
 
 // runHooks runs the hooks of phase in order, each within ctx, and returns
-// their failures, each wrapping ErrShutdownHook.
+// their failures, each wrapping errchain.ErrShutdownHook.
 func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 	var errs []error
 
@@ -777,9 +768,9 @@ func (c *Core) runHooks(ctx context.Context, phase ShutdownPhase) error {
 				slog.String(keyHookPhase, phase.String()),
 				slog.Int(keyHookIndex, i),
 				slog.String(keyFunction, FuncLocation(h.Fn).Function()),
-				c.exceptionMessage(errorText(err)),
+				c.exceptionMessage(errchain.ErrorText(err)),
 			)
-			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", ErrShutdownHook, phase, i, guard(err)))
+			errs = append(errs, fmt.Errorf("%w: %s hook %d: %w", errchain.ErrShutdownHook, phase, i, errchain.Guard(err)))
 		}
 	}
 
@@ -793,7 +784,7 @@ func runHook(ctx context.Context, fn func(context.Context) error) error {
 	if abandoned {
 		// For BeforeDrain hooks ctx.Err() comes from the consumer's Shutdown
 		// context.
-		return fmt.Errorf("abandoned: %w", guard(ctx.Err()))
+		return fmt.Errorf("abandoned: %w", errchain.Guard(ctx.Err()))
 	}
 
 	return err
@@ -822,7 +813,7 @@ func runGuarded(ctx context.Context, fn func(context.Context) error) (abandoned 
 
 		defer func() {
 			if v := recover(); v != nil {
-				err = &panicError{value: ValueText(v)}
+				err = &panicError{value: errchain.ValueText(v)}
 			}
 			result <- err
 		}()
@@ -896,4 +887,15 @@ func (c ServiceConfig) attrs(readBuild func() (*debug.BuildInfo, bool)) []slog.A
 	}
 
 	return attrs
+}
+
+// FuncPointer returns the code pointer of fn, a function value, as a key
+// for tables built once per route: the same function gives the same key.
+func FuncPointer(fn any) uintptr {
+	v := reflect.ValueOf(fn)
+	if v.Kind() != reflect.Func {
+		return 0
+	}
+
+	return v.Pointer()
 }

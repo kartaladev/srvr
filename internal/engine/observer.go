@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kartaladev/srvr/internal/errchain"
 	"github.com/kartaladev/srvr/internal/tracectx"
 )
 
@@ -301,7 +302,7 @@ func (k faultKind) String() string {
 }
 
 // observerFault writes srvr.observer.fault for o the first time it
-// reports kind; v is the panic value, read through ValueText.
+// reports kind; v is the panic value, read through errchain.ValueText.
 func (c *Core) observerFault(ctx context.Context, o *guardedObserver, kind faultKind, v any) {
 	if o.reported[kind].Swap(true) {
 		return
@@ -309,8 +310,8 @@ func (c *Core) observerFault(ctx context.Context, o *guardedObserver, kind fault
 
 	c.logEvent(ctx, slog.LevelError, eventObserverFault,
 		slog.String(keyObserverFaultKind, kind.String()),
-		slog.String(keyObserverType, TypeName(o.Observer)),
-		c.exceptionMessage(ValueText(v)),
+		slog.String(keyObserverType, errchain.TypeName(o.Observer)),
+		c.exceptionMessage(errchain.ValueText(v)),
 	)
 }
 

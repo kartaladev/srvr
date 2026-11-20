@@ -15,7 +15,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
+	"github.com/kartaladev/srvr/internal/static"
 	"github.com/valyala/fasthttp"
 )
 
@@ -90,7 +92,7 @@ import (
 // setting. Register it with [Server.Register]: its Configure
 // panics, so a configurer calling it fails Start.
 func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConfigurer[fiber.Router] {
-	m, err := engine.NewStatic(prefix, fsys, opts...)
+	m, err := static.New(prefix, fsys, opts...)
 
 	return &staticConfigurer{prefix: prefix, mount: m, err: err}
 }
@@ -119,9 +121,9 @@ func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConf
 // out to keep the cache off. net/http and gin have no file cache: their
 // Static fails Start on a non-zero FiberSendFileCache.
 func WithSendFileCache(d time.Duration) srvr.StaticOption {
-	return func(s *engine.StaticSettings) {
+	return func(s *static.Settings) {
 		if d <= 0 {
-			s.Errs = append(s.Errs, engine.NewConfigError("Static.FiberSendFileCache", d,
+			s.Errs = append(s.Errs, errchain.NewConfigError("Static.FiberSendFileCache", d,
 				"WithSendFileCache needs a positive duration; leave it out to keep the file cache off"))
 
 			return
@@ -137,7 +139,7 @@ func WithSendFileCache(d time.Duration) srvr.StaticOption {
 type staticConfigurer struct {
 	// prefix is the prefix as the consumer passed it, for messages.
 	prefix string
-	mount  *engine.Static
+	mount  *static.Mount
 	// err is the configuration error NewStatic returned; the configure
 	// phase reports it, so Start fails.
 	err error
@@ -157,7 +159,7 @@ const staticOwner = "*fibersrvr.staticConfigurer"
 // by the configure phase.
 type staticMounts struct {
 	mounts   []*staticMount
-	prefixes engine.StaticPrefixes
+	prefixes static.Prefixes
 	// decode says whether the mounts percent-decode the routed path: not
 	// when fiber's UnescapePath already did.
 	decode bool
@@ -165,7 +167,7 @@ type staticMounts struct {
 
 // staticMount is one mount and what serving it needs.
 type staticMount struct {
-	mount *engine.Static
+	mount *static.Mount
 	// send is the mount's one fiber.SendFile, reused by every request so
 	// fiber keeps one file handler for it.
 	send fiber.SendFile
@@ -236,11 +238,11 @@ func (sm *staticMount) serve(c fiber.Ctx) error {
 	}
 
 	res := sm.mount.Resolve(c.Method(), rest, c.Get(fiber.HeaderAccept))
-	if res.Answer == engine.StaticFile {
+	if res.Answer == static.Found {
 		return sm.sendFile(c, res)
 	}
 
-	return res.Failure(c.Context(), "GET, HEAD")
+	return engine.StaticFailure(c.Context(), res, "GET, HEAD")
 }
 
 // rest returns the request path below the mount's prefix, percent-decoded
@@ -350,7 +352,7 @@ func unhex(c byte) (byte, bool) {
 // sendFile serves res, a StaticFile decision, with fiber's file server
 // and the headers the decision names, set after SendFile returns because
 // fasthttp's 304 resets the response (design D8, D10).
-func (sm *staticMount) sendFile(c fiber.Ctx, res engine.StaticResult) error {
+func (sm *staticMount) sendFile(c fiber.Ctx, res static.Result) error {
 	// SendFile opens the file again by name (design D2).
 	_ = res.File.Close()
 

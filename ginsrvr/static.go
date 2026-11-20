@@ -9,7 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/static"
 )
 
 // Static returns a configurer serving the files of fsys under prefix, such
@@ -74,7 +75,7 @@ import (
 // fails Start.
 func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConfigurer[*gin.RouterGroup] {
 	// gin has no open-file cache: a positive FiberSendFileCache fails.
-	m, err := engine.NewStatic(prefix, fsys, append(slices.Clip(opts), engine.RejectSendFileCache)...)
+	m, err := static.New(prefix, fsys, append(slices.Clip(opts), static.RejectSendFileCache)...)
 
 	return &staticConfigurer{prefix: prefix, mount: m, err: err}
 }
@@ -85,7 +86,7 @@ func Static(prefix string, fsys fs.FS, opts ...srvr.StaticOption) srvr.RouteConf
 type staticConfigurer struct {
 	// prefix is the prefix as the consumer passed it, for messages.
 	prefix string
-	mount  *engine.Static
+	mount  *static.Mount
 	// err is the configuration error NewStatic returned; the configure
 	// phase reports it, so Start fails.
 	err error
@@ -101,8 +102,8 @@ func (c *staticConfigurer) Configure(*gin.RouterGroup) {
 // staticMounts are a server's static mounts in registration order, built
 // by the configure phase.
 type staticMounts struct {
-	mounts   []*engine.Static
-	prefixes engine.StaticPrefixes
+	mounts   []*static.Mount
+	prefixes static.Prefixes
 }
 
 // staticOwner is the configurer type every static mount is listed with.
@@ -149,7 +150,7 @@ func pattern(prefix, path string) string {
 // path below that prefix, without its leading slash, or nil when no mount
 // contains path. Gin hands the decoded, uncleaned path, so "//" and ".."
 // elements reach the resolver, which refuses them.
-func (ms *staticMounts) find(path string) (m *engine.Static, rest string) {
+func (ms *staticMounts) find(path string) (m *static.Mount, rest string) {
 	for _, mount := range ms.mounts {
 		if r, in := below(mount.Prefix(), path); in && (m == nil || len(mount.Prefix()) > len(m.Prefix())) {
 			m, rest = mount, r
@@ -219,12 +220,12 @@ func (ms *staticMounts) serve(c *gin.Context) {
 	}
 
 	res := m.Resolve(c.Request.Method, rest, c.GetHeader("Accept"))
-	if res.Answer == engine.StaticFile {
-		engine.ServeStaticFile(c.Writer, c.Request, res)
+	if res.Answer == static.Found {
+		static.ServeFile(c.Writer, c.Request, res)
 
 		return
 	}
 
-	_ = c.Error(res.Failure(c.Request.Context(), "GET, HEAD"))
+	_ = c.Error(engine.StaticFailure(c.Request.Context(), res, "GET, HEAD"))
 	c.Abort()
 }

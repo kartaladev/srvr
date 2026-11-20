@@ -4,7 +4,7 @@
 
 - `engine/` holds about 5,800 lines of production code in 15 files (plus about 3,000 lines of tests) in one public package. It is imported by the root package (`server.go`, `routing.go`, `options.go`, `types.go`, `static.go` and root tests), `ginsrvr`, `fibersrvr`, `otelsrvr` (`ValueText`, `IsNil`), `otelsetup` (`ValueText`, `IsNil`, `GuardChain`, `TypeName`, `LogSchemaVersion`, `RedactSecrets`), `internal/paritytest` and `internal/benchgate` (the package path `github.com/kartaladev/srvr/engine` as a string).
 - Tooling names the path too: `Makefile` (`cover` awk filter on `/srvr/engine/`, benchmark output `bench/engine.*`), `.golangci.yml` (depguard comment), `docs/PERFORMANCE.md` (benchmark table, pprof examples), the leak-check guard in `internal/paritytest` and the `test-quality` spec's package list.
-- Coupling inside `engine` (a planning-time grep sketch; group 1 replaces it with a gopls-verified map):
+- Coupling inside `engine` (planning-time sketch; group 1's verified map and decisions are in D2):
   - `*Core` has methods in nearly every file (`access.go`, `debugbuffer.go`, `lifecycle.go`, `observer.go`, `route.go`, `trace.go`, `triage.go`): it is the assembly point and stays in `internal/engine`.
   - `RequestState` (`trace.go`) holds fields of four concerns: `rec *responseRecorder` and `failure *failure` (access), `buffer *requestBuffer` (debug buffer), `ends []endFunc` (observers), plus `core *Core`. The log handler reads it (`requestOf`, `bufferFor`, `traceOf`). It cannot be a leaf package without exporting all of that.
   - `Settings` (`config.go`) embeds or holds `LogSettings`, `AccessLogConfig`, `TraceConfig`, `ServiceConfig`, `Hook`, `ErrorHook`, `RouteCheck`, `Observer`, `DebugBufferConfig`, `UnmatchedLimitConfig`: the config package must own these declarative types or sit above the packages that declare them.
@@ -27,17 +27,14 @@
 
 ## Slices
 
-Task groups: 1 consolidation, 2 benchmark baseline (no code), 3 to 8 the slices below, 9 comparison and docs, 10 release.
+Task groups: 1 consolidation, 2 benchmark baseline (no code), 3 to 5 the slices below, 6 comparison and docs, 7 release hand-off.
 
 1. **Consolidation** (group 1): sync, carry-overs, the gopls-verified dependency map and the final package list (applying D3's merge criterion), owner confirmation of the change order.
 2. **Move to `internal/engine`**: `git mv engine internal/engine`, imports updated in every module, tooling paths updated, AGENTS.md layout and godoc corrected. Works end to end: every module builds, every test passes, an outside module cannot import it. Releasable alone. Spec: engine-support "marked as such" and "re-exports"; test-quality leak-check rows; the import-direction guard with a one-entry order.
-3. **Extract `internal/errchain`**: chain walking, faulty-value guards, type and value text, redaction, fingerprint, top frame. The leaf every other package uses. Hot path: log record construction (chain walking, redaction).
-4. **Extract `internal/static`**: static file resolution and its validation; the engines' static adapters import it. Hot path: static serving and its misses.
-5. **Extract `internal/config`**: `Config`, `Settings`, `Option`, `Only`, `ConfigError`, sentinels, validation and the declarative types `Settings` holds. Construction is its hot path.
-6. **Extract `internal/logging`**: the slog handler, schema constants, truncation, guarded writer, `LogRecordsLost`, the debug buffer. Hot path: every log record.
-7. **Extract `internal/lifecycle`**: the state machine, `Runner`, `HTTPRunner`, guarded listener, hooks runner. Hot path: `Start` and `Shutdown`.
-8. **Benchmark comparison, documentation, verification**.
-9. **Release** (owner STOP).
+3. **Extract `internal/errchain`**: srvr's error values, chain walking, faulty-value guards, type and value text, redaction, fingerprint, top frame. The leaf every other package uses. Hot path: log record construction (chain walking, redaction).
+4. **Extract `internal/static`**: static file resolution and its validation; `StaticResult.Failure` becomes `engine.StaticFailure`; the engines' static adapters import both. Hot path: static serving and its misses.
+5. **Benchmark comparison, documentation, verification**.
+6. **Release hand-off**: no tag here; the shared v0.4.0 release runs at the end of `pluggable-error-renderer` (owner decision, `notes.md`).
 
 Each extraction slice may be dropped (D3) without affecting the others' order beyond the dependency map; the change is complete and releasable after any slice from 2 on.
 
@@ -48,19 +45,23 @@ Each extraction slice may be dropped (D3) without affecting the others' order be
 `git mv engine internal/engine` with only import changes is a slice of its own, so the visible break (the import path) and the internal reshuffle are reviewed and bisected separately. Alternative: split straight into new internal packages; rejected because one slice would then mix a public break with a large refactor.
 Failure modes: an importer is missed (build fails: `make check` runs every module with `GOWORK=off`); a string path is missed (benchgate tests, Makefile cover summary, leak guard: each has a test or a visible output checked in tasks 3.2 to 3.5); released ginsrvr/fibersrvr v0.3.0 import `srvr/engine` and would break against a new core: D6.
 
-### D2. Target package set (5 to 7 packages)
+### D2. Target package set (verified in group 1)
+
+The planning target was 5 to 7 packages. Group 1's dependency map (go/types over the non-test files of `engine/`: 299 cross-file symbol edges, raw output summarised in `notes.md`) applied D3 to every candidate; the owner chose this set on 2026-11-20:
 
 | package | responsibility | imports (srvr) |
 |---------|----------------|----------------|
-| `internal/errchain` | walking error chains safely, guarding faulty consumer values (`IsNil`, `FuncPointer`, `ValueText`, `TypeName`), redaction, fingerprint, top frame | none (std, prblm) |
+| `internal/tracectx` | (existing) W3C trace context parsing and generation | none |
+| `internal/errchain` | srvr's error values (the sentinels, `ConfigError`/`NewConfigError`, `RouteErrorf`) and safe inspection of errors and faulty consumer values (chain walking, `GuardChain`, `IsNil`, `FuncPointer`, `ValueText`, `TypeName`, redaction, fingerprint, top frame) | none (std, prblm) |
 | `internal/static` | resolving a request against an `fs.FS` mount, its options and validation | errchain |
-| `internal/config` | the configuration model: `Config`, `Settings`, `Option`, validation, `ConfigError`, sentinels, and the declarative types `Settings` holds (log, access, trace, service, debug buffer, unmatched limit, hooks, route check, observer interfaces) | errchain |
-| `internal/logging` | the slog handler, schema version and keys, truncation, guarded writer, debug buffer storage and policy | errchain, config, `internal/tracectx` |
-| `internal/lifecycle` | the server state machine, runner, guarded listener, shutdown hook runner | errchain, config, logging |
-| `internal/engine` | assembly: `Core`, `ResolveConfig`, `RequestState`, trace stage, access and triage records, prblm handler and error hooks, client-closed mapping, unmatched limit, observers, route checks | all of the above |
+| `internal/engine` | assembly: `Core`, `ResolveConfig`, the configuration model, `RequestState`, trace stage, access and triage records, the slog handler and debug buffer, the lifecycle, prblm handler and error hooks, client-closed mapping, unmatched limit, observers, route checks, and the static failure mapping (`StaticFailure`, formerly `StaticResult.Failure`) | all of the above |
 
-The prompt's sketch (`guard`, `errchain`, `config`, `reqstate`, `logging`, `problems`, `access`, `observe`, `routes`, `lifecycle`, `static`, `engine`) is reduced by the owner's decision: `guard` folds into `errchain` (the guards exist to format faulty values, which is what errchain does); `routes` and `observe` are mostly declarative types that `Settings` holds, so their types fold into `config` and their `*Core` behaviour stays in `engine`; `reqstate`, `access` and `problems` stay in `engine`, because `RequestState` carries their state and the prblm hook feeds the access record through a callback that `engine` wires (splitting them would export that coupling for no reuse).
-Failure modes: the graph group 1 verifies differs (a cycle, e.g. config needing logging's handler type): D3 applies, the table is updated in this design and the test-quality guard order before slice 3.
+Dropped candidates (D3), with the evidence:
+- `config`: fails D3.1 and D3.2. `Settings` holds the declarative types of six concerns (the observer family `Observer`, `RequestInfo`, `ResultInfo`, `ErrorKind`, `HeaderReader`, `TraceSource`, `Trace`; `Route`, `Routes`, `RouteCheck`; `Hook`; `ServiceConfig`; `LogSettings`; `DebugBufferConfig`, `UnmatchedLimitConfig`), and `engine` reads unexported pieces that would all become exported (`Config.resolve`, `Config.httpServer`, `Settings.engineOpts`, `parseLevel`, `LogSettings.staticLevel`, `AccessLogConfig.suppressed`, `ServiceConfig.attrs` with the log keys, `listenerAddr`, the defaults).
+- `logging`: fails D3.3. The handler reads `RequestState` (`requestFrom`, fields `buffer`, `trace`, `logger`, `core`), the debug buffer reads `aborted`, `failure`, `panic`, `problem`, and validation needs `Settings`; with the configuration model in `engine` it would import `engine` or need accessor interfaces invented to break the cycle.
+- `lifecycle`: fails D3.3. It reads `Core` fields (`cfg`, `settings`, `log`, `serviceAttrs`, `unmatched`), the log handler, `checkRoutes`, `exceptionMessage` and 22 log keys.
+- `static` as planned needed `NewConfigError`, `RouteErrorf` (in `engine`) and `MarkRouterAnswered` (`RequestState`). It passes after two moves: the error values go to `errchain` (one responsibility: srvr's errors) and `StaticResult.Failure`, the only piece touching request state, becomes `engine.StaticFailure` (4 call sites: `static.go`, `ginsrvr/static.go`, `fibersrvr/static.go`, plus tests).
+Failure modes: a move uncovers a reference the map missed (the build fails; the slice stops at its last green state, D3).
 
 ### D3. Split criterion: merge if thin, stop if worse
 
@@ -69,7 +70,7 @@ A package is extracted only if all hold, checked in group 1 for every row of D2 
 2. A small exported API: the names other packages need, counted from the gopls reference map, are few (guide: under about 15) and are names a reader would expect; unexported cross-file coupling does not turn into many new exported names.
 3. No import cycle and no interface or callback invented only to break one.
 4. Not thin: a package with only a handful of declarations or under about 150 lines merges into its neighbour.
-If a slice violates these while in progress, it returns to the last green state and the concern stays in `internal/engine`, recorded in `notes.md`. `logging` and `lifecycle` are the likely candidates: `logging` needs to read the request's trace and buffer from `RequestState` (an accessor interface defined in `logging` and implemented by `RequestState`, checked for allocations by the benchmarks); `lifecycle` needs `Core`'s logging and route checks (passed as a small struct of functions). If either costs more than it buys, it stays.
+If a slice violates these while in progress, it returns to the last green state and the concern stays in `internal/engine`, recorded in `notes.md`. Group 1 applied these criteria: `config`, `logging` and `lifecycle` stay in `internal/engine` (D2).
 
 ### D4. Behaviour-preserving moves
 
@@ -112,4 +113,4 @@ Consumers: no change unless they imported `github.com/kartaladev/srvr/engine`; t
 
 ## Open Questions
 
-- Whether `logging` and `lifecycle` pass D3 is decided with the gopls map in group 1 and re-checked at their slice; the outcome changes only whether those slices run, not the others.
+(none: group 1 decided the package set, D2.)

@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // ErrConfig is wrapped by every error New returns for invalid
@@ -364,7 +365,7 @@ func validatePath(path string) (err error) {
 
 	defer func() {
 		if v := recover(); v != nil {
-			e := configErrorColon("Prometheus.Path", strconv.Quote(path), engine.ValueText(v))
+			e := configErrorColon("Prometheus.Path", strconv.Quote(path), errchain.ValueText(v))
 			e.Cause = panicCause(v)
 			err = e
 		}
@@ -380,12 +381,12 @@ func validatePath(path string) (err error) {
 // otherwise: a value that is not an error, a typed nil (it carries no
 // cause), or an error whose chain cycles or whose Unwrap panics (errors.Is
 // would loop or crash). An error whose Error method panics is kept:
-// errors.Is never calls Error, and the text goes through engine.ValueText.
+// errors.Is never calls Error, and the text goes through errchain.ValueText.
 // otelsrvr and otelsetup each keep a copy, so engine's public API does not
 // grow for it.
 func panicCause(v any) error {
 	err, ok := v.(error)
-	if !ok || engine.IsNil(err) {
+	if !ok || errchain.IsNil(err) {
 		return nil
 	}
 

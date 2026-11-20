@@ -4,22 +4,18 @@ import (
 	"context"
 	"fmt"
 	"slices"
+
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
-// RouteErrorf returns an error wrapping [ErrRouteConfig] with the message
-// format and args describe.
-func RouteErrorf(format string, args ...any) error {
-	return fmt.Errorf("%w: "+format, append([]any{ErrRouteConfig}, args...)...)
-}
-
 // Configure runs c.Configure(g) for an engine's configure phase and turns
-// a panic into an error wrapping [ErrRouteConfig] that names c's type and
-// the panic value, read through ValueText. The routes c registered before
+// a panic into an error wrapping [errchain.ErrRouteConfig] that names c's type and
+// the panic value, read through errchain.ValueText. The routes c registered before
 // panicking are left to the engine, whose Start fails.
 func Configure[G any](c interface{ Configure(G) }, g G) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = RouteErrorf("configurer %T panicked: %s", c, ValueText(v))
+			err = errchain.RouteErrorf("configurer %T panicked: %s", c, errchain.ValueText(v))
 		}
 	}()
 
@@ -51,7 +47,7 @@ type RouteCheck func(ctx context.Context, routes Routes) error
 
 // CheckRoutes runs the server's route checks in order, each with ctx and
 // its own copy of routes, and returns the first failure: an error or panic
-// as an error wrapping ErrRouteConfig, or ctx's error when ctx ends first,
+// as an error wrapping errchain.ErrRouteConfig, or ctx's error when ctx ends first,
 // abandoning a check that ignores it.
 func (c *Core) CheckRoutes(ctx context.Context, routes Routes) error {
 	return c.checkRoutes(ctx, ctx, routes)
@@ -90,9 +86,9 @@ func runCheck(waitCtx, checkCtx context.Context, i int, check RouteCheck, routes
 	case abandoned:
 		return waitCtx.Err()
 	case panicked:
-		return RouteErrorf("route check %d panicked: %s", i, pe.value)
+		return errchain.RouteErrorf("route check %d panicked: %s", i, pe.value)
 	case err != nil:
-		return fmt.Errorf("%w: route check %d: %w", ErrRouteConfig, i, guard(err))
+		return fmt.Errorf("%w: route check %d: %w", errchain.ErrRouteConfig, i, errchain.Guard(err))
 	default:
 		return nil
 	}

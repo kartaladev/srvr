@@ -19,7 +19,8 @@ import (
 	"time"
 
 	"github.com/kartaladev/srvr"
-	"github.com/kartaladev/srvr/engine"
+	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // fakeRunner serves by accepting and closing connections until the
@@ -146,7 +147,7 @@ func TestEngineLifecycle(t *testing.T) {
 
 			switch {
 			case tt.isCfg:
-				if !errors.Is(err, srvr.ErrConfig) || !errors.Is(err, engine.ErrConfig) {
+				if !errors.Is(err, srvr.ErrConfig) || !errors.Is(err, errchain.ErrConfig) {
 					t.Fatalf("call = %v, want an error wrapping ErrConfig", err)
 				}
 				select {

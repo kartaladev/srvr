@@ -57,3 +57,22 @@ func configFields(err error) []string {
 
 	return nil
 }
+
+// TestSrvrSentinels_EveryEngine covers engine-support / Scenario: srvr
+// names are the engine declarations, the ginsrvr.New and fibersrvr.New
+// rows (the internal rows are in internal/engine, the srvr.New row too):
+// every engine's construction error matches srvr.ErrConfig.
+func TestSrvrSentinels_EveryEngine(t *testing.T) {
+	t.Parallel()
+
+	for _, b := range constructors {
+		t.Run(b.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := b.new(srvr.WithLogConfig(srvr.LogConfig{Level: "loud"}))
+			if !errors.Is(err, srvr.ErrConfig) {
+				t.Fatalf("New error = %v, want one wrapping srvr.ErrConfig", err)
+			}
+		})
+	}
+}
