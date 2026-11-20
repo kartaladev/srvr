@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/internal/errchain"
 )
@@ -104,6 +105,63 @@ var (
 	// outlived its budget.
 	ErrShutdownHook = errchain.ErrShutdownHook
 )
+
+// The errors of srvr's own answers. The error hook, and an error renderer,
+// receive them for the answers srvr makes itself, so they can be matched
+// with errors.Is and errors.As without prblm. With the default renderer
+// each one is answered with the same problem as before they existed.
+var (
+	// ErrNotFound is the error of a request no route or static file
+	// matched (404). It wraps prblm.ErrNotFound, so a prblm mapper on that
+	// sentinel still matches it. A handler may return it too.
+	ErrNotFound = errchain.ErrNotFound
+	// ErrRequestTooLarge is wrapped, together with the engine's own error
+	// (*http.MaxBytesError on net/http and gin), by the error of a request
+	// body over MaxRequestBodyBytes (413).
+	ErrRequestTooLarge = errchain.ErrRequestTooLarge
+	// ErrHeadersTooLarge is the error of a request whose headers exceed the
+	// server's limit, which fiber rejects before routing (431).
+	ErrHeadersTooLarge = errchain.ErrHeadersTooLarge
+	// ErrRequestTimeout is the error of a request fiber's read timeout
+	// ended before routing (408).
+	ErrRequestTimeout = errchain.ErrRequestTimeout
+	// ErrClientClosed is wrapped, together with the handler's error, by
+	// the error of a request whose client went away (499).
+	ErrClientClosed = errchain.ErrClientClosed
+)
+
+type (
+	// MethodNotAllowedError is the error of a request whose path a route
+	// or a static mount serves, but not with its method (405). Allow lists
+	// the methods the path serves, sorted, as the Allow header sends them.
+	MethodNotAllowedError = errchain.MethodNotAllowedError
+	// PanicError is the error of a recovered panic, carrying the value and
+	// the stack. It is prblm's type, which every engine's recovery
+	// produces, so one errors.As finds it on every engine.
+	PanicError = prblm.PanicError
+)
+
+type (
+	// ErrorRenderer turns an error the server answers into the response
+	// sent to the client. Without one, every engine renders errors with
+	// prblm, as [DefaultErrorRenderer] does.
+	ErrorRenderer = engine.ErrorRenderer
+	// ErrorRendererFunc adapts a function to [ErrorRenderer].
+	ErrorRendererFunc = engine.ErrorRendererFunc
+	// ErrorRequest is what a renderer knows of the request: method, path
+	// (never the query string), matched route, trace id and headers.
+	ErrorRequest = engine.ErrorRequest
+	// ErrorResponse is a renderer's answer: status, headers and body, plus
+	// a type and title for logs and error hooks only.
+	ErrorResponse = engine.ErrorResponse
+)
+
+// DefaultErrorRenderer returns prblm's renderer, the default of every
+// engine, as an [ErrorRenderer]: a consumer's renderer can decorate some
+// errors and delegate the rest to it. During a request it answers with
+// that server's prblm options and trace id; outside one, with prblm's
+// defaults and srvr's own answers ([ErrNotFound] and the others).
+func DefaultErrorRenderer() ErrorRenderer { return engine.DefaultRenderer }
 
 // TraceFromContext returns the trace context of a request handled by the
 // server, and false for any other context, including nil.

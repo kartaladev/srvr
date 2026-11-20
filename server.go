@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/engine"
 )
 
@@ -194,8 +193,9 @@ func (s *Server) wrapHandler(h func(http.ResponseWriter, *http.Request) error) h
 }
 
 // answerUnmatched returns the router stage: matched requests go to mux;
-// for unmatched ones, ServeMux's plain-text 404 and 405 become problems
-// (the 405 keeps ServeMux's Allow header), and any other fallback answer,
+// for unmatched ones, ServeMux's plain-text 404 and 405 become
+// [ErrNotFound] and [MethodNotAllowedError] (with the methods of
+// ServeMux's Allow header), answered as problems, and any other fallback answer,
 // such as a redirect to the canonical path, passes through unchanged.
 //
 // A matched request is dispatched through mux.ServeHTTP, never through the
@@ -215,11 +215,10 @@ func (s *Server) answerUnmatched(mux *http.ServeMux) http.Handler {
 		switch rec.status {
 		case http.StatusNotFound:
 			engine.MarkRouterAnswered(r.Context())
-			s.core.Problems().Write(w, r, prblm.ErrNotFound)
+			s.core.Problems().Write(w, r, ErrNotFound)
 		case http.StatusMethodNotAllowed:
 			engine.MarkRouterAnswered(r.Context())
-			allow := prblm.WithHeader("Allow", rec.header.Get("Allow"))
-			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, allow))
+			s.core.Problems().Write(w, r, engine.MethodNotAllowed(rec.header.Get("Allow")))
 		default:
 			rec.replay(w)
 		}

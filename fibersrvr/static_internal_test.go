@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,7 +14,6 @@ import (
 	"testing/fstest"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/static"
 )
@@ -202,7 +202,7 @@ func TestMalformedEscape(t *testing.T) {
 // TestStatic_ServeAnswers checks the mount's answers that its GET-only
 // routes and fiber v3.7.0's SendFile never produce, but a direct route or
 // another fiber version could: a method other than GET and HEAD gets the
-// 405 problem with Allow: GET, HEAD, and an error of SendFile other than
+// 405 error with Allow GET, HEAD, and an error of SendFile other than
 // its 404 fails the request.
 func TestStatic_ServeAnswers(t *testing.T) {
 	t.Parallel()
@@ -219,11 +219,11 @@ func TestStatic_ServeAnswers(t *testing.T) {
 		name    string
 		handler func(fiber.Ctx) error
 		// want is the error the handler returns, matched with errors.Is;
-		// nil for the 405 problem with Allow: GET, HEAD.
+		// nil for srvr.MethodNotAllowedError with Allow GET, HEAD.
 		want error
 	}{
 		{"POST", sm.serve, nil},
-		{"SendFile's 404", func(c fiber.Ctx) error { return sendFileFailure(c, fiber.NewError(http.StatusNotFound, "gone")) }, prblm.ErrNotFound},
+		{"SendFile's 404", func(c fiber.Ctx) error { return sendFileFailure(c, fiber.NewError(http.StatusNotFound, "gone")) }, srvr.ErrNotFound},
 		{"another SendFile error", func(c fiber.Ctx) error { return sendFileFailure(c, failure) }, failure},
 	}
 
@@ -256,8 +256,8 @@ func TestStatic_ServeAnswers(t *testing.T) {
 				return
 			}
 
-			if p, ok := errors.AsType[*prblm.Problem](got); !ok || p.Status != http.StatusMethodNotAllowed || p.Header.Get("Allow") != "GET, HEAD" {
-				t.Errorf("serve = %v, want the 405 problem with Allow: GET, HEAD", got)
+			if mna, ok := errors.AsType[*srvr.MethodNotAllowedError](got); !ok || !slices.Equal(mna.Allow, []string{"GET", "HEAD"}) {
+				t.Errorf("serve = %v, want srvr.MethodNotAllowedError with Allow GET, HEAD", got)
 			}
 		})
 	}

@@ -95,12 +95,19 @@ func (c *Core) Problems() *prblm.Handler { return c.problems }
 func (c *Core) ProblemOptions() []prblm.Option {
 	return slices.Concat(
 		c.settings.ProblemOptions,
-		[]prblm.Option{
-			prblm.WithMappers(clientClosedMapper),
-			prblm.WithEnrichers(traceIDEnricher),
-			prblm.AddErrorHook(c.onError),
-		},
+		srvrProblemOptions(c.onError),
 	)
+}
+
+// srvrProblemOptions returns srvr's own prblm options: its mappers (after
+// any consumer's), the trace_id enricher and hook, added with
+// prblm.AddErrorHook so that no consumer option replaces it.
+func srvrProblemOptions(hook func(context.Context, error, *prblm.Problem)) []prblm.Option {
+	return []prblm.Option{
+		prblm.WithMappers(clientClosedMapper, answerMapper),
+		prblm.WithEnrichers(traceIDEnricher),
+		prblm.AddErrorHook(hook),
+	}
 }
 
 // EngineOptions returns, in order, the values of the engine-specific
@@ -154,6 +161,7 @@ func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 // hook, if any, containing a panic in it.
 func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
 	recordFailure(ctx, err, p)
+	captureProblem(ctx, err, p)
 
 	if c.settings.ErrorHook == nil {
 		return
