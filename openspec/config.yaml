@@ -62,7 +62,9 @@ context: |
 
   Change plan (Gall's Law): core-server -> gin-and-fiber-engines -> otel-observability ->
   goroutine-leak-checks -> triage-debug-buffer -> followups-hardening -> static-files ->
-  scrty-integration (owner decision 2026-11-19: static-files before scrty-integration).
+  engine-internal-split -> pluggable-error-renderer -> scrty-integration (owner decisions
+  2026-11-19: static-files before scrty-integration; 2026-11-20: engine-internal-split and
+  pluggable-error-renderer before it, released together as v0.4.0).
   Each change ships a releasable library.
 
   Project rules that bind every artifact and every apply run
