@@ -662,6 +662,59 @@ func TestParity_Exceptions(t *testing.T) {
 			t.Errorf("record %v, want exception.message \"prblm: not found\", no http.route, WARN", r)
 		}
 	})
+
+	t.Run("fiber removes encoded dot segments before routing, net/http and gin route the raw path", func(t *testing.T) {
+		t.Parallel()
+
+		type answer struct {
+			status int
+			// instance is the 404 problem's instance, "" for the 200.
+			instance string
+			// route is the access record's http.route, nil for a miss.
+			route any
+		}
+
+		tests := []struct {
+			target string
+			// raw is the answer of net/http and gin, which route the raw
+			// path; fiber is fiber's, which routes the normalised path.
+			raw, fiber answer
+		}{
+			{"/%2e%2e/nope", answer{http.StatusNotFound, "/../nope", nil}, answer{http.StatusNotFound, "/nope", nil}},
+			{"/x/%2e%2e/items/1", answer{http.StatusNotFound, "/x/../items/1", nil}, answer{http.StatusOK, "", "/items/:id"}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.target, func(t *testing.T) {
+				t.Parallel()
+
+				for _, e := range engines {
+					base, logs := e.start(t, succeeds)
+
+					res, body := raw(t, base, "GET "+tt.target+" HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", nil)
+
+					var p struct {
+						Instance string `json:"instance"`
+					}
+					if res.StatusCode == http.StatusNotFound {
+						if !isNotFoundProblem(res, body) {
+							t.Errorf("%s: GET %s = %q %.200q, want the 404 problem", e.name, tt.target, res.Header.Get("Content-Type"), body)
+						}
+						_ = json.Unmarshal(body, &p) // a bad body leaves Instance "", failing the comparison below
+					}
+
+					want := tt.raw
+					if e.name == "fiber" {
+						want = tt.fiber
+					}
+
+					if got := (answer{res.StatusCode, p.Instance, one(t, logs)["http.route"]}); got != want {
+						t.Errorf("%s: GET %s = %+v, want %+v", e.name, tt.target, got, want)
+					}
+				}
+			})
+		}
+	})
 }
 
 // opensAfter returns a site whose app.js opens normally n times, then

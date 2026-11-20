@@ -50,7 +50,10 @@ func run() error {
 
 Every `srvr` option applies. `fibersrvr.WithFiberConfig(func(*fiber.Config))` customises the
 configuration; srvr keeps its error handler, and prefork is not supported. Fiber buffers at most
-64 KiB of headers per connection, so a larger `MaxHeaderBytes` is capped with a warning.
+64 KiB of headers per connection, so a larger `MaxHeaderBytes` is capped with a warning. Fiber
+normalises the request path before routing (`%2e%2e` decoded, dot segments removed), so keep
+path-based access rules in the app rather than in a proxy that filters the raw path; see the
+package documentation.
 
 ## Static files and single-page apps
 

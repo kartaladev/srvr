@@ -54,6 +54,10 @@ once tagged.
   cleaner goroutine, which outlives `Shutdown` because fiber v3.7.0 never sets
   `fasthttp.FS.CleanStop`. `d <= 0` in the option and a negative field fail `Start`; `srvr.Static`
   and `ginsrvr.Static` fail `Start` on any non-zero value, since they have no file cache.
+- `fibersrvr` documents a further engine-parity difference: fiber normalises the request path
+  before routing (`%2e%2e` decoded, dot segments removed), so a problem's `instance` and the route
+  reached can differ from net/http and gin, and path rules in a proxy that forwards `%2e%2e`
+  unchanged can be bypassed. See the package documentation. No behaviour change.
 - `engine.StaticSettings`, `engine.RejectSendFileCache`, `engine.Static.SendFileCache`,
   `engine.Static.FS`, `engine.Static.Patterns`, `engine.StaticResult.Failure`,
   `engine.StaticPrefixes.Claim` and `Len`, and `engine.MarkRouterAnswered` (package `engine`,

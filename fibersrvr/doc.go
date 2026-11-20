@@ -74,4 +74,14 @@
 //     Get("/*") beside Static("/"), fails Start as a duplicate, where the
 //     consumer's catch-all wins on net/http and gin. Middleware added with
 //     Use runs around the mounts even when added after Static.
+//   - fiber normalises the request path before routing, on every route
+//     (RFC 3986 section 6.2.2, so that routes and Use guards see the same
+//     path): it decodes escaped unreserved characters such as %2e (every
+//     escape with UnescapePath) and removes dot segments. A problem's
+//     instance is the cleaned path (GET /%2e%2e/nope shows /nope, where
+//     net/http and gin show /../nope), and GET /x/%2e%2e/items/1 reaches
+//     the /items/:id route, where net/http and gin answer 404. A proxy
+//     that filters by the raw path and forwards %2e%2e unchanged can
+//     therefore be bypassed: keep path-based rules in the app, or have
+//     the proxy decode and normalise the path first.
 package fibersrvr
