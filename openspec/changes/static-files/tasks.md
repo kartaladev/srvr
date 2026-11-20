@@ -153,9 +153,9 @@ Owner decision 2026-11-20: srvr's release requires prblm v0.3.0, done in this ch
 
 ## 8. Slice: release
 
-- [ ] 8.1 Precondition: this change, including group 7, is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
-- [ ] 8.2 Prepare: move the `CHANGELOG.md` `## [Unreleased]` entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, and dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
-- [ ] 8.3 STOP for the owner: present the proposed version (`v0.3.0`: new public API in every engine module), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [x] 8.1 Precondition: this change, including group 7, is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
+- [x] 8.2 Prepare: move the `CHANGELOG.md` `## [Unreleased]` entries under a version heading (version left as a placeholder), run `make check` and `make cover` on `main`, and dry-run the release guard and the `RELEASING.md` steps without tagging; verify every step passes
+- [x] 8.3 STOP for the owner: present the proposed version (`v0.3.0`: new public API in every engine module), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
 - [ ] 8.4 Release in `RELEASING.md` order: tag the core module and push; in each released module (`ginsrvr`, `fibersrvr`, `otelsrvr`, then `otelsetup`) require that core version, drop the `replace`, run its checks with `GOWORK=off`, commit, tag `<module>/<version>` and push; verify the CI `release` job passes for every tag
 - [ ] 8.5 Restore the development `replace` lines on `main` in one commit that also runs `go mod tidy` in `internal/paritytest`; verify `make check` passes and `main` CI is green
 - [ ] 8.6 Publish the GitHub Release page (RELEASING.md step 6) with the modules table and the version's changelog section; verify with `gh release view <version>`

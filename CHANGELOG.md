@@ -6,6 +6,8 @@ once tagged.
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-11-20
+
 ### Added
 
 - `srvr.Static(prefix, fsys, opts...)` serves the files of an `fs.FS` (a build directory, an
