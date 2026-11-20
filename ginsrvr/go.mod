@@ -4,8 +4,8 @@ go 1.27
 
 require (
 	github.com/gin-gonic/gin v1.12.0
-	github.com/kartaladev/prblm v0.2.1
-	github.com/kartaladev/prblm/adapters/ginprblm v0.2.1
+	github.com/kartaladev/prblm v0.3.0
+	github.com/kartaladev/prblm/adapters/ginprblm v0.3.0
 	github.com/kartaladev/srvr v0.2.0
 	go.uber.org/goleak v1.3.0
 )
