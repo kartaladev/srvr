@@ -11,7 +11,9 @@ import (
 )
 
 // ErrorRenderer turns an error srvr answers into the response sent to the
-// client. Consumers use it as srvr.ErrorRenderer.
+// client. Consumers use it as srvr.ErrorRenderer. On a 405 srvr does not
+// add an Allow header: the renderer sets it from
+// [errchain.MethodNotAllowedError].Allow, found with errors.As.
 type ErrorRenderer interface {
 	// Render returns the response for err, an error of the request req.
 	// ctx carries the request's values, srvr's trace among them.

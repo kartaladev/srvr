@@ -160,7 +160,9 @@ type (
 	// with a walkable error and a context keeping the request's values but
 	// not its cancellation, bounded by 5 seconds; see [WithErrorRenderer]
 	// for every rule srvr keeps around it. It may be called concurrently
-	// for different requests.
+	// for different requests. On a 405 srvr does not add an Allow header:
+	// the renderer sets it from [MethodNotAllowedError].Allow, found with
+	// errors.As.
 	ErrorRenderer = engine.ErrorRenderer
 	// ErrorRendererFunc adapts a function to [ErrorRenderer].
 	ErrorRendererFunc = engine.ErrorRendererFunc

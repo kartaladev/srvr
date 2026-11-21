@@ -154,6 +154,8 @@ srvr's own errors can be told apart with `errors.Is` and `errors.As`: `srvr.ErrN
 matches `prblm.ErrNotFound`), `*srvr.MethodNotAllowedError` (with `Allow`), `srvr.ErrRequestTooLarge`,
 `srvr.ErrHeadersTooLarge` and `srvr.ErrRequestTimeout` (fiber), `srvr.ErrClientClosed` and
 `*srvr.PanicError`. It cannot be combined with `srvr.WithProblemOptions` (construction fails).
+On a `405` srvr does not add an `Allow` header: the renderer sets it from
+`srvr.MethodNotAllowedError.Allow` (found with `errors.As`), as the house renderer below does.
 
 To change a few answers only, wrap `srvr.DefaultErrorRenderer()`, which answers like the default,
 with the server's trace id:

@@ -65,12 +65,14 @@ func rendered(status int, allow string) customAnswer {
 // customRow is one Examples row of error-rendering / Scenario: Custom
 // renderer on every engine, plus the Hostile rows whose answer differs
 // between engines. want is every engine's answer; except replaces it for
-// the engines of a recorded engine-parity exception.
+// the engines of a recorded engine-parity exception, whose error R must
+// match with exceptMatch (match when nil).
 type customRow struct {
-	row    renderRow
-	match  func(error) bool
-	want   customAnswer
-	except map[string]customAnswer
+	row         renderRow
+	match       func(error) bool
+	want        customAnswer
+	except      map[string]customAnswer
+	exceptMatch func(error) bool
 }
 
 func isPanic(err error) bool {
@@ -145,6 +147,9 @@ var customRows = []customRow{
 		// A disconnect never cancels fiber's context: the handler's
 		// context.Canceled reaches R as an ordinary error.
 		except: map[string]customAnswer{"fiber": rendered(http.StatusInternalServerError, "")},
+		exceptMatch: func(err error) bool {
+			return errors.Is(err, context.Canceled) && !errors.Is(err, srvr.ErrClientClosed)
+		},
 	},
 	{
 		row: renderRow{
@@ -214,7 +219,11 @@ func TestParity_CustomRendering(t *testing.T) {
 				if n := len(r.errs); n != 1 {
 					t.Fatalf("R called %d times, want once", n)
 				}
-				if err := <-r.errs; !excepted && !row.match(err) {
+				match := row.match
+				if excepted && row.exceptMatch != nil {
+					match = row.exceptMatch
+				}
+				if err := <-r.errs; !match(err) {
 					t.Errorf("R got %#v, which does not match", err)
 				}
 

@@ -165,7 +165,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 
 ### Slice 5: /simplify findings skipped
 - **Status:** open
-- **Target:** pluggable-error-renderer (slice 7 at the latest)
+- **Target:** unassigned (lead decision 2026-11-21: deferred past this change - internal, no behaviour change, touches all engines; the allocations (4) are revisited with the pending benchmarks)
 - **Context:** applied: one `render(c, err, hold)` helper for the three `Core.Render` calls, `routerAnswered` computed once. Skipped: (1) the D6 header rules now exist twice, `engine.WriteHTTPError` and fiber's `writeAnswer` (via exported `engine.AddVary`); a shared engine header-merge function would serve all three engines but touches net/http and gin. (2) Filling `ErrorRequest.Route`/`TraceID` from the request state is duplicated in `RenderHTTP` and fiber's `errorRequest`; `Core.Render` could fill them itself. (3) fibersrvr checks `HasErrorRenderer()` in three places instead of choosing the path once in `New`. (4) Unmeasured error-path allocations (two-word `fiberTarget` boxed into `ErrorTarget`, `mergedVary`'s map); measure with the D10 re-run (task 5.3). The removed `//nolint:gosec` on `context.WithCancel` in `fibersrvr.New` was reported unused by `nolintlint` after this slice (`make check` passes without it).
 - **Suggested action:** fold (1)-(3) into one refactor with the parity tests green; decide (4) after benchmarks.
 

@@ -8,6 +8,15 @@ once tagged.
 
 ### Added
 
+- srvr's own errors are public, so a renderer or error hook tells them apart with `errors.Is` and
+  `errors.As` without prblm: `srvr.ErrNotFound` (no route or static file matched, 404; matches
+  `prblm.ErrNotFound` and keeps its text), `srvr.ErrRequestTooLarge` (body over
+  `MaxRequestBodyBytes`, 413, wrapped with the engine's own error), `srvr.ErrHeadersTooLarge`
+  (headers over the limit, rejected by fiber before routing, 431), `srvr.ErrRequestTimeout`
+  (fiber's read timeout before routing, 408), `srvr.ErrClientClosed` (the client went away, 499,
+  wrapped with the handler's error), `srvr.MethodNotAllowedError` (path served but not with this
+  method, 405; `Allow` lists the methods, sorted) and `srvr.PanicError` (alias of
+  `prblm.PanicError`: a recovered panic's value and stack, on every engine).
 - `srvr.WithErrorRenderer(r)` replaces prblm with the consumer's `srvr.ErrorRenderer` (with
   `srvr.ErrorRendererFunc`, `srvr.ErrorRequest`, `srvr.ErrorResponse` and
   `srvr.DefaultErrorRenderer` to delegate to prblm) on the net/http engine: handler errors,
