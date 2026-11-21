@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -323,6 +324,7 @@ func TestErrorRenderer_Faulty(t *testing.T) {
 		{name: "status 399", renderer: answer(srvr.ErrorResponse{Status: 399}), failure: "invalid_status"},
 		{name: "status 600", renderer: answer(srvr.ErrorResponse{Status: 600}), failure: "invalid_status"},
 		{name: "status -1", renderer: answer(srvr.ErrorResponse{Status: -1}), failure: "invalid_status"},
+		{name: "status 100", renderer: answer(srvr.ErrorResponse{Status: 100}), failure: "invalid_status"},
 		{name: "body of exactly 1 MiB", renderer: answer(srvr.ErrorResponse{Status: 400, Header: ct, Body: bytes.Repeat([]byte("a"), mib)}), status: 400, check: func(t *testing.T, res response) {
 			t.Helper()
 
@@ -351,6 +353,41 @@ func TestErrorRenderer_Faulty(t *testing.T) {
 
 				if res.body != `{"a":1}` || res.header.Get("Content-Length") != "7" || res.header.Get("Transfer-Encoding") != "" {
 					t.Errorf("response %v %q, want Content-Length 7 and the body", res.header, res.body)
+				}
+			},
+		},
+		{
+			name: "hop-by-hop headers dropped",
+			renderer: answer(srvr.ErrorResponse{Status: 429, Header: http.Header{
+				"Content-Type": {"application/json"}, "Connection": {"close"}, "Keep-Alive": {"timeout=5"},
+				"Proxy-Connection": {"keep-alive"}, "Proxy-Authenticate": {"Basic"}, "Proxy-Authorization": {"Basic eA=="},
+				"Te": {"trailers"}, "Trailer": {"X-T"}, "Upgrade": {"websocket"}, "X-Kept": {"1"},
+			}, Body: []byte(`{}`)}),
+			status: 429,
+			check: func(t *testing.T, res response) {
+				t.Helper()
+
+				for _, k := range []string{"Connection", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Upgrade"} {
+					if v, ok := res.header[k]; ok {
+						t.Errorf("header %s sent: %q", k, v)
+					}
+				}
+				if res.header.Get("X-Kept") != "1" {
+					t.Errorf("headers %v, want X-Kept", res.header)
+				}
+			},
+		},
+		{
+			name: "Set-Cookie passes through",
+			renderer: answer(srvr.ErrorResponse{Status: 401, Header: http.Header{
+				"Content-Type": {"application/json"}, "Set-Cookie": {"session=; Max-Age=0", "csrf=; Max-Age=0"},
+			}, Body: []byte(`{}`)}),
+			status: 401,
+			check: func(t *testing.T, res response) {
+				t.Helper()
+
+				if got := res.header.Values("Set-Cookie"); !slices.Equal(got, []string{"session=; Max-Age=0", "csrf=; Max-Age=0"}) {
+					t.Errorf("Set-Cookie %q, want both cookies", got)
 				}
 			},
 		},
@@ -393,6 +430,54 @@ func TestErrorRenderer_Faulty(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestErrorRenderer_Answer covers error-rendering / Scenario: Faulty
+// renderer, net/http rows on how a valid answer is sent: a HEAD request
+// gets the renderer's status and headers without a body, and srvr writes
+// a copy of the renderer's header map, never the map itself.
+func TestErrorRenderer_Answer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("HEAD request", func(t *testing.T) {
+		t.Parallel()
+
+		r := srvr.ErrorRendererFunc(func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+			return srvr.ErrorResponse{Status: 429, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"code":"quota"}`)}
+		})
+		base, _ := renderedServer(t, r, func(g *srvr.Group) { g.GET("/x", returning(errQuota)) })
+
+		res := do(t, http.MethodHead, base+"/x", nil, nil)
+		if res.status != 429 || res.body != "" || res.header.Get("Content-Type") != "application/json" {
+			t.Fatalf("response %d %v %q, want 429 with the headers and no body", res.status, res.header, res.body)
+		}
+	})
+
+	t.Run("header map not aliased", func(t *testing.T) {
+		t.Parallel()
+
+		shared := http.Header{"Content-Type": {"application/json"}, "Connection": {"close"}, "X-N": {"1"}}
+		r := srvr.ErrorRendererFunc(func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+			return srvr.ErrorResponse{Status: 429, Header: shared, Body: []byte(`{}`)}
+		})
+		base, _ := renderedServer(t, r, func(g *srvr.Group) {
+			g.GET("/x", func(w http.ResponseWriter, _ *http.Request) error {
+				w.Header().Set("X-Handler", "1")
+				return errQuota
+			})
+		})
+
+		for range 2 {
+			if res := get(t, base+"/x"); res.status != 429 || res.header.Get("X-N") != "1" {
+				t.Fatalf("response %d %v, want 429 with X-N", res.status, res.header)
+			}
+		}
+
+		want := http.Header{"Content-Type": {"application/json"}, "Connection": {"close"}, "X-N": {"1"}}
+		if !maps.EqualFunc(shared, want, slices.Equal) {
+			t.Fatalf("renderer's header map changed to %v, want %v", shared, want)
+		}
+	})
 }
 
 // TestErrorRenderer_Hostile covers error-rendering / Scenario: Hostile

@@ -36,8 +36,9 @@ type ErrorRequest struct {
 	// Path is the URL path without the query string: for the response
 	// (a problem's instance, say), never logged by srvr.
 	Path string
-	// Route is the matched route pattern, in the engine's syntax; empty
-	// when no route matched.
+	// Route is the matched route pattern, in the engine's syntax and
+	// without the method (as the http.route log key carries it, say
+	// /items/{id}); empty when no route matched.
 	Route string
 	// TraceID is the request's trace id.
 	TraceID string
@@ -52,7 +53,10 @@ type ErrorResponse struct {
 	// Status is the response status, 400 to 599.
 	Status int
 	// Header holds the response headers; Content-Type is required with a
-	// body.
+	// body. srvr sends a copy: Content-Length (set from Body),
+	// Transfer-Encoding and the hop-by-hop headers (Connection,
+	// Keep-Alive, Proxy-*, Te, Trailer, Upgrade) are dropped; every other
+	// header, Set-Cookie included, is sent as given.
 	Header http.Header
 	// Body is the response body.
 	Body []byte

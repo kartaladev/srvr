@@ -63,7 +63,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 |-------|-------|
 | `Method` | `GET` |
 | `Path` | `/items/7` (always set: it is for the response, never logged by srvr) |
-| `Route` | `GET /items/{id}` |
+| `Route` | `/items/{id}` (the logged `http.route` form: no method) |
 | `Header.Get("Accept")` | `application/json` |
 | `TraceID` | `4bf92f3577b34da6a3ce929d0e0e4736` |
 | the context | `srvr.TraceFromContext` returns that trace |
@@ -84,7 +84,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 | `gin` | `WithErrorRenderer(nil)` | `ErrorRenderer` | `is nil` |
 | `fiber` | `WithErrorRenderer(nil)` | `ErrorRenderer` | `is nil` |
 | `net/http` | `WithErrorRenderer((*myRenderer)(nil))` | `ErrorRenderer` | `is nil` |
-| `net/http` | `WithErrorRenderer(R)`, `WithProblemOptions(prblm.WithNamespace("https://x"))` | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
+| `net/http` | `WithErrorRenderer(R)`, `WithProblemOptions(prblm.WithNamespace("https://errors.example/p"))` | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `gin` | `WithProblemOptions(...)` then `WithErrorRenderer(R)` (order does not matter) | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `fiber` | `WithErrorRenderer(R)`, `WithProblemOptions()` (no options) | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `net/http` | `WithErrorRenderer(nil)`, `WithAddr("bad")` | both `ErrorRenderer` and `Addr` | joined |

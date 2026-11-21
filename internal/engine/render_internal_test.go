@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -467,3 +468,90 @@ func TestRender_HookPanics(t *testing.T) {
 
 // nilPanicValue is panicked with for the spec's panic(nil) row.
 var nilPanicValue any
+
+// TestRender_DeadlineEndToEnd covers error-rendering / Scenario: Faulty
+// renderer, net/http rows "returns after the deadline" and "returns
+// before the deadline while the client already disconnected", end to end
+// through the net/http stage chain (trace, access log, renderer) with the
+// render deadline shortened through the unexported seam (owner decision
+// 2026-11-21): the bytes sent and the access record.
+func TestRender_DeadlineEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		disconnect  bool
+		wantStatus  int
+		wantFailure string // "" when no srvr.renderer.failure key is logged
+	}{
+		{name: "returns after the deadline", wantStatus: 500, wantFailure: "deadline"},
+		{name: "returns before the deadline while the client already disconnected", disconnect: true, wantStatus: 429},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			renderer := ErrorRendererFunc(func(ctx context.Context, _ ErrorRequest, _ error) ErrorResponse {
+				if !tt.disconnect {
+					<-ctx.Done()
+				}
+
+				return ErrorResponse{Status: 429, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"code":"quota"}`)}
+			})
+
+			var logs syncBuffer
+
+			c, err := ResolveConfig([]Option{func(s *Settings) {
+				s.ErrorRenderer = renderer
+				s.Log.Output = &logs
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c.renderDeadline = 20 * time.Millisecond
+
+			h := c.StartTrace(c.LogAccess(c.HTTPErrors().Wrap(func(http.ResponseWriter, *http.Request) error {
+				return errors.New("db down")
+			})))
+
+			ctx := t.Context()
+			if tt.disconnect {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/items/7", nil)
+			r.Header.Set("Traceparent", goldenTraceparent)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status %d, want %d (body %s)", w.Code, tt.wantStatus, w.Body)
+			}
+
+			if tt.wantFailure != "" {
+				const safe = `{"title":"Internal Server Error","status":500,"instance":"/items/7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736"}`
+				if w.Body.String() != safe || w.Header().Get("Content-Type") != "application/problem+json" {
+					t.Fatalf("response %v %s, want the safe 500 %s", w.Header(), w.Body, safe)
+				}
+			} else if w.Body.String() != `{"code":"quota"}` {
+				t.Fatalf("body %s, want the renderer's", w.Body)
+			}
+
+			failure := ""
+			found := false
+			for _, rec := range logs.records(t) {
+				if st, ok := rec["http.response.status_code"].(float64); ok && int(st) == tt.wantStatus {
+					found = true
+					failure, _ = rec["srvr.renderer.failure"].(string)
+				}
+			}
+			if !found || failure != tt.wantFailure {
+				t.Fatalf("record found=%v srvr.renderer.failure=%q, want %q", found, failure, tt.wantFailure)
+			}
+		})
+	}
+}

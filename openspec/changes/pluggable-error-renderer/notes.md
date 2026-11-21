@@ -105,10 +105,11 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** run task 3.5 once the owner confirms the machine is quiet; add the custom-renderer rows to `BenchmarkPipeline` then.
 
 ### Slice 3: spec examples that do not match the code
-- **Status:** open (owner to confirm)
+- **Status:** closed: decided (owner 2026-11-21)
 - **Target:** pluggable-error-renderer (spec refresh, slice 7 at the latest)
 - **Context:** (1) error-rendering "Rejected renderer configuration" uses `prblm.WithNamespace("https://x")`, which prblm v0.3.0 rejects itself ("path must not be empty or /"), so that row reports a `ProblemOptions` error beside the `ErrorRenderer` one; tests use `https://errors.example/p`. (2) "What the renderer receives" expects `Route` `GET /items/{id}`; net/http records the route without the method (`http.route` is `/items/{id}`), and `ErrorRequest.Route` follows it ("the engine's syntax"). (3) The "returns after the 5-second deadline" row is tested at the decision level only (`TestRender`, deadline shortened through `Core.renderDeadline`); the HTTP suite cannot reach the internal hook.
 - **Suggested action:** correct the two example values in the spec; owner confirms `Route` follows `http.route`.
+- **Outcome (owner 2026-11-21):** (1) and (2) "match the code": the spec rows now use `prblm.WithNamespace("https://errors.example/p")` and `Route` `/items/{id}`; `ErrorRequest.Route`'s godoc says it carries no method, as `http.route`. (3) "add an internal seam": `TestRender_DeadlineEndToEnd` (`internal/engine/render_internal_test.go`) serves the net/http stage chain over httptest with `Core.renderDeadline` at 20ms and asserts the safe 500 bytes and `srvr.renderer.failure=deadline`, plus the disconnected-client row; removing the deadline check in `renderFault` fails it.
 
 ### Slice 3: Render is a Core method
 - **Status:** closed: recorded
