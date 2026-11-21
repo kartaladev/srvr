@@ -115,8 +115,13 @@ func srvrProblemOptions(hook func(context.Context, error, *prblm.Problem)) []prb
 	}
 }
 
+// HasErrorRenderer reports whether the consumer set a renderer, which
+// answers every error in place of prblm.
+func (c *Core) HasErrorRenderer() bool { return c.settings.ErrorRenderer != nil }
+
 // RejectErrorRenderer returns an error wrapping [errchain.ErrConfig] when
-// a renderer was set, for an engine that cannot render through one yet.
+// a renderer was set, for an engine that cannot render through one yet
+// (fibersrvr, until slice 5).
 func (c *Core) RejectErrorRenderer() error {
 	if c.settings.ErrorRenderer == nil {
 		return nil
@@ -180,7 +185,7 @@ func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 // records the answer actually sent and calls the hook once. prblm's notes
 // still reach the hook.
 func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
-	if c.settings.ErrorRenderer != nil && ctx.Value(captureKey{}) != nil && !isNote(err) {
+	if c.HasErrorRenderer() && ctx.Value(captureKey{}) != nil && !isNote(err) {
 		captureProblem(ctx, err, p)
 
 		return

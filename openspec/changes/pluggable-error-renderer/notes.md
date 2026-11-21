@@ -122,3 +122,16 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** unassigned
 - **Context:** during slice 3 verification one `make cover` run exited with `make: *** [cover] Error 1`; the output was cut by a pipe, so the failing test is unknown. The rerun, three `go test -race -count=1 .` runs and `make check` all passed. Not reproduced, so no defect is claimed (rule 2).
 - **Suggested action:** if it recurs, keep the full log and reproduce the failing test.
+- **Recurrence (slice 4, 2026-11-21):** one `go test -race -count=1 ./internal/... .` run failed in the root package (`FAIL github.com/kartaladev/srvr 16.692s`); the output was cut by `tail`, so the failing test is unknown again. The immediate rerun and three more `go test -race -count=1 .` runs passed. Still unconfirmed; next time run with `-json` or tee the full log.
+
+### Slice 4: benchmarks skipped (task 4.3)
+- **Status:** open
+- **Target:** pluggable-error-renderer (task 4.3)
+- **Context:** owner 2026-11-21: machine busy, no benchmarks in slice 4. Only `make check` compiled the gin benchmark file. The D10 re-run for gin (default and custom-renderer rows) is still to do.
+- **Suggested action:** run task 4.3 together with 3.5 once the machine is quiet.
+
+### Slice 4: gin decisions taken while applying
+- **Status:** open (owner to confirm)
+- **Target:** pluggable-error-renderer
+- **Context:** (1) With a renderer, gin answers a request the client closed `499` through the renderer (spec row "Custom renderer", net/http and gin); the default path keeps v0.3.0's empty `200`. (2) A status-only abort (`c.AbortWithStatus(401)`) calls neither the renderer nor `ErrorHook` on the renderer path; on the ginprblm path the hook still sees `ginprblm.ErrStatusOnly` with a 401 problem, as at v0.3.0 (`TestWithErrorRenderer_Hook`). (3) A consumer root middleware aborting with its own status in gin's no-route chain (only with a static mount) gets its bare status; only an unmatched 404/405 is the router's answer (`TestErrorRenderer_UnmatchedAbort`). (4) The render deadline row cannot be shortened from ginsrvr (`Core.renderDeadline` is unexported and engine's tests cannot import gin); the gin path is the shared `Core.Render`/`callRenderer`, covered end to end by `TestRender_DeadlineEndToEnd`, and `TestErrorRenderer_Request` asserts the gin renderer's context carries a deadline of at most 5 s.
+- **Suggested action:** owner confirms (2); if the hook should see status-only aborts on the renderer path too, add it in slice 6 with the `ErrorHook` signature change.

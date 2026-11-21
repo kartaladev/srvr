@@ -52,17 +52,17 @@
 
 ## 4. Slice: gin renders through the ErrorRenderer
 
-- [ ] 4.1 Load `golang-how-to`; remove gin's "not supported yet" rejection (error-rendering / Scenario: Rejected renderer configuration, gin rows); verify `go test -race -run TestWithErrorRenderer ./...` passes in `ginsrvr`
+- [x] 4.1 Load `golang-how-to`; remove gin's "not supported yet" rejection (error-rendering / Scenario: Rejected renderer configuration, gin rows); verify `go test -race -run TestWithErrorRenderer ./...` passes in `ginsrvr`
   - RED: the gin rows now expect the renderer to be accepted
   - GREEN: drop the rejection
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 4.2 gin answers every error through the renderer (error-rendering / Scenarios: Custom renderer, Faulty renderer, Hostile errors, Renderer and lifecycle; gin rows, including `c.AbortWithStatus(401)` left untouched and gin's early-committed headers); verify `go test -race -run 'TestErrorRenderer_' ./...` passes in `ginsrvr`
+- [x] 4.2 gin answers every error through the renderer (error-rendering / Scenarios: Custom renderer, Faulty renderer, Hostile errors, Renderer and lifecycle; gin rows, including `c.AbortWithStatus(401)` left untouched and gin's early-committed headers); verify `go test -race -run 'TestErrorRenderer_' ./...` passes in `ginsrvr`
   - RED: `httptest` rows; expected failure: ginprblm renders instead of `R`
   - GREEN: when a renderer is set, `newEngine` installs srvr's error middleware (last `c.Errors` entry, guarded, through `engine.Render`, status-only aborts skipped as `clearStatusOnly` does today) and srvr's recovery instead of `ginprblm.Middleware`/`Recovery`; the router's 404/405 deliver `srvr.ErrNotFound`/`*MethodNotAllowedError` with gin's sorted `Allow`
   - REFACTOR: share the status-only rule between `clearStatusOnly` and the new middleware (Extract Function); then `/simplify`
-- [ ] 4.3 Re-run the D10 benchmarks for gin (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed
-- [ ] 4.4 Verify: `make check MODULES="ginsrvr internal/paritytest"`; coverage of the new middleware and recovery; default golden rows unchanged; gopls diagnostics clean
-- [ ] 4.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(ginsrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
+- [ ] 4.3 Re-run the D10 benchmarks for gin (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed (skipped 2026-11-21, machine busy: notes.md "Slice 4: benchmarks skipped")
+- [x] 4.4 Verify: `make check MODULES="ginsrvr internal/paritytest"`; coverage of the new middleware and recovery; default golden rows unchanged; gopls diagnostics clean
+- [x] 4.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(ginsrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
 
 ## 5. Slice: fiber renders through the ErrorRenderer
 

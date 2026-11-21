@@ -48,10 +48,6 @@ func New(opts ...srvr.Option) (*Server, error) {
 		return nil, err
 	}
 
-	if err := core.RejectErrorRenderer(); err != nil {
-		return nil, err
-	}
-
 	values, err := core.EngineOptions(engineName)
 	if err != nil {
 		return nil, err
@@ -97,7 +93,9 @@ func WithGinEngine(hook func(*gin.Engine)) srvr.Option {
 // srvr's request stage, ginprblm's middleware, which renders recorded
 // errors and statuses as problems, srvr's error guard and ginprblm's
 // recovery. Both ginprblm stages are built from the server's prblm
-// options, which ResolveConfig validated, so they cannot panic here.
+// options, which ResolveConfig validated, so they cannot panic here. With
+// a consumer renderer srvr's own error middleware and recovery replace
+// ginprblm's and the error guard (engine.Core.Render guards the chain).
 func newEngine(core *engine.Core, hooks []any, requestStage gin.HandlerFunc) (*gin.Engine, error) {
 	e := gin.New()
 	_ = e.SetTrustedProxies(nil) // trusting none cannot fail: no CIDR to parse
@@ -109,6 +107,12 @@ func newEngine(core *engine.Core, hooks []any, requestStage gin.HandlerFunc) (*g
 	}
 
 	assertSettings(e)
+
+	if core.HasErrorRenderer() {
+		e.Use(requestStage, renderErrors(core), recoverPanics)
+
+		return e, nil
+	}
 
 	opts := append(core.ProblemOptions(), prblm.AddErrorHook(clearStatusOnly))
 	e.Use(requestStage, ginprblm.Middleware(opts...), guardErrors, ginprblm.Recovery(opts...))
@@ -222,7 +226,7 @@ func guardErrors(c *gin.Context) {
 // keeps its failure, as does a recovered panic.
 func clearStatusOnly(ctx context.Context, err error, _ *prblm.Problem) {
 	state, ok := engine.StateFrom(ctx)
-	if ok && state.Matched() && !state.Panicked() && errors.Is(err, ginprblm.ErrStatusOnly) {
+	if ok && !routerAnswers(state) && !state.Panicked() && errors.Is(err, ginprblm.ErrStatusOnly) {
 		state.ClearFailure()
 	}
 }

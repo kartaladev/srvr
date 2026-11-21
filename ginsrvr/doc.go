@@ -12,6 +12,14 @@
 // logged as a failed request (a status-only 5xx is logged as
 // http.request.completed at ERROR).
 //
+// With srvr.WithErrorRenderer, srvr's own error middleware and recovery
+// replace ginprblm's: the consumer's renderer answers the last recorded
+// error, a recovered panic (a *srvr.PanicError) and the router's 404 and
+// 405 (srvr.ErrNotFound, *srvr.MethodNotAllowedError), including a static
+// mount's; a status the handler set before c.AbortWithError is replaced
+// by the renderer's. A status-only abort is not an error answer: the
+// renderer is not called and gin's bare status is sent.
+//
 // srvr builds the engine with gin.New and installs its own pipeline before
 // any consumer group: trace context, access record, body limit
 // (MaxRequestBodyBytes, through http.MaxBytesReader), problem rendering and
