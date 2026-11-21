@@ -24,7 +24,8 @@ Without `WithErrorRenderer`, every error answer SHALL be rendered by prblm with 
 | a route `POST /x` only | `GET /x` | `405` problem with `Allow` |
 | `MaxRequestBodyBytes` `10`, a route `POST /x` reading the body | `POST /x` with 11 bytes | `413` problem |
 | `Static("/assets", site)` | `GET /assets/missing.js` | `404` problem |
-| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http and gin) | `GET /x` | `499` problem titled `Client Closed Request` |
+| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http) | `GET /x` | `499` problem titled `Client Closed Request` |
+| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (gin) | `GET /x` | empty `200` with `Content-Length: 0`, nothing rendered |
 | a route `GET /x` returning an error whose `Unwrap` chain is cyclic | `GET /x` | the safe `500` problem |
 | `WithProblemOptions(prblm.WithMappers(prblm.Status(ErrQuota, 429)))`, a route returning `ErrQuota` | `GET /x` | `429` problem |
 
@@ -50,7 +51,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 | a route returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http, gin) | `GET /x` | `errors.Is(err, srvr.ErrClientClosed)` and `errors.Is(err, context.Canceled)` | `499` |
 | fiber with headers over its read buffer (fiber only) | `GET /x` with a 16 KiB header | `errors.Is(err, srvr.ErrHeadersTooLarge)` | `431` |
 | fiber with `ReadTimeout` `50ms` (fiber only) | a request whose headers arrive after `100ms` | `errors.Is(err, srvr.ErrRequestTimeout)` | `408` |
-| gin route calling `c.AbortWithStatus(401)` (gin only) | `GET /x` | not called; the response is the bare `401` gin wrote, as today | `401` |
+| gin route calling `c.AbortWithStatus(401)` (gin only) | `GET /x` | not called; the response is the bare `401` gin wrote, as today (`ErrorHook` still receives it, see error-responses) | `401` |
 
 #### Scenario: What the renderer receives
 - **Given** a net/http server with `WithErrorRenderer(R)` recording its arguments and a route `GET /items/{id}` returning `ErrQuota`
@@ -62,7 +63,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 |-------|-------|
 | `Method` | `GET` |
 | `Path` | `/items/7` (always set: it is for the response, never logged by srvr) |
-| `Route` | `GET /items/{id}` |
+| `Route` | `/items/{id}` (the logged `http.route` form: no method) |
 | `Header.Get("Accept")` | `application/json` |
 | `TraceID` | `4bf92f3577b34da6a3ce929d0e0e4736` |
 | the context | `srvr.TraceFromContext` returns that trace |
@@ -83,7 +84,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 | `gin` | `WithErrorRenderer(nil)` | `ErrorRenderer` | `is nil` |
 | `fiber` | `WithErrorRenderer(nil)` | `ErrorRenderer` | `is nil` |
 | `net/http` | `WithErrorRenderer((*myRenderer)(nil))` | `ErrorRenderer` | `is nil` |
-| `net/http` | `WithErrorRenderer(R)`, `WithProblemOptions(prblm.WithNamespace("https://x"))` | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
+| `net/http` | `WithErrorRenderer(R)`, `WithProblemOptions(prblm.WithNamespace("https://errors.example/p"))` | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `gin` | `WithProblemOptions(...)` then `WithErrorRenderer(R)` (order does not matter) | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `fiber` | `WithErrorRenderer(R)`, `WithProblemOptions()` (no options) | `ErrorRenderer` | `cannot be combined with ProblemOptions` |
 | `net/http` | `WithErrorRenderer(nil)`, `WithAddr("bad")` | both `ErrorRenderer` and `Addr` | joined |
@@ -119,7 +120,7 @@ srvr SHALL guard the error against cyclic chains before calling the renderer, SH
 | returns a body of 1 MiB + 1 byte | `oversized_body` |
 | returns a 10-byte body without `Content-Type` | `missing_content_type` |
 | returns status `404`, no body and no headers | (none: a bare `404` is sent) |
-| returns after its context's 5-second deadline (the test shortens the deadline through `engine`'s test hook) | `deadline` |
+| returns after its context's 5-second deadline (the test shortens the deadline through `internal/engine`'s test hook) | `deadline` |
 | returns before the deadline while the client already disconnected | (none: sent as returned) |
 | returns a nil `Header` | (none: sent without extra headers) |
 | returns `Header` with `Content-Length: 999` and `Transfer-Encoding: chunked` | (none: those two are dropped, srvr sets `Content-Length` from the body) |
@@ -135,8 +136,9 @@ srvr SHALL guard the error against cyclic chains before calling the renderer, SH
 | returns an error whose `Unwrap` chain is cyclic | `R` receives an error that `errors.Is` can walk and that wraps no cycle; `R`'s answer is sent |
 | returns an error whose `Unwrap` panics | `R` is called once with a walkable error; `R`'s answer is sent |
 | returns a typed-nil error `(*myErr)(nil)` | `R` is called with it, as prblm is today; no panic escapes |
-| writes `200` then returns `errors.New("late")` | `R` is not called; the client keeps the `200`; the record has `srvr.response.committed` `true` |
-| writes `200` then panics | `R` is not called; the record has `error.kind` `panic` |
+| writes `200` then returns `errors.New("late")` (on fiber: starts a `200` body stream) | `R` is not called; the client keeps the `200`; the record has `srvr.response.committed` `true` |
+| writes `200` then panics (on fiber: starts a `200` body stream) | `R` is not called; the record has `error.kind` `panic` |
+| writes a buffered `200` body then panics (fiber only: fasthttp sends nothing before the handler returns, so only a started body stream counts as committed) | `R` is called; the client gets `R`'s answer, not the `200`; the record has no `srvr.response.committed` |
 | returns `ErrQuota` and `R` writes `Cache-Control: no-store` while the handler had set `Cache-Control: max-age=60` | the response has one `Cache-Control` line, `no-store` (the renderer's header replaces the handler's) |
 | returns `ErrQuota` and `R` sets `Vary: Accept` while the handler set `Vary: Origin` | `Vary` lists `Origin` and `Accept` |
 | 50 concurrent requests, each failing | every response is `R`'s; the test passes under `-race` |

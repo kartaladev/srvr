@@ -547,6 +547,7 @@ const (
 	keyBufferDropped   = "srvr.debug_buffer.dropped"
 	keyBufferTruncated = "srvr.debug_buffer.truncated"
 	keyCommitted       = "srvr.response.committed"
+	keyRendererFailure = "srvr.renderer.failure"
 	keyURLPath         = "url.path"
 	keyURLQuery        = "url.query"
 	keyClientAddress   = "client.address"

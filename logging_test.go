@@ -288,7 +288,7 @@ func TestAccessRecord_Deferred(t *testing.T) {
 
 		base, out := loggedServer(t, func(g *srvr.Group) {
 			g.GET("/x", func(http.ResponseWriter, *http.Request) error { return prblm.ErrNotFound })
-		}, srvr.WithErrorHook(func(_ context.Context, _ error, _ *prblm.Problem) { panic("hook") }))
+		}, srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) { panic("hook") }))
 		get(t, base+"/x")
 
 		out.waitRecord(t, "http.request.failed")

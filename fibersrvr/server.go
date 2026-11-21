@@ -72,7 +72,7 @@ func New(opts ...srvr.Option) (*Server, error) {
 	s := &Server{core: core, lc: engine.NewLifecycle[srvr.RouteConfigurer[fiber.Router]](core), fields: fiberFields()}
 	// cancelBase is called by the runner's Drain, or never needed when the
 	// server never serves.
-	s.base, s.cancelBase = context.WithCancel(context.Background()) //nolint:gosec // see the comment above.
+	s.base, s.cancelBase = context.WithCancel(context.Background())
 	s.problems = fiberprblm.ErrorHandler(core.ProblemOptions()...)
 
 	cfg, err := s.fiberConfig(hooks)
@@ -117,7 +117,7 @@ func (s *Server) fiberConfig(hooks []any) (fiber.Config, error) {
 	c := s.core.Config()
 
 	cfg := fiber.Config{
-		ErrorHandler:   s.renderError,
+		ErrorHandler:   s.handleError,
 		BodyLimit:      bodyLimit(c.MaxRequestBodyBytes),
 		ReadTimeout:    max(c.ReadTimeout, 0),
 		WriteTimeout:   max(c.WriteTimeout, 0),
@@ -131,7 +131,7 @@ func (s *Server) fiberConfig(hooks []any) (fiber.Config, error) {
 		}
 	}
 
-	cfg.ErrorHandler = s.renderError
+	cfg.ErrorHandler = s.handleError
 
 	return cfg, nil
 }
@@ -710,21 +710,25 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 	}
 	c.SetContext(ctx)
 
-	if rejected >= http.StatusBadRequest {
+	switch {
+	case rejected < http.StatusBadRequest:
+		s.serveChain(c, state)
+	case s.core.HasErrorRenderer():
+		s.render(c, rejectionError(rejected), true)
+	default:
 		s.core.RecordRejection(ctx, rejected)
-	} else if err := c.Next(); err != nil {
-		if routerAnswered(c, err) {
-			state.MarkRouterAnswered()
-		}
-
-		_ = s.renderError(c, err)
-
-		// fiberprblm keeps a body stream that already started; the client
-		// got that, not the problem.
-		if c.Response().IsBodyStream() {
-			state.MarkCommitted()
-		}
 	}
+
+	s.core.WriteAccess(ctx, s.accessInfo(ctx, c, time.Since(begin)))
+
+	return nil
+}
+
+// serveChain runs the rest of c's chain, records the matched route and
+// answers the error the chain returns. The route is recorded first, so a
+// renderer receives it.
+func (s *Server) serveChain(c fiber.Ctx, state *engine.RequestState) {
+	err := c.Next()
 
 	// A static mount's miss matched a route but is the router's answer
 	// (design D5): the state then ignores the route set here.
@@ -736,9 +740,22 @@ func (s *Server) requestStage(c fiber.Ctx) error {
 		}
 	}
 
-	s.core.WriteAccess(ctx, s.accessInfo(ctx, c, time.Since(begin)))
+	if err == nil {
+		return
+	}
 
-	return nil
+	routed := routerAnswered(c, err)
+	if routed {
+		state.MarkRouterAnswered()
+	}
+
+	// fiberprblm keeps a body stream that already started; the client gets
+	// that, not the problem.
+	if c.Response().IsBodyStream() {
+		state.MarkCommitted()
+	}
+
+	s.answer(c, err, routed)
 }
 
 // routerAnswered reports whether err, which the chain returned for c, is

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/errchain"
@@ -29,6 +30,9 @@ type Core struct {
 	serviceAttrs []slog.Attr
 	// observers are the server's observers, guarded.
 	observers []*guardedObserver
+	// renderDeadline bounds a consumer renderer's call: defaultRenderDeadline,
+	// shortened by tests.
+	renderDeadline time.Duration
 	// unmatched limits the failed records of unmatched requests; nil
 	// without a limit.
 	unmatched *unmatchedLimiter
@@ -55,6 +59,7 @@ func ResolveConfig(opts []Option) (*Core, error) {
 	}
 
 	c.problems, c.cfg, c.observers = problems, s.resolve(), guardObservers(s.Observers)
+	c.renderDeadline = defaultRenderDeadline
 	c.unmatched = newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now)
 	c.log = newLogHandler(&c.settings.Log)
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
@@ -95,13 +100,24 @@ func (c *Core) Problems() *prblm.Handler { return c.problems }
 func (c *Core) ProblemOptions() []prblm.Option {
 	return slices.Concat(
 		c.settings.ProblemOptions,
-		[]prblm.Option{
-			prblm.WithMappers(clientClosedMapper),
-			prblm.WithEnrichers(traceIDEnricher),
-			prblm.AddErrorHook(c.onError),
-		},
+		srvrProblemOptions(c.onError),
 	)
 }
+
+// srvrProblemOptions returns srvr's own prblm options: its mappers (after
+// any consumer's), the trace_id enricher and hook, added with
+// prblm.AddErrorHook so that no consumer option replaces it.
+func srvrProblemOptions(hook func(context.Context, error, *prblm.Problem)) []prblm.Option {
+	return []prblm.Option{
+		prblm.WithMappers(clientClosedMapper, answerMapper),
+		prblm.WithEnrichers(traceIDEnricher),
+		prblm.AddErrorHook(hook),
+	}
+}
+
+// HasErrorRenderer reports whether the consumer set a renderer, which
+// answers every error in place of prblm.
+func (c *Core) HasErrorRenderer() bool { return c.settings.ErrorRenderer != nil }
 
 // EngineOptions returns, in order, the values of the engine-specific
 // options for engine. An engine-specific option of another engine is an
@@ -126,15 +142,33 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 	return values, errors.Join(errs...)
 }
 
-// ErrorHook is called for every error the server answers with a problem,
-// with the problem sent (nil for a note about a problem that was not sent,
-// such as a panic after the response started). It also receives prblm's
-// notes, which srvr does not record as the request's failure: a
-// mistake in rendering, and, before the error itself, a note
-// wrapping prblm.ErrUnwalkableError when prblm cannot walk the error's
-// chain and sent the safe 500 problem instead. Consumers use it as
-// srvr.ErrorHook.
-type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
+// ErrorHook is called for every error the server answers, with sent
+// describing the answer sent: on the default path prblm's problem, with a
+// consumer renderer its answer (or srvr's safe 500 replacing a faulty
+// one). The zero ErrorReport marks a note about an answer that was not
+// sent, such as a panic after the response started. It also receives
+// prblm's notes, which srvr does not record as the request's failure: a
+// mistake in rendering, and, before the error itself, a note wrapping
+// prblm.ErrUnwalkableError when prblm cannot walk the error's chain and
+// sent the safe 500 problem instead. Consumers use it as srvr.ErrorHook.
+type ErrorHook func(ctx context.Context, err error, sent ErrorReport)
+
+// ErrorReport describes the error answer sent, as the access record's
+// problem group does. It is a value (design D8): passing it allocates
+// nothing, its strings share the answer's text and a hook may keep it.
+// Type and Title are empty when a consumer renderer gave none.
+//
+// ErrorReport stays comparable, but fields may be added in later
+// versions: compare its fields rather than whole values against a
+// literal, and build it with keyed literals.
+type ErrorReport struct {
+	// Status is the HTTP status sent; 0 when no answer was sent.
+	Status int
+	// Type is the problem type URI sent, if any.
+	Type string
+	// Title is the problem title sent, if any.
+	Title string
+}
 
 // newProblems builds a problem handler from opts and returns an invalid
 // option, which makes prblm.NewHandler panic, as an error wrapping
@@ -152,14 +186,39 @@ func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 // onError is srvr's prblm hook. It records the failure for the request's
 // access record, which the access stage writes, and calls the consumer's
 // hook, if any, containing a panic in it.
+//
+// While a consumer's renderer delegates to [DefaultRenderer] (whose
+// capture slot is in ctx), the answer is only captured: [Core.Render]
+// records the answer actually sent and calls the hook once. prblm's notes
+// still reach the hook.
 func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
-	recordFailure(ctx, err, p)
+	if c.HasErrorRenderer() && ctx.Value(captureKey{}) != nil && !isNote(err) {
+		captureProblem(ctx, err, p)
 
+		return
+	}
+
+	req, sent := requestFrom(ctx), answerOf(p)
+	recordAnswer(req, err, sent, "")
+	captureProblem(ctx, err, p)
+
+	if req != nil && req.committed() {
+		sent = ErrorReport{} // the client got the started response, not p
+	}
+
+	c.CallErrorHook(ctx, err, sent)
+}
+
+// CallErrorHook calls the consumer's error hook, if any, with err and
+// sent, containing a panic in it. It records nothing: engines call it
+// directly only for an answer that is no failure, such as gin's
+// status-only abort under a consumer renderer.
+func (c *Core) CallErrorHook(ctx context.Context, err error, sent ErrorReport) {
 	if c.settings.ErrorHook == nil {
 		return
 	}
 
 	defer func() { _ = recover() }()
 
-	c.settings.ErrorHook(ctx, err, p)
+	c.settings.ErrorHook(ctx, err, sent)
 }

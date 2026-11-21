@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/engine"
 )
 
@@ -181,21 +180,22 @@ func (s *Server) pipeline(mux *http.ServeMux) http.Handler {
 // stages are the per-request stages inside the trace context stage.
 func (s *Server) stages(mux *http.ServeMux) http.Handler {
 	router := s.answerUnmatched(mux)
-	recovered := s.core.Problems().Recover(router)
+	recovered := s.core.HTTPErrors().Recover(router)
 	limited := engine.LimitBody(s.core.Config().MaxRequestBodyBytes, recovered)
 
 	return s.core.LogAccess(limited)
 }
 
-// wrapHandler renders the errors h returns as problems, after guarding
-// prblm's resolution against cyclic error chains.
+// wrapHandler answers the errors h returns, with prblm or the consumer's
+// renderer, after guarding their resolution against cyclic error chains.
 func (s *Server) wrapHandler(h func(http.ResponseWriter, *http.Request) error) http.Handler {
-	return s.core.Problems().Wrap(func(w http.ResponseWriter, r *http.Request) error { return engine.GuardChain(h(w, r)) })
+	return s.core.HTTPErrors().Wrap(func(w http.ResponseWriter, r *http.Request) error { return engine.GuardChain(h(w, r)) })
 }
 
 // answerUnmatched returns the router stage: matched requests go to mux;
-// for unmatched ones, ServeMux's plain-text 404 and 405 become problems
-// (the 405 keeps ServeMux's Allow header), and any other fallback answer,
+// for unmatched ones, ServeMux's plain-text 404 and 405 become
+// [ErrNotFound] and [MethodNotAllowedError] (with the methods of
+// ServeMux's Allow header), answered as problems, and any other fallback answer,
 // such as a redirect to the canonical path, passes through unchanged.
 //
 // A matched request is dispatched through mux.ServeHTTP, never through the
@@ -215,11 +215,10 @@ func (s *Server) answerUnmatched(mux *http.ServeMux) http.Handler {
 		switch rec.status {
 		case http.StatusNotFound:
 			engine.MarkRouterAnswered(r.Context())
-			s.core.Problems().Write(w, r, prblm.ErrNotFound)
+			s.core.HTTPErrors().Write(w, r, ErrNotFound)
 		case http.StatusMethodNotAllowed:
 			engine.MarkRouterAnswered(r.Context())
-			allow := prblm.WithHeader("Allow", rec.header.Get("Allow"))
-			s.core.Problems().Write(w, r, prblm.New(http.StatusMethodNotAllowed, allow))
+			s.core.HTTPErrors().Write(w, r, engine.MethodNotAllowed(rec.header.Get("Allow")))
 		default:
 			rec.replay(w)
 		}

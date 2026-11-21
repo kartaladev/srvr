@@ -731,6 +731,51 @@ func TestLogSchemaGolden_UnmatchedLimit(t *testing.T) {
 	}
 }
 
+// goldenRendererKeys pin the failed record of an error answered by a
+// consumer renderer (design D9, schema 1): problem.type and problem.title
+// are absent when the renderer gave none, and srvr.renderer.failure is
+// added when srvr replaced a faulty answer with its safe 500.
+var goldenRendererKeys = map[string][]string{
+	"no type and title": slices.DeleteFunc(slices.Clone(goldenKeys["http.request.failed"]), func(k string) bool {
+		return k == "problem.type" || k == "problem.title"
+	}),
+	"faulty answer": slices.Sorted(slices.Values(append(slices.Clone(goldenKeys["http.request.failed"]), "srvr.renderer.failure"))),
+}
+
+// TestLogSchemaGolden_Renderer pins the keys of a failed record answered
+// by a consumer renderer, and that the schema version stays 1 (design D9).
+func TestLogSchemaGolden_Renderer(t *testing.T) {
+	t.Parallel()
+
+	renderers := map[string]srvr.ErrorRendererFunc{
+		"no type and title": func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+			return srvr.ErrorResponse{Status: http.StatusTooManyRequests}
+		},
+		"faulty answer": func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+			return srvr.ErrorResponse{Status: http.StatusOK}
+		},
+	}
+
+	for name, want := range goldenRendererKeys {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			base, out := loggedServer(t, func(g *srvr.Group) {
+				g.GET("/fail", func(http.ResponseWriter, *http.Request) error { return errors.New("boom") })
+			}, srvr.WithServiceVersion("1.4.2"), srvr.WithErrorRenderer(renderers[name]))
+			get(t, base+"/fail")
+
+			rec := out.waitRecord(t, "http.request.failed")
+			if got := flatKeys(rec, ""); !slices.Equal(got, want) {
+				t.Errorf("keys = %v\nwant %v (bump srvr.log.schema on a rename or removal)", got, want)
+			}
+			if rec["srvr.log.schema"] != float64(goldenSchemaVersion) {
+				t.Errorf("srvr.log.schema = %v, want %d", rec["srvr.log.schema"], goldenSchemaVersion)
+			}
+		})
+	}
+}
+
 // TestLogSchemaDocumented checks that LOGGING.md lists every pinned key.
 func TestLogSchemaDocumented(t *testing.T) {
 	t.Parallel()
@@ -739,7 +784,7 @@ func TestLogSchemaDocumented(t *testing.T) {
 	mustNil(t, err)
 
 	keys := slices.Concat(goldenPanicKeys, goldenAbortedKeys, goldenObserverFaultKeys, []string{"srvr.observer.fault"},
-		goldenFlushedKeys, goldenBufferSummaryKeys, goldenUnmatchedKeys)
+		goldenFlushedKeys, goldenBufferSummaryKeys, goldenUnmatchedKeys, goldenRendererKeys["faulty answer"])
 	for event, k := range goldenKeys {
 		keys = append(keys, event)
 		keys = append(keys, k...)

@@ -1,6 +1,7 @@
 package fibersrvr_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,12 +31,15 @@ func errorChain(n int) error {
 // BenchmarkPipeline measures one request through the fiber engine's full
 // pipeline with app.Test (no listener) and logging to io.Discard: a
 // success, a handler error rendered as a 500 problem, an unmatched path
-// answered as a 404 problem, a panic recovered as a 500, a 32-link error
+// answered as a 404 problem, a panic recovered as a 500, a known path
+// with another method answered as a 405 problem, a 32-link error
 // chain, a success on a skip path, whose access record is suppressed, an
 // unmatched path whose record WithUnmatchedRecordLimit suppresses, and a
 // success from a client sending a User-Agent that
 // WithoutAccessLogUserAgent leaves out of the record, and a file a static
-// mount serves from disk, without and with fiber's open-file cache. Each case runs sequentially and, as "<case>
+// mount serves from disk, without and with fiber's open-file cache, and the
+// handler error with an error hook installed, and success and the error
+// rows with trivialRenderer (design D10). Each case runs sequentially and, as "<case>
 // parallel", from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
 // connection is part of every measurement.
 //
@@ -51,6 +55,7 @@ func BenchmarkPipeline(b *testing.B) {
 		r.Get("/fail", func(fiber.Ctx) error { return errors.New("boom") })
 		r.Get("/panic", func(fiber.Ctx) error { panic("boom") })
 		r.Get("/chain", func(fiber.Ctx) error { return chain })
+		r.Post("/upload", ok)
 	})
 
 	cases := []struct {
@@ -71,6 +76,7 @@ func BenchmarkPipeline(b *testing.B) {
 		{name: "handler error", path: "/fail", status: http.StatusInternalServerError},
 		{name: "unmatched", path: "/nope", status: http.StatusNotFound},
 		{name: "panic", path: "/panic", status: http.StatusInternalServerError},
+		{name: "method not allowed", path: "/upload", status: http.StatusMethodNotAllowed},
 		{name: "32-link error chain", path: "/chain", status: http.StatusInternalServerError},
 		{name: "suppressed access record", path: "/health", status: http.StatusOK},
 		{
@@ -89,6 +95,32 @@ func BenchmarkPipeline(b *testing.B) {
 			// WithSendFileCache buys (design D2).
 			name: "static cached", path: "/assets/app.js", status: http.StatusOK, static: true,
 			staticOpts: []srvr.StaticOption{fibersrvr.WithSendFileCache(time.Minute)},
+		},
+		{
+			// design D8: compared with "handler error", zero added allocs/op.
+			name: "handler error with error hook", path: "/fail", status: http.StatusInternalServerError,
+			opts: []srvr.Option{srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) {})},
+		},
+		// design D10: the trivial custom renderer on every error row and success.
+		{
+			name: "success trivial renderer", path: "/ok", status: http.StatusOK,
+			opts: []srvr.Option{srvr.WithErrorRenderer(trivialRenderer)},
+		},
+		{
+			name: "handler error trivial renderer", path: "/fail", status: http.StatusInternalServerError,
+			opts: []srvr.Option{srvr.WithErrorRenderer(trivialRenderer)},
+		},
+		{
+			name: "unmatched trivial renderer", path: "/nope", status: http.StatusNotFound,
+			opts: []srvr.Option{srvr.WithErrorRenderer(trivialRenderer)},
+		},
+		{
+			name: "panic trivial renderer", path: "/panic", status: http.StatusInternalServerError,
+			opts: []srvr.Option{srvr.WithErrorRenderer(trivialRenderer)},
+		},
+		{
+			name: "method not allowed trivial renderer", path: "/upload", status: http.StatusMethodNotAllowed,
+			opts: []srvr.Option{srvr.WithErrorRenderer(trivialRenderer)},
 		},
 	}
 
@@ -180,3 +212,28 @@ func pipelineServer(b *testing.B, opts ...srvr.Option) *fibersrvr.Server {
 
 	return srv
 }
+
+// trivialBody is the trivial renderer's fixed 20-byte JSON body.
+var trivialBody = []byte(`{"code":"bad_thing"}`)
+
+// trivialRenderer is design D10's trivial custom renderer: a fixed
+// 20-byte JSON body with the status of srvr's own errors (404, 405) and
+// 500 otherwise.
+var trivialRenderer = srvr.ErrorRendererFunc(func(_ context.Context, _ srvr.ErrorRequest, err error) srvr.ErrorResponse {
+	status := http.StatusInternalServerError
+
+	var mna *srvr.MethodNotAllowedError
+
+	switch {
+	case errors.Is(err, srvr.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.As(err, &mna):
+		status = http.StatusMethodNotAllowed
+	}
+
+	return srvr.ErrorResponse{
+		Status: status,
+		Header: http.Header{"Content-Type": {"application/json"}},
+		Body:   trivialBody,
+	}
+})

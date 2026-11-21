@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/otelsrvr"
 	"go.opentelemetry.io/otel/attribute"
@@ -115,8 +114,8 @@ func observe(t *testing.T, e engineCase, o outcome, path string) observedRun {
 
 	var problems atomic.Int64
 
-	hook := srvr.WithErrorHook(func(_ context.Context, _ error, p *prblm.Problem) {
-		if p != nil {
+	hook := srvr.WithErrorHook(func(_ context.Context, _ error, sent srvr.ErrorReport) {
+		if sent.Status != 0 {
 			problems.Add(1)
 		}
 	})

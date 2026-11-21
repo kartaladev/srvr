@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/internal/errchain"
 )
@@ -62,15 +63,24 @@ type (
 	// ShutdownPhase is when a shutdown hook runs while the server stops:
 	// [BeforeDrain] or [AfterDrain].
 	ShutdownPhase = engine.ShutdownPhase
-	// ErrorHook is called for every error the server answers with a
-	// problem, with the problem sent (nil for a note about a problem that
-	// was not sent, such as a panic after the response started). It also
-	// receives prblm's notes, which srvr does not record as the request's
-	// failure: a mistake in rendering (prblm.ErrInvalidStatus and the
-	// like), and, before the error itself, a note wrapping
-	// prblm.ErrUnwalkableError when prblm cannot walk the error's chain
-	// and sent the safe 500 problem instead.
+	// ErrorHook is called for every error the server answers, with an
+	// [ErrorReport] of the answer sent: prblm's problem on the default
+	// path, the renderer's answer (or the safe 500 replacing a faulty one)
+	// with [WithErrorRenderer]. The zero report marks a note about an
+	// answer that was not sent, such as a panic after the response
+	// started. It also receives prblm's notes, which srvr does not record
+	// as the request's failure: a mistake in rendering
+	// (prblm.ErrInvalidStatus and the like), and, before the error itself,
+	// a note wrapping prblm.ErrUnwalkableError when prblm cannot walk the
+	// error's chain and sent the safe 500 problem instead.
 	ErrorHook = engine.ErrorHook
+	// ErrorReport describes the error answer sent: its status and, when
+	// the answer gave them, its problem type and title (always on the
+	// default path). It is passed by value, so a hook may keep it. It
+	// stays comparable, but fields may be added in later versions: compare
+	// its fields rather than whole values against a literal, and build it
+	// with keyed literals; see [engine.ErrorReport].
+	ErrorReport = engine.ErrorReport
 )
 
 const (
@@ -104,6 +114,78 @@ var (
 	// outlived its budget.
 	ErrShutdownHook = errchain.ErrShutdownHook
 )
+
+// The errors of srvr's own answers. The error hook, and an error renderer,
+// receive them for the answers srvr makes itself, so they can be matched
+// with errors.Is and errors.As without prblm. With the default renderer
+// each one is answered with the same problem as before they existed.
+var (
+	// ErrNotFound is the error of a request no route or static file
+	// matched (404). It is a distinct error of its own that matches
+	// prblm.ErrNotFound with errors.Is, so a prblm mapper on that sentinel
+	// still matches it, and its text is prblm.ErrNotFound's ("prblm: not
+	// found"), as v0.3.0 logged. A handler may return it too.
+	ErrNotFound = errchain.ErrNotFound
+	// ErrRequestTooLarge is wrapped, together with the engine's own error
+	// (*http.MaxBytesError on net/http and gin), by the error of a request
+	// body over MaxRequestBodyBytes (413).
+	ErrRequestTooLarge = errchain.ErrRequestTooLarge
+	// ErrHeadersTooLarge is the error of a request whose headers exceed the
+	// server's limit, which fiber rejects before routing (431).
+	ErrHeadersTooLarge = errchain.ErrHeadersTooLarge
+	// ErrRequestTimeout is the error of a request fiber's read timeout
+	// ended before routing (408).
+	ErrRequestTimeout = errchain.ErrRequestTimeout
+	// ErrClientClosed is wrapped, together with the handler's error, by
+	// the error of a request whose client went away (499).
+	ErrClientClosed = errchain.ErrClientClosed
+)
+
+type (
+	// MethodNotAllowedError is the error of a request whose path a route
+	// or a static mount serves, but not with its method (405). Allow lists
+	// the methods the path serves, sorted, as the Allow header sends them.
+	MethodNotAllowedError = errchain.MethodNotAllowedError
+	// PanicError is the error of a recovered panic, carrying the value and
+	// the stack. It is prblm's type, which every engine's recovery
+	// produces, so one errors.As finds it on every engine.
+	PanicError = prblm.PanicError
+)
+
+type (
+	// ErrorRenderer turns an error the server answers into the response
+	// sent to the client, set with [WithErrorRenderer]. Without one, every
+	// engine renders errors with prblm, as [DefaultErrorRenderer] does.
+	// srvr calls it in the request goroutine, at most once per request,
+	// with a walkable error and a context keeping the request's values but
+	// not its cancellation, bounded by 5 seconds; see [WithErrorRenderer]
+	// for every rule srvr keeps around it. It may be called concurrently
+	// for different requests. On a 405 srvr does not add an Allow header:
+	// the renderer sets it from [MethodNotAllowedError].Allow, found with
+	// errors.As.
+	ErrorRenderer = engine.ErrorRenderer
+	// ErrorRendererFunc adapts a function to [ErrorRenderer].
+	ErrorRendererFunc = engine.ErrorRendererFunc
+	// ErrorRequest is what a renderer knows of the request: method, path
+	// (never the query string; for the response, never logged by srvr),
+	// matched route in the engine's syntax (as http.route logs it), trace
+	// id and headers. Header.Get returns copies; on fiber the reader is
+	// valid only during Render.
+	ErrorRequest = engine.ErrorRequest
+	// ErrorResponse is a renderer's answer: status (400-599), headers
+	// (Content-Type required with a body; Content-Length and hop-by-hop
+	// headers are dropped) and body (at most 1 MiB), plus a Type and Title
+	// for the record's problem group and error hooks only, never sent; an
+	// answer breaking a rule is replaced by srvr's safe 500.
+	ErrorResponse = engine.ErrorResponse
+)
+
+// DefaultErrorRenderer returns prblm's renderer, the default of every
+// engine, as an [ErrorRenderer]: a consumer's renderer can decorate some
+// errors and delegate the rest to it. During a request it answers with
+// that server's prblm options and trace id; outside one, with prblm's
+// defaults and srvr's own answers ([ErrNotFound] and the others).
+func DefaultErrorRenderer() ErrorRenderer { return engine.DefaultRenderer }
 
 // TraceFromContext returns the trace context of a request handled by the
 // server, and false for any other context, including nil.

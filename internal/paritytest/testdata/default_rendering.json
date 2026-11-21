@@ -1,0 +1,593 @@
+{
+  "fiber": {
+    "body over limit": {
+      "status": 413,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "111"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Request Entity Too Large\",\"status\":413,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "consumer mapper": {
+      "status": 429,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "104"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Too Many Requests\",\"status\":429,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "cyclic chain": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler panics": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns boom": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns prblm.ErrConflict": {
+      "status": 409,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "168"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Conflict\",\"status\":409,\"detail\":\"The request conflicts with the current state of the resource.\",\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "POST"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "105"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "no route": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "102"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"instance\":\"/missing\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "GET, HEAD"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "117"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/assets/app.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static miss": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "161"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"detail\":\"The requested resource was not found.\",\"instance\":\"/assets/missing.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    }
+  },
+  "gin": {
+    "body over limit": {
+      "status": 413,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "153"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Request Entity Too Large\",\"status\":413,\"detail\":\"The request body is too large.\",\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "client closed": {
+      "status": 200,
+      "header": {
+        "Content-Length": [
+          "0"
+        ]
+      },
+      "body": ""
+    },
+    "consumer mapper": {
+      "status": 429,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "104"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Too Many Requests\",\"status\":429,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "cyclic chain": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler panics": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns boom": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns prblm.ErrConflict": {
+      "status": 409,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "168"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Conflict\",\"status\":409,\"detail\":\"The request conflicts with the current state of the resource.\",\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "POST"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "105"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "no route": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "102"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"instance\":\"/missing\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "GET, HEAD"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "117"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/assets/app.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static miss": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "161"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"detail\":\"The requested resource was not found.\",\"instance\":\"/assets/missing.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    }
+  },
+  "net/http": {
+    "body over limit": {
+      "status": 413,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "153"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Request Entity Too Large\",\"status\":413,\"detail\":\"The request body is too large.\",\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "client closed": {
+      "status": 499,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Client Closed Request\",\"status\":499,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "consumer mapper": {
+      "status": 429,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "104"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Too Many Requests\",\"status\":429,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "cyclic chain": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler panics": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns boom": {
+      "status": 500,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "108"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Internal Server Error\",\"status\":500,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "handler returns prblm.ErrConflict": {
+      "status": 409,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "168"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Conflict\",\"status\":409,\"detail\":\"The request conflicts with the current state of the resource.\",\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "POST"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "105"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/x\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "no route": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "151"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"detail\":\"The requested resource was not found.\",\"instance\":\"/missing\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static method not allowed": {
+      "status": 405,
+      "header": {
+        "Allow": [
+          "GET, HEAD"
+        ],
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "117"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Method Not Allowed\",\"status\":405,\"instance\":\"/assets/app.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    },
+    "static miss": {
+      "status": 404,
+      "header": {
+        "Cache-Control": [
+          "no-store"
+        ],
+        "Content-Length": [
+          "161"
+        ],
+        "Content-Type": [
+          "application/problem+json"
+        ],
+        "Vary": [
+          "Accept"
+        ]
+      },
+      "body": "{\"title\":\"Not Found\",\"status\":404,\"detail\":\"The requested resource was not found.\",\"instance\":\"/assets/missing.js\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\"}"
+    }
+  }
+}

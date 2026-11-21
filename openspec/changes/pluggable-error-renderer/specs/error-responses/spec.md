@@ -18,6 +18,7 @@ The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace,
 | `WithErrorHook(fn)` | `prblm.ErrNotFound` | `404` | receives the error and an `ErrorReport` with status `404`, type `about:blank`, title `Not Found` |
 | `WithErrorRenderer(R)`, `WithErrorHook(fn)` | `ErrQuota` | `429` (from `R`) | receives `ErrQuota` and an `ErrorReport` with status `429`, empty type and title |
 | `WithErrorRenderer(F)` where `F` panics, `WithErrorHook(fn)` | `ErrQuota` | `500` (safe problem) | receives `ErrQuota` and an `ErrorReport` with status `500`, type `about:blank`, title `Internal Server Error` |
+| gin: `WithErrorRenderer(R)`, `WithErrorHook(fn)`, the handler calls `c.AbortWithStatus(401)` | (none) | `401` (gin's bare status; `R` not called) | receives `ginprblm.ErrStatusOnly` and an `ErrorReport` with status `401`, empty type and title |
 | `WithErrorRenderer(R)`, `WithProblemOptions(prblm.OnError(fn))` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` naming `ErrorRenderer` |
 | `WithErrorHook(fn)` where `fn` panics | `prblm.ErrNotFound` | `404` | panics and the access record is still written |
 | `WithErrorHook(nil)` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` |

@@ -97,6 +97,12 @@ type Settings struct {
 	// ProblemOptions are the consumer's prblm options, applied to every
 	// engine's problem renderer before srvr's own.
 	ProblemOptions []prblm.Option
+	// ProblemOptionsSet records that WithProblemOptions was called, even
+	// with no option, so its conflict with ErrorRenderer is never silent.
+	ProblemOptionsSet bool
+	// ErrorRenderer is the consumer's renderer (WithErrorRenderer); nil
+	// renders with prblm.
+	ErrorRenderer ErrorRenderer
 	// ErrorHook is the consumer's hook for answered errors (WithErrorHook).
 	ErrorHook ErrorHook
 	// RouteChecks run in order after the configure phase.
@@ -180,6 +186,7 @@ func (s *Settings) validate() []error {
 		validateLog,
 		validateDebugBuffer,
 		validateUnmatchedLimit,
+		validateErrorRenderer,
 	} {
 		if err := check(s); err != nil {
 			errs = append(errs, err)
@@ -251,6 +258,16 @@ func validateObservers(s *Settings) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateErrorRenderer rejects a renderer combined with prblm options,
+// which configure the renderer it replaces.
+func validateErrorRenderer(s *Settings) error {
+	if s.ErrorRenderer != nil && s.ProblemOptionsSet {
+		return errchain.NewConfigError("ErrorRenderer", errchain.TypeName(s.ErrorRenderer), "cannot be combined with ProblemOptions")
+	}
+
+	return nil
 }
 
 // Defaults, each a deliberate choice; the godoc of the matching Config
