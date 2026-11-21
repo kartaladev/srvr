@@ -143,6 +143,103 @@ that outlives `Shutdown` (fiber v3.7.0 never stops it), which a goleak test must
 and `ginsrvr.Static` have no file cache and fail `Start` on a non-zero `FiberSendFileCache` rather
 than ignore it.
 
+## Custom error rendering
+
+By default every engine answers errors with RFC 9457 problems from prblm. `srvr.WithErrorRenderer(r)`
+hands every error answer to your `srvr.ErrorRenderer` instead: handler errors, recovered panics, the
+router's `404` and `405`, static misses, oversized bodies, a client that closed the request and fiber's
+pre-routing rejections. The renderer gets the error and a `srvr.ErrorRequest` (method, path, matched
+route, trace id and request headers; never the query string) and returns a `srvr.ErrorResponse`.
+srvr's own errors can be told apart with `errors.Is` and `errors.As`: `srvr.ErrNotFound` (which also
+matches `prblm.ErrNotFound`), `*srvr.MethodNotAllowedError` (with `Allow`), `srvr.ErrRequestTooLarge`,
+`srvr.ErrHeadersTooLarge` and `srvr.ErrRequestTimeout` (fiber), `srvr.ErrClientClosed` and
+`*srvr.PanicError`. It cannot be combined with `srvr.WithProblemOptions` (construction fails).
+
+To change a few answers only, wrap `srvr.DefaultErrorRenderer()`, which answers like the default,
+with the server's trace id:
+
+```go
+var errQuotaExceeded = errors.New("quota exceeded")
+
+var quotaRenderer = srvr.ErrorRendererFunc(func(ctx context.Context, req srvr.ErrorRequest, err error) srvr.ErrorResponse {
+	if !errors.Is(err, errQuotaExceeded) {
+		return srvr.DefaultErrorRenderer().Render(ctx, req, err)
+	}
+
+	return srvr.ErrorResponse{
+		Status: http.StatusTooManyRequests,
+		Header: http.Header{"Content-Type": {"application/json"}, "Retry-After": {"60"}},
+		Body:   []byte(`{"code":"quota_exceeded"}`),
+		Title:  "quota exceeded", // for the access record and error hooks only
+	}
+})
+
+srv, err := srvr.New(srvr.WithErrorRenderer(quotaRenderer))
+```
+
+A house format maps each kind of error to a fixed code and never echoes the error's text, which can
+carry internals (SQL, file paths, upstream addresses):
+
+```go
+var houseRenderer = srvr.ErrorRendererFunc(func(_ context.Context, req srvr.ErrorRequest, err error) srvr.ErrorResponse {
+	status, code := http.StatusInternalServerError, "internal"
+
+	var mna *srvr.MethodNotAllowedError
+
+	switch {
+	case errors.Is(err, srvr.ErrNotFound):
+		status, code = http.StatusNotFound, "not_found"
+	case errors.As(err, &mna):
+		status, code = http.StatusMethodNotAllowed, "method_not_allowed"
+	case errors.Is(err, srvr.ErrRequestTooLarge):
+		status, code = http.StatusRequestEntityTooLarge, "too_large"
+	case errors.Is(err, srvr.ErrClientClosed):
+		status, code = 499, "client_closed"
+	}
+
+	h := http.Header{"Content-Type": {"application/json"}}
+	if mna != nil {
+		h.Set("Allow", strings.Join(mna.Allow, ", "))
+	}
+
+	return srvr.ErrorResponse{
+		Status: status,
+		Header: h,
+		Body:   []byte(`{"code":"` + code + `","trace":"` + req.TraceID + `"}`),
+	}
+})
+```
+
+Both are compiled and run by `Example_customErrorRendering` in
+[readme_example_test.go](readme_example_test.go). The same renderer works on every engine:
+`ginsrvr.New(srvr.WithErrorRenderer(r))`, `fibersrvr.New(srvr.WithErrorRenderer(r))`.
+
+srvr keeps its safety rules around any renderer:
+
+- The renderer is called at most once per request, never after the response started: a handler that
+  already wrote keeps its response, and the record says `srvr.response.committed`.
+- An error whose `Unwrap` chain is cyclic or panics is made walkable before the renderer sees it.
+- A renderer that panics, answers a status outside `400`-`599`, a body over 1 MiB, a body without
+  `Content-Type`, or takes longer than 5 seconds is replaced by srvr's fixed safe `500` problem, and
+  the record says why in `srvr.renderer.failure`. Its context keeps the request's values but not its
+  cancellation.
+- `Content-Length` is set from the body; `Transfer-Encoding` and hop-by-hop headers are dropped. A
+  renderer header replaces the handler's header of the same name, except `Vary`, which is merged.
+- The log records the error chain as without a renderer; `problem.type` and `problem.title` come from
+  `ErrorResponse.Type` and `Title` and are left out when empty (see [LOGGING.md](LOGGING.md)).
+
+Engine differences, pinned by the parity tests (`internal/paritytest`):
+
+- fiber never cancels a request's context when the client disconnects, so the renderer gets the
+  handler's error, never `srvr.ErrClientClosed`.
+- fiber sends nothing before the handler returns: only a started body stream (`SendStreamWriter`)
+  counts as committed, and a buffered body is replaced by the renderer's answer.
+- net/http and gin reject headers over `MaxHeaderBytes` before srvr runs, with Go's plain-text `431`;
+  fiber hands `srvr.ErrHeadersTooLarge` to the renderer.
+- gin: a status-only abort (`c.AbortWithStatus(401)`) keeps gin's bare status; the renderer is not
+  called, the error hook is. Without a renderer gin answers a closed request with an empty `200`, as
+  in v0.3.0; with one it is `499` through the renderer, as on net/http.
+
 ## Modules
 
 | Module | Purpose | Dependencies |

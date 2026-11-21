@@ -2,6 +2,7 @@ package ginsrvr
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +40,8 @@ func errorChain(n int) error {
 // as a 405 problem, a body over MaxRequestBodyBytes answered
 // 413, a 32-link error chain, a success from a client sending a
 // User-Agent that WithoutAccessLogUserAgent leaves out of the record, and
-// a file a static mount serves from disk.
+// a file a static mount serves from disk, and the handler error with an
+// error hook installed.
 // Each case runs sequentially and, as
 // "<case> parallel", from GOMAXPROCS goroutines with b.RunParallel.
 func BenchmarkPipeline(b *testing.B) {
@@ -152,6 +154,11 @@ var pipelineCases = []pipelineCase{
 		userAgent: "bench-client/1.0", opts: []srvr.Option{srvr.WithoutAccessLogUserAgent()},
 	},
 	{name: "static", method: http.MethodGet, path: "/assets/app.js", status: http.StatusOK, static: true},
+	{
+		// design D8: compared with "handler error", zero added allocs/op.
+		name: "handler error with error hook", method: http.MethodGet, path: "/fail", status: http.StatusInternalServerError,
+		opts: []srvr.Option{srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) {})},
+	},
 }
 
 // request returns the case's request. serve rewinds its body, so it is

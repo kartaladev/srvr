@@ -94,11 +94,11 @@
 
 ## 7. Slice: parity, documentation and end-to-end verification
 
-- [ ] 7.1 Parity: `internal/paritytest` runs every Examples row of error-rendering on all three engines with the default renderer (golden, byte-for-byte) and with `R` (identical status, body and listed headers); documented differences (fiber never cancels a context, net/http's pre-routing 431) are pinned as engine-parity exceptions; verify `go test -race ./...` passes in `internal/paritytest`
-- [ ] 7.2 Documentation: README section "Custom error rendering" (wrapping `DefaultErrorRenderer`, a house-format renderer that never echoes error text), LOGGING.md (`problem` group optionality, `srvr.renderer.failure`, schema note), godoc review of every new name, CHANGELOG complete; verify `go test -run Example ./...` passes
+- [x] 7.1 Parity: `internal/paritytest` runs every Examples row of error-rendering on all three engines with the default renderer (golden, byte-for-byte) and with `R` (identical status, body and listed headers); documented differences (fiber never cancels a context, net/http's pre-routing 431) are pinned as engine-parity exceptions; verify `go test -race ./...` passes in `internal/paritytest`
+- [x] 7.2 Documentation: README section "Custom error rendering" (wrapping `DefaultErrorRenderer`, a house-format renderer that never echoes error text), LOGGING.md (`problem` group optionality, `srvr.renderer.failure`, schema note), godoc review of every new name, CHANGELOG complete; verify `go test -run Example ./...` passes
 - [ ] 7.3 Final benchmark comparison (design D10): ask the owner first; base commit vs branch on every engine, default and trivial renderer, 10 interleaved runs, `benchstat`; record the table in `notes.md`; STOP for the owner if a threshold is crossed
-- [ ] 7.4 End-to-end verification locally (GitHub CI is disabled): `make check` and `make cover` from the root; every hot path of design Hot Paths covered (`go tool cover -func`); `govulncheck`; `openspec validate pluggable-error-renderer --strict`; gopls diagnostics clean
-- [ ] 7.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `test(paritytest): pin error rendering parity and document custom renderers`; verify with `git log -1 --stat`
+- [x] 7.4 End-to-end verification locally (GitHub CI is disabled): `make check` and `make cover` from the root; every hot path of design Hot Paths covered (`go tool cover -func`); `govulncheck`; `openspec validate pluggable-error-renderer --strict`; gopls diagnostics clean
+- [x] 7.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `test(paritytest): pin error rendering parity and document custom renderers`; verify with `git log -1 --stat`
 
 ## 8. Slice: release
 

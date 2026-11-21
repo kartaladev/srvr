@@ -32,6 +32,10 @@ once tagged.
   `srvr.ErrHeadersTooLarge` for 431, `srvr.ErrRequestTimeout` for 408, fiber's `*fiber.Error`
   for any other), with the access record naming the answer sent. A body stream the handler set is
   kept (the renderer is not called); a buffered body is replaced by the renderer's answer.
+- README section "Custom error rendering": wrapping `srvr.DefaultErrorRenderer`, a house-format
+  renderer, the safety rules srvr keeps around every renderer and the engine differences, with
+  runnable examples (`Example_customErrorRendering`). The parity tests run every custom-renderer
+  row on all three engines and pin the engine differences as explicit rows.
 
 ### Changed
 

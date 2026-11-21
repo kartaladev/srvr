@@ -1,6 +1,7 @@
 package fibersrvr_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,7 +37,8 @@ func errorChain(n int) error {
 // unmatched path whose record WithUnmatchedRecordLimit suppresses, and a
 // success from a client sending a User-Agent that
 // WithoutAccessLogUserAgent leaves out of the record, and a file a static
-// mount serves from disk, without and with fiber's open-file cache. Each case runs sequentially and, as "<case>
+// mount serves from disk, without and with fiber's open-file cache, and the
+// handler error with an error hook installed. Each case runs sequentially and, as "<case>
 // parallel", from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
 // connection is part of every measurement.
 //
@@ -92,6 +94,11 @@ func BenchmarkPipeline(b *testing.B) {
 			// WithSendFileCache buys (design D2).
 			name: "static cached", path: "/assets/app.js", status: http.StatusOK, static: true,
 			staticOpts: []srvr.StaticOption{fibersrvr.WithSendFileCache(time.Minute)},
+		},
+		{
+			// design D8: compared with "handler error", zero added allocs/op.
+			name: "handler error with error hook", path: "/fail", status: http.StatusInternalServerError,
+			opts: []srvr.Option{srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) {})},
 		},
 	}
 

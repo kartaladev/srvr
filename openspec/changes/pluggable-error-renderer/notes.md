@@ -180,3 +180,14 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** unassigned
 - **Context:** applied: the private `answer` struct merged into `ErrorReport` (same three fields; `answerOf` returns it, records and the hook share one value); a needless `kept` variable dropped from `TestErrorHook_NoAllocation`. Deferred (altitude review): `engine.Core.CallErrorHook` is exported for gin's status-only abort and relies on callers not to treat it as recording; a semantic method (such as "report an answer that is no failure") would keep that rule inside `internal/engine`.
 - **Suggested action:** revisit when a second engine needs to call the hook without recording.
+
+### Slice 7: benchmarks pending the owner's go-ahead (3.5, 4.3, 5.3, slice 6 hook row, 7.3)
+- **Status:** open
+- **Target:** pluggable-error-renderer (tasks 3.5, 4.3, 5.3, 7.3)
+- **Context:** owner 2026-11-21: machine busy. Tasks 3.5, 4.3, 5.3, the slice 6 "handler error with error hook" row and the final comparison 7.3 are all still to measure. Lead decision 2026-11-21: the hook row was added to `BenchmarkPipeline` in `ginsrvr` and `fibersrvr` too (slice 7); only a compile smoke ran (`GOWORK=off go test -run '^$' -bench 'Pipeline/handler_error_with' -benchtime=1x .` in both modules, passes).
+- **Suggested action:** once the owner confirms the machine is quiet, run 3.5/4.3/5.3 and 7.3 together (base vs branch, every engine, default and trivial renderer, hook row against "handler error" for zero added allocs/op, 10 interleaved runs, `benchstat`), record the table here and STOP for the owner if a threshold is crossed.
+
+### Slice 7: parity exceptions pinned as explicit rows
+- **Status:** closed: recorded
+- **Target:** pluggable-error-renderer
+- **Context:** `TestParity_CustomRendering` (`internal/paritytest/custom_rendering_test.go`) runs every "Custom renderer on every engine" row on the three engines with R (status, Content-Type, Allow, body, one call with a matching error, access record) and records differences as `except` entries: fiber client-closed (R gets the plain handler error, answers 500), net/http and gin 431 (Go's plain-text 431 before srvr, R not called), fiber buffered body then error (R replaces it; net/http and gin keep the 200). `TestParity_DefaultRendering` now runs the fiber client-closed row explicitly (safe 500 problem without the error text) instead of skipping it; the gin default empty 200 stays pinned by the golden. The Faulty, Hostile and lifecycle scenarios stay covered per engine (`renderer_test.go` of each module, `internal/engine` render tests), not duplicated in paritytest. The gin status-only abort row stays in `ginsrvr` (gin only).

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -71,6 +72,13 @@ type renderRow struct {
 	// clientCloses makes the client half-close its connection after the
 	// request and the handler wait for the cancellation (net/http and gin).
 	clientCloses bool
+	// except replaces the golden comparison for the engines of a recorded
+	// engine-parity exception.
+	except map[string]func(*testing.T, goldenResponse)
+	// writeFirst makes the handler write a 200 "ok" body before failing.
+	writeFirst bool
+	// bigHeader adds a 16 KiB header to the request.
+	bigHeader bool
 	// gin reports the error by assigning c.Errors instead of c.Error,
 	// which never returns for a cyclic chain.
 	ginAssign bool
@@ -88,12 +96,27 @@ var renderRows = []renderRow{
 	},
 	{name: "static miss", method: "GET", path: "/assets/missing.js", static: true},
 	{name: "static method not allowed", method: "DELETE", path: "/assets/app.js", static: true},
-	{name: "client closed", method: "GET", path: "/x", route: "/x", routeMethod: "GET", clientCloses: true, fail: func() error { return fmt.Errorf("q: %w", context.Canceled) }},
+	{
+		name: "client closed", method: "GET", path: "/x", route: "/x", routeMethod: "GET", clientCloses: true, fail: func() error { return fmt.Errorf("q: %w", context.Canceled) },
+		except: map[string]func(*testing.T, goldenResponse){"fiber": wantSafe500},
+	},
 	{name: "cyclic chain", method: "GET", path: "/x", route: "/x", routeMethod: "GET", ginAssign: true, fail: func() error { return &renderCyclicError{} }},
 	{
 		name: "consumer mapper", method: "GET", path: "/x", route: "/x", routeMethod: "GET", fail: func() error { return errQuota },
 		opts: []srvr.Option{srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(errQuota, http.StatusTooManyRequests)))},
 	},
+}
+
+// wantSafe500 checks the fiber client-closed exception: a disconnect never
+// cancels fiber's context, so the handler's context.Canceled is an
+// ordinary error, answered as v0.3.0 did: the safe 500 problem, without
+// the error text.
+func wantSafe500(t *testing.T, g goldenResponse) {
+	t.Helper()
+
+	if g.Status != http.StatusInternalServerError || strings.Contains(g.Body, "canceled") {
+		t.Errorf("got %d %s, want the safe 500 problem", g.Status, g.Body)
+	}
 }
 
 // TestParity_DefaultRendering covers error-rendering / Scenario: Default
@@ -121,15 +144,18 @@ func TestParity_DefaultRendering(t *testing.T) {
 	}
 
 	for _, row := range renderRows {
-		for _, engine := range []string{"net/http", "gin", "fiber"} {
-			if row.clientCloses && engine == "fiber" {
-				continue // fiber's context is never cancelled by a disconnect
-			}
-
+		for _, engine := range engineNames {
 			t.Run(engine+"/"+row.name, func(t *testing.T) {
 				t.Parallel()
 
-				g := sendRenderRow(t, startRenderRow(t, engine, row), row)
+				base, _ := startRenderRow(t, engine, row)
+				g := sendRenderRow(t, base, row)
+
+				if check, ok := row.except[engine]; ok {
+					check(t, g)
+
+					return
+				}
 
 				mu.Lock()
 				defer mu.Unlock()
@@ -156,6 +182,9 @@ func TestParity_DefaultRendering(t *testing.T) {
 	}
 }
 
+// engineNames lists every engine a rendering row runs on.
+var engineNames = []string{"net/http", "gin", "fiber"}
+
 // equalHeader compares headers, a nil and an empty one being equal.
 func equalHeader(a, b http.Header) bool {
 	if len(a) != len(b) {
@@ -171,8 +200,9 @@ func equalHeader(a, b http.Header) bool {
 	return true
 }
 
-// startRenderRow starts engine's server for row and returns its base URL.
-func startRenderRow(t *testing.T, engine string, row renderRow) string {
+// startRenderRow starts engine's server for row and returns its base URL
+// and its log.
+func startRenderRow(t *testing.T, engine string, row renderRow) (string, *logBuffer) {
 	t.Helper()
 
 	logs := &logBuffer{}
@@ -182,7 +212,11 @@ func startRenderRow(t *testing.T, engine string, row renderRow) string {
 	case "net/http":
 		srv := newNetServer(t, logs, func(g *srvr.Group) {
 			if row.route != "" {
-				g.Handle(row.routeMethod, row.route, func(_ http.ResponseWriter, r *http.Request) error {
+				g.Handle(row.routeMethod, row.route, func(w http.ResponseWriter, r *http.Request) error {
+					if row.writeFirst {
+						_, _ = io.WriteString(w, "ok")
+					}
+
 					return row.outcome(r)
 				})
 			}
@@ -191,11 +225,15 @@ func startRenderRow(t *testing.T, engine string, row renderRow) string {
 			must(t, srv.Register(srvr.Static("/assets", fx.mapSite)))
 		}
 
-		return run(t, srv)
+		return run(t, srv), logs
 	case "gin":
 		srv := newGinServer(t, logs, func(g *gin.RouterGroup) {
 			if row.route != "" {
 				g.Handle(row.routeMethod, row.route, func(c *gin.Context) {
+					if row.writeFirst {
+						c.String(http.StatusOK, "ok")
+					}
+
 					err := row.outcome(c.Request)
 					switch {
 					case err == nil:
@@ -212,13 +250,18 @@ func startRenderRow(t *testing.T, engine string, row renderRow) string {
 			must(t, srv.Register(ginsrvr.Static("/assets", fx.mapSite)))
 		}
 
-		return run(t, srv)
+		return run(t, srv), logs
 	default:
 		srv := newFiberServer(t, logs, idleWorkerDuration, func(r fiber.Router) {
 			if row.route != "" {
-				r.Add([]string{row.routeMethod}, row.route, func(fiber.Ctx) error {
-					if row.readBody {
+				r.Add([]string{row.routeMethod}, row.route, func(c fiber.Ctx) error {
+					switch {
+					case row.readBody:
 						return nil // fasthttp rejects the body before routing
+					case row.clientCloses:
+						return row.fail() // fiber's context never sees the disconnect
+					case row.writeFirst:
+						_ = c.SendString("ok") // buffered: fasthttp sends nothing yet
 					}
 
 					return row.outcome(nil)
@@ -229,7 +272,7 @@ func startRenderRow(t *testing.T, engine string, row renderRow) string {
 			must(t, srv.Register(fibersrvr.Static("/assets", fx.mapSite)))
 		}
 
-		return run(t, srv)
+		return run(t, srv), logs
 	}
 }
 
@@ -259,6 +302,9 @@ func sendRenderRow(t *testing.T, base string, row renderRow) goldenResponse {
 
 	var req bytes.Buffer
 	fmt.Fprintf(&req, "%s %s HTTP/1.1\r\nHost: test\r\nTraceparent: %s\r\nConnection: close\r\n", row.method, row.path, traceparent)
+	if row.bigHeader {
+		fmt.Fprintf(&req, "X-Big: %s\r\n", strings.Repeat("a", 16<<10))
+	}
 	if row.body != nil {
 		fmt.Fprintf(&req, "Content-Length: %d\r\n", len(row.body))
 	}
