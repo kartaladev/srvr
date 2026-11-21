@@ -217,3 +217,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 | panic | 316.9µ → 295.3µ ~ (0.739) | 417.7µ → 372.9µ ~ (0.529) | 260.9µ → 221.0µ ~ (0.631) |
 
 - **Suggested action:** none for this change. D10 thresholds (default renderer error-row ns/op > +5% with p < 0.05, or extra allocs/op on `success`) not reached. The sec/op spread makes ns/op comparisons weak; a quieter or longer run (`-count` higher, `-benchtime`) would tighten it if ever needed.
+
+### Release prep (tasks 8.1, 8.2)
+
+- **Status:** done 2026-11-22; awaiting owner (8.3)
+- **Target:** pluggable-error-renderer
+- **Context:** 8.1: `git log origin/main --oneline -1` is `e8b9c84 Merge pull request #27 from kartaladev/feat/pluggable-error-renderer`. 8.2 on branch `chore/release-v0.4.0`: `CHANGELOG.md` `[Unreleased]` (engine-internal-split and pluggable-error-renderer entries) moved under `## [v0.4.0] - 2026-11-22`, following the v0.3.0 layout (empty `## [Unreleased]` kept above, `v`-prefixed heading, no link references in the file). The date is provisional: set it to the tag date in 8.4 if the release happens later.
+- **Evidence (dry run, no tag created or pushed, no go.mod change committed):**
+  - Step 1: changelog moved (this commit).
+  - Step 2: `make check` exit 0; `make cover` exit 0 (core total 99.3%, internal 99.7%). `v0.4.0` absent locally, on origin and on proxy.golang.org (`unknown revision v0.4.0`).
+  - Steps 3-4: in a throwaway detached worktree at `e8b9c84` (`GOWORK=off`), the published pseudo-versions `v0.3.1-0.20261121232845-e8b9c84138f4` of the core and `otelsrvr` stand in for `v0.4.0`. `ginsrvr`, `fibersrvr`, `otelsrvr`: dropreplace, `go get`, `go mod tidy`, `go vet`, `go test` all pass, no `replace` left. `otelsetup` with both requires and both replaces dropped: same, passes. Caveat: with the `replace` still in place `go get ...@v0.4.0` accepts the missing version without contacting the proxy, so step 3 must drop the `replace` before (or verify after) `go get`.
+  - Step 5: restoring the go.mod files leaves `main`'s state; `internal/paritytest` `go mod tidy -diff` clean (it moves to `v0.4.0` only after real tags).
+  - Step 6: `gh` authenticated; `gh release view v0.3.0` exists ("srvr v0.3.0"), `v0.4.0` not found; `--verify-tag` would refuse until the core tag exists.
+  - Tags to push, in order: `v0.4.0`, `ginsrvr/v0.4.0`, `fibersrvr/v0.4.0`, `otelsrvr/v0.4.0`, `otelsetup/v0.4.0`.
+- **Suggested action:** 8.3 owner confirmation of `v0.4.0` and of pushing the tags.

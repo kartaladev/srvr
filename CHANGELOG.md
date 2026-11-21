@@ -6,6 +6,8 @@ once tagged.
 
 ## [Unreleased]
 
+## [v0.4.0] - 2026-11-22
+
 ### Added
 
 - srvr's own errors are public, so a renderer or error hook tells them apart with `errors.Is` and
