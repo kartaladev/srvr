@@ -119,17 +119,6 @@ func srvrProblemOptions(hook func(context.Context, error, *prblm.Problem)) []prb
 // answers every error in place of prblm.
 func (c *Core) HasErrorRenderer() bool { return c.settings.ErrorRenderer != nil }
 
-// RejectErrorRenderer returns an error wrapping [errchain.ErrConfig] when
-// a renderer was set, for an engine that cannot render through one yet
-// (fibersrvr, until slice 5).
-func (c *Core) RejectErrorRenderer() error {
-	if c.settings.ErrorRenderer == nil {
-		return nil
-	}
-
-	return errchain.NewConfigError("ErrorRenderer", errchain.TypeName(c.settings.ErrorRenderer), "not supported by this engine yet")
-}
-
 // EngineOptions returns, in order, the values of the engine-specific
 // options for engine. An engine-specific option of another engine is an
 // error wrapping [errchain.ErrConfig] naming that option: configuration is never

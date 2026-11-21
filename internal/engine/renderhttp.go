@@ -117,7 +117,7 @@ func WriteHTTPError(w http.ResponseWriter, res ErrorResponse) {
 	h := w.Header()
 	for k, v := range res.Header {
 		if k == "Vary" {
-			addVary(h, v)
+			AddVary(h, v)
 
 			continue
 		}
@@ -131,9 +131,9 @@ func WriteHTTPError(w http.ResponseWriter, res ErrorResponse) {
 	_, _ = w.Write(res.Body)
 }
 
-// addVary adds to h each field name of add that h's Vary does not list
+// AddVary adds to h each field name of add that h's Vary does not list
 // yet, compared case-insensitively, as prblm merges Vary.
-func addVary(h http.Header, add []string) {
+func AddVary(h http.Header, add []string) {
 	for _, line := range add {
 		for name := range strings.SplitSeq(line, ",") {
 			if name = strings.TrimSpace(name); name != "" && !varies(h, name) {

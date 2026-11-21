@@ -599,8 +599,7 @@ func WithDebugBufferConfig(c DebugBufferConfig) Option {
 // r must not be nil, and it cannot be combined with [WithProblemOptions]
 // (even an empty call), which configure the prblm renderer r replaces: to
 // keep prblm for some errors, delegate to [DefaultErrorRenderer]. A later
-// WithErrorRenderer replaces an earlier one. The net/http and gin engines
-// support it in this release; fibersrvr rejects it.
+// WithErrorRenderer replaces an earlier one. Every engine supports it.
 func WithErrorRenderer(r ErrorRenderer) Option {
 	return func(s *engine.Settings) {
 		if errchain.IsNil(r) {

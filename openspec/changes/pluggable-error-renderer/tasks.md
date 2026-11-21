@@ -66,17 +66,18 @@
 
 ## 5. Slice: fiber renders through the ErrorRenderer
 
-- [ ] 5.1 Remove fiber's "not supported yet" rejection (error-rendering / Scenario: Rejected renderer configuration, fiber rows); verify `go test -race -run TestWithErrorRenderer ./...` passes in `fibersrvr`
+- [x] 5.1 Remove fiber's "not supported yet" rejection (error-rendering / Scenario: Rejected renderer configuration, fiber rows); verify `go test -race -run TestWithErrorRenderer ./...` passes in `fibersrvr`
   - RED: fiber rows expect acceptance
   - GREEN: drop the rejection
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 5.2 fiber answers every error, panic and pre-routing rejection through the renderer (error-rendering / Scenarios: Custom renderer, Faulty renderer, Hostile errors, Renderer and lifecycle; fiber rows, including the 431 and 408 rows and a body stream already started); verify `go test -race -run 'TestErrorRenderer_' ./...` passes in `fibersrvr`
+- [x] 5.2 fiber answers every error, panic and pre-routing rejection through the renderer (error-rendering / Scenarios: Custom renderer, Faulty renderer, Hostile errors, Renderer and lifecycle; fiber rows, including the 431 and 408 rows and a body stream already started); verify `go test -race -run 'TestErrorRenderer_' ./...` passes in `fibersrvr`
   - RED: `app.Test` rows (431 and 408 over a real listener where `app.Test` cannot produce them); expected failure: fiberprblm renders instead of `R`
   - GREEN: `renderError` and srvr's recovery call `engine.Render` when set; `RecordRejection` passes `ErrHeadersTooLarge`/`ErrRequestTimeout`/`ErrRequestTooLarge` and the renderer renders the rejection; router answers map `fiber.ErrNotFound`/`ErrMethodNotAllowed` to srvr's errors
   - REFACTOR: none expected beyond `/simplify`
 - [ ] 5.3 Re-run the D10 benchmarks for fiber (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed
-- [ ] 5.4 Verify: `make check MODULES="fibersrvr internal/paritytest"`; coverage; default golden rows unchanged; gopls diagnostics clean
-- [ ] 5.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
+  - skipped 2026-11-21 (owner: machine busy); see notes.md "Slice 5: benchmarks skipped"
+- [x] 5.4 Verify: `make check MODULES="fibersrvr internal/paritytest"`; coverage; default golden rows unchanged; gopls diagnostics clean
+- [x] 5.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
 
 ## 6. Slice: error hook signature and log schema (after owner decisions 1.7 and 1.8)
 

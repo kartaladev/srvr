@@ -16,7 +16,7 @@ once tagged.
   response started, a walkable error, a 5-second deadline, status `400`-`599`, a body of at most
   1 MiB with a `Content-Type`; a faulty answer becomes the safe `500` problem and the record names
   the fault in the new key `srvr.renderer.failure` (`srvr.log.schema` stays `1`). It cannot be
-  combined with `WithProblemOptions`; fibersrvr rejects it until it supports it.
+  combined with `WithProblemOptions`.
   Without it, every response and record is unchanged.
 - ginsrvr supports `srvr.WithErrorRenderer`: srvr's own error middleware and recovery replace
   ginprblm's, so the renderer answers the last `c.Errors` entry, recovered panics, gin's 404 and
@@ -24,6 +24,12 @@ once tagged.
   status-only abort such as `c.AbortWithStatus(401)` keeps gin's bare status and calls neither
   the renderer nor the error hook. A request the client closed is answered `499` through the
   renderer (without one, gin keeps v0.3.0's empty `200`).
+- fibersrvr supports `srvr.WithErrorRenderer`: the renderer answers handler errors, recovered
+  panics, fiber's 404 and 405 (as `srvr.ErrNotFound` and `*srvr.MethodNotAllowedError`), static
+  misses and fasthttp's pre-routing rejections (`srvr.ErrRequestTooLarge` for 413,
+  `srvr.ErrHeadersTooLarge` for 431, `srvr.ErrRequestTimeout` for 408, fiber's `*fiber.Error`
+  for any other), with the access record naming the answer sent. A body stream the handler set is
+  kept (the renderer is not called); a buffered body is replaced by the renderer's answer.
 
 ### Changed
 
