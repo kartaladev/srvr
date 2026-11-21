@@ -646,6 +646,21 @@ func TestErrorRenderer_Hostile(t *testing.T) {
 			},
 		},
 		{
+			name: "buffered body then panic",
+			handler: func(c fiber.Ctx) error {
+				_ = c.Status(http.StatusOK).SendString("partial")
+				panic("late")
+			},
+			calls: 1,
+			check: func(t *testing.T, res response, rec map[string]any, _ error) {
+				t.Helper()
+
+				if res.status != 500 || res.body != "{}" || rec["srvr.response.committed"] != nil {
+					t.Errorf("response %d %q record %v, want R's answer, not committed", res.status, res.body, rec)
+				}
+			},
+		},
+		{
 			name: "body stream then error", handler: streamBody(func() error { return errors.New("late") }), calls: 0,
 			check: func(t *testing.T, res response, rec map[string]any, _ error) {
 				t.Helper()
@@ -936,5 +951,105 @@ func TestErrorRenderer_AbortHandler(t *testing.T) {
 
 	if rec := out.waitRecord(t, "http.request.failed"); rec["error.kind"] != "panic" {
 		t.Fatalf("record %v, want a panic", rec)
+	}
+}
+
+// TestErrorRenderer_RejectionRecord covers the access record and the
+// observers' result of a request fasthttp rejected before routing: both
+// report the answer the client got, the renderer's or srvr's safe 500
+// when the renderer panics, not the status fiber set.
+func TestErrorRenderer_RejectionRecord(t *testing.T) {
+	t.Parallel()
+
+	answer := []byte("bad request!")
+	tests := []struct {
+		name     string
+		renderer srvr.ErrorRendererFunc
+		opt      srvr.Option
+		send     func(t *testing.T, addr string) response
+		status   int
+	}{
+		{
+			name: "413 answered 400",
+			renderer: func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+				return srvr.ErrorResponse{Status: 400, Header: http.Header{"Content-Type": {"text/plain"}}, Body: answer}
+			},
+			opt: srvr.WithMaxRequestBodyBytes(10),
+			send: func(t *testing.T, addr string) response {
+				t.Helper()
+
+				return rawRequest(t, addr, http.MethodPost, "/x", "", []byte("12345678901"))
+			},
+			status: 400,
+		},
+		{
+			name:     "431 renderer panics",
+			renderer: func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse { panic("boom") },
+			opt:      srvr.WithMaxHeaderBytes(8192),
+			send: func(t *testing.T, addr string) response {
+				t.Helper()
+
+				return rawRequest(t, addr, http.MethodGet, "/x", "X-Pad: "+strings.Repeat("a", 16<<10)+"\r\n", nil)
+			},
+			status: 500,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			obs := &recordingObserver{}
+			srv, out := newServer(t, tt.opt, srvr.WithErrorRenderer(tt.renderer), srvr.WithObserver(obs))
+			mustNil(t, srv.Register(routes(func(g fiber.Router) {
+				g.Get("/x", ok)
+				g.Post("/x", ok)
+			})))
+			start(t, srv)
+
+			res := tt.send(t, srv.Addr())
+			rec := out.waitRecord(t, "http.request.failed")
+			_, results := obs.seen() // WriteAccess ends the observers before it logs
+			if len(results) != 1 {
+				t.Fatalf("observer ended %d times, want 1", len(results))
+			}
+			result := results[0]
+
+			if res.status != tt.status || rec["http.response.status_code"] != float64(res.status) ||
+				rec["http.response.body.size"] != float64(len(res.body)) || result.Status != res.status {
+				t.Errorf("client got %d (%d bytes); access record status_code=%v body.size=%v; observer status %d",
+					res.status, len(res.body), rec["http.response.status_code"], rec["http.response.body.size"], result.Status)
+			}
+		})
+	}
+}
+
+// TestErrorRenderer_RequestRetained covers a renderer keeping its
+// ErrorRequest: later failing requests with a path of the same length,
+// which reuse fiber's pooled buffers, leave it unchanged.
+func TestErrorRenderer_RequestRetained(t *testing.T) {
+	t.Parallel()
+
+	reqs := make(chan srvr.ErrorRequest, 1)
+	r := srvr.ErrorRendererFunc(func(_ context.Context, req srvr.ErrorRequest, _ error) srvr.ErrorResponse {
+		reqs <- req
+		return srvr.ErrorResponse{Status: 429}
+	})
+	base, _ := renderedServer(t, r, func(g fiber.Router) {
+		g.Get("/items/:id", func(fiber.Ctx) error { return errQuota })
+		g.Post("/items/:id", func(fiber.Ctx) error { return errQuota })
+	})
+
+	do(t, http.MethodGet, base+"/items/aaaa", nil, map[string]string{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"})
+	first := <-reqs
+
+	for range 30 {
+		do(t, http.MethodPost, base+"/items/bbbb", nil, map[string]string{"traceparent": "00-11111111111111111111111111111111-00f067aa0ba902b7-01"})
+		<-reqs
+	}
+
+	want := srvr.ErrorRequest{Method: http.MethodGet, Path: "/items/aaaa", Route: "/items/:id", TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"}
+	if first.Method != want.Method || first.Path != want.Path || first.Route != want.Route || first.TraceID != want.TraceID {
+		t.Errorf("retained request %+v, want %+v", first, want)
 	}
 }

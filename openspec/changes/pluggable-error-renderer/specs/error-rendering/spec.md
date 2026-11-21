@@ -136,8 +136,9 @@ srvr SHALL guard the error against cyclic chains before calling the renderer, SH
 | returns an error whose `Unwrap` chain is cyclic | `R` receives an error that `errors.Is` can walk and that wraps no cycle; `R`'s answer is sent |
 | returns an error whose `Unwrap` panics | `R` is called once with a walkable error; `R`'s answer is sent |
 | returns a typed-nil error `(*myErr)(nil)` | `R` is called with it, as prblm is today; no panic escapes |
-| writes `200` then returns `errors.New("late")` | `R` is not called; the client keeps the `200`; the record has `srvr.response.committed` `true` |
-| writes `200` then panics | `R` is not called; the record has `error.kind` `panic` |
+| writes `200` then returns `errors.New("late")` (on fiber: starts a `200` body stream) | `R` is not called; the client keeps the `200`; the record has `srvr.response.committed` `true` |
+| writes `200` then panics (on fiber: starts a `200` body stream) | `R` is not called; the record has `error.kind` `panic` |
+| writes a buffered `200` body then panics (fiber only: fasthttp sends nothing before the handler returns, so only a started body stream counts as committed) | `R` is called; the client gets `R`'s answer, not the `200`; the record has no `srvr.response.committed` |
 | returns `ErrQuota` and `R` writes `Cache-Control: no-store` while the handler had set `Cache-Control: max-age=60` | the response has one `Cache-Control` line, `no-store` (the renderer's header replaces the handler's) |
 | returns `ErrQuota` and `R` sets `Vary: Accept` while the handler set `Vary: Origin` | `Vary` lists `Origin` and `Accept` |
 | 50 concurrent requests, each failing | every response is `R`'s; the test passes under `-race` |

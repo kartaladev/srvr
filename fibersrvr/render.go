@@ -106,11 +106,11 @@ func errorRequest(c fiber.Ctx) engine.ErrorRequest {
 }
 
 // fiberTarget is the engine.ErrorTarget of a fiber request. With hold,
-// the answer is kept in the request's locals instead of written: for a
-// request fasthttp rejected before routing, requestStage renders while
-// fiber replays the chain, so the access record has the answer sent, but
-// fiber then resets the body and calls its error handler, which sends the
-// held answer ([Server.handleError]).
+// the answer is also kept in the request's locals: for a request fasthttp
+// rejected before routing, requestStage renders while fiber replays the
+// chain, so the access record has the answer sent, but fiber then resets
+// the body and calls its error handler, which sends the held answer
+// ([Server.handleError]).
 type fiberTarget struct {
 	c    fiber.Ctx
 	hold bool
@@ -123,15 +123,16 @@ var _ engine.ErrorTarget = fiberTarget{}
 // fiberprblm treats it.
 func (t fiberTarget) Committed() bool { return t.c.Response().IsBodyStream() }
 
-// WriteError writes res, or holds it.
+// WriteError writes res and, with hold, also keeps it: the access record
+// and the observers then read the status and body the client gets,
+// although fiber resets the body before its error handler sends the held
+// answer again (writing it twice is idempotent: Vary values merge once).
 func (t fiberTarget) WriteError(res engine.ErrorResponse) {
+	writeAnswer(t.c, res)
+
 	if t.hold {
 		t.c.Locals(heldAnswer{}, res)
-
-		return
 	}
-
-	writeAnswer(t.c, res)
 }
 
 // writeAnswer writes res on c's response with prblm v0.3.0's header rules
