@@ -827,35 +827,66 @@ func TestErrorRenderer_Lifecycle(t *testing.T) {
 	}
 }
 
-// TestWithErrorRenderer_Hook covers error-rendering / Scenario: Rejected
-// renderer configuration, the accepted WithErrorHook row on fiber: the
-// hook runs once for every answered error, a pre-routing rejection
-// included.
-func TestWithErrorRenderer_Hook(t *testing.T) {
+// TestErrorHook covers error-responses / Scenario: Consumer mapper and
+// hook on fiber: the hook receives every answered error, a pre-routing
+// rejection included, with an ErrorReport of the answer sent, on the
+// default path and with a renderer.
+func TestErrorHook(t *testing.T) {
 	t.Parallel()
 
-	hooked := make(chan int, 8)
-	srv, out := newServer(t, srvr.WithErrorRenderer(newRecordingRenderer(8)), srvr.WithMaxRequestBodyBytes(10),
-		srvr.WithErrorHook(func(_ context.Context, _ error, p *prblm.Problem) { hooked <- p.Status }))
-	mustNil(t, srv.Register(routes(func(g fiber.Router) {
-		g.Get("/x", func(fiber.Ctx) error { return errQuota })
-		g.Post("/post", ok)
-	})))
-	base := start(t, srv)
-
-	get(t, base+"/x")
-	get(t, base+"/missing")
-	rawRequest(t, srv.Addr(), http.MethodPost, "/post", "", []byte("12345678901"))
-
-	eventually(t, func() bool { return len(out.access(t)) == 3 }, "3 access records")
-
-	var got []int
-	for len(hooked) > 0 {
-		got = append(got, <-hooked)
+	type call struct {
+		err    error
+		report srvr.ErrorReport
 	}
 
-	if slices.Sort(got); !slices.Equal(got, []int{404, 413, 429}) {
-		t.Fatalf("hook statuses %v, want [404 413 429]", got)
+	tests := []struct {
+		name     string
+		renderer bool
+		method   string
+		path     string
+		body     []byte // past the 10-byte body limit for the rejection
+		status   int
+		want     call
+	}{
+		{"default: error", false, http.MethodGet, "/404", nil, 404, call{prblm.ErrNotFound, srvr.ErrorReport{Status: 404, Type: "about:blank", Title: "Not Found"}}},
+		{"renderer: error", true, http.MethodGet, "/x", nil, 429, call{errQuota, srvr.ErrorReport{Status: 429}}},
+		{"renderer: router 404", true, http.MethodGet, "/missing", nil, 404, call{srvr.ErrNotFound, srvr.ErrorReport{Status: 404}}},
+		{"renderer: rejection", true, http.MethodPost, "/post", []byte("12345678901"), 413, call{srvr.ErrRequestTooLarge, srvr.ErrorReport{Status: 413}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := make(chan call, 4)
+			opts := []srvr.Option{
+				srvr.WithMaxRequestBodyBytes(10),
+				srvr.WithErrorHook(func(_ context.Context, err error, sent srvr.ErrorReport) { calls <- call{err, sent} }),
+			}
+			if tt.renderer {
+				opts = append(opts, srvr.WithErrorRenderer(newRecordingRenderer(4)))
+			}
+			srv, out := newServer(t, opts...)
+			mustNil(t, srv.Register(routes(func(g fiber.Router) {
+				g.Get("/x", func(fiber.Ctx) error { return errQuota })
+				g.Get("/404", func(fiber.Ctx) error { return prblm.ErrNotFound })
+				g.Post("/post", ok)
+			})))
+			start(t, srv)
+
+			rawRequest(t, srv.Addr(), tt.method, tt.path, "", tt.body)
+			eventually(t, func() bool { return len(out.access(t)) == 1 }, "1 access record")
+
+			if rec := out.access(t)[0]; rec["http.response.status_code"] != float64(tt.status) {
+				t.Fatalf("access record %v, want status %d", rec, tt.status)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("hook called %d times, want once", len(calls))
+			}
+			if c := <-calls; !errors.Is(c.err, tt.want.err) || c.report != tt.want.report {
+				t.Fatalf("hook call %+v, want %+v", c, tt.want)
+			}
+		})
 	}
 }
 

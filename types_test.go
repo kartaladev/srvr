@@ -26,6 +26,7 @@ func TestReexportedNames(t *testing.T) {
 		{"srvr.Trace", reflect.TypeFor[srvr.Trace](), reflect.TypeFor[engine.Trace]()},
 		{"srvr.ShutdownPhase", reflect.TypeFor[srvr.ShutdownPhase](), reflect.TypeFor[engine.ShutdownPhase]()},
 		{"srvr.ErrorHook", reflect.TypeFor[srvr.ErrorHook](), reflect.TypeFor[engine.ErrorHook]()},
+		{"srvr.ErrorReport", reflect.TypeFor[srvr.ErrorReport](), reflect.TypeFor[engine.ErrorReport]()},
 		{"srvr.Option", reflect.TypeFor[srvr.Option](), reflect.TypeFor[engine.Option]()},
 		{"srvr.ConfigError", reflect.TypeFor[srvr.ConfigError](), reflect.TypeFor[errchain.ConfigError]()},
 		{"srvr.RouteCheck", reflect.TypeFor[srvr.RouteCheck](), reflect.TypeFor[engine.RouteCheck]()},

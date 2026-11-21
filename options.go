@@ -412,11 +412,12 @@ func WithProblemOptions(opts ...prblm.Option) Option {
 }
 
 // WithErrorHook sets a hook called for every error the server answers,
-// from srvr's own hook once it has recorded the error, so it runs after a
-// [prblm.OnError] or [prblm.AddErrorHook] hook passed to
-// [WithProblemOptions]. Either way of observing answered errors works; this
-// one is validated at construction and typed as [ErrorHook]. A hook that
-// panics does not affect the response. fn must not be nil.
+// with an [ErrorReport] of the answer sent, once srvr has recorded the
+// error, so it runs after a [prblm.OnError] or [prblm.AddErrorHook] hook
+// passed to [WithProblemOptions]. Unlike those, it also runs with
+// [WithErrorRenderer], receiving the renderer's answer. It is validated at
+// construction and typed as [ErrorHook]. A hook that panics does not
+// affect the response. fn must not be nil.
 func WithErrorHook(fn ErrorHook) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {

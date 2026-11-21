@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/kartaladev/prblm"
+	"github.com/kartaladev/prblm/adapters/ginprblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/ginsrvr"
 )
@@ -749,32 +750,89 @@ func TestErrorRenderer_Lifecycle(t *testing.T) {
 	}
 }
 
-// TestWithErrorRenderer_Hook covers error-rendering / Scenario: Rejected
-// renderer configuration, the accepted WithErrorHook row on gin: the hook
-// runs once for every answered error, and not for a status-only abort.
-func TestWithErrorRenderer_Hook(t *testing.T) {
+// TestErrorHook covers error-responses / Scenario: Consumer mapper and
+// hook on gin: the hook receives every answered error with an
+// ErrorReport of the answer sent, on the default path and with a
+// renderer, and a status-only abort (ginprblm.ErrStatusOnly) on both
+// paths (owner decision 2026-11-21); with a renderer its bare status
+// stays the answer and the report carries no type or title.
+func TestErrorHook(t *testing.T) {
 	t.Parallel()
 
-	hooked := make(chan int, 8)
-	base, out := renderedServer(t, newRecordingRenderer(8), func(g *gin.RouterGroup) {
+	type call struct {
+		err    error
+		report srvr.ErrorReport
+	}
+
+	conf := func(g *gin.RouterGroup) {
 		g.GET("/x", func(c *gin.Context) { _ = c.Error(errQuota) })
+		g.GET("/404", func(c *gin.Context) { _ = c.Error(prblm.ErrNotFound) })
 		g.GET("/401", func(c *gin.Context) { c.AbortWithStatus(http.StatusUnauthorized) })
-	}, srvr.WithErrorHook(func(_ context.Context, _ error, p *prblm.Problem) { hooked <- p.Status }))
-
-	get(t, base+"/x")
-	get(t, base+"/401")
-	get(t, base+"/missing")
-
-	eventually(t, func() bool { return len(out.access(t)) == 3 }, "3 access records")
-
-	var got []int
-	for len(hooked) > 0 {
-		got = append(got, <-hooked)
+		g.GET("/401body", func(c *gin.Context) { c.String(http.StatusUnauthorized, "no") })
+		g.GET("/204", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	}
 
-	if slices.Sort(got); !slices.Equal(got, []int{404, 429}) {
-		t.Fatalf("hook statuses %v, want [404 429]", got)
+	tests := []struct {
+		name     string
+		renderer bool
+		path     string
+		status   int
+		want     []call // nil: the hook is not called
+	}{
+		{"default: error", false, "/404", 404, []call{{prblm.ErrNotFound, srvr.ErrorReport{Status: 404, Type: "about:blank", Title: "Not Found"}}}},
+		{"default: status-only abort", false, "/401", 401, []call{{ginprblm.ErrStatusOnly, srvr.ErrorReport{Status: 401, Type: "about:blank", Title: "Unauthorized"}}}},
+		{"renderer: error", true, "/x", 429, []call{{errQuota, srvr.ErrorReport{Status: 429}}}},
+		{"renderer: router 404", true, "/missing", 404, []call{{srvr.ErrNotFound, srvr.ErrorReport{Status: 404}}}},
+		{"renderer: status-only abort", true, "/401", 401, []call{{ginprblm.ErrStatusOnly, srvr.ErrorReport{Status: 401}}}},
+		{"renderer: written 401 is no abort", true, "/401body", 401, nil},
+		{"renderer: bare success status", true, "/204", 204, nil},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := make(chan call, 4)
+			opts := []srvr.Option{srvr.WithErrorHook(func(_ context.Context, err error, sent srvr.ErrorReport) { calls <- call{err, sent} })}
+			if tt.renderer {
+				opts = append(opts, srvr.WithErrorRenderer(newRecordingRenderer(4)))
+			}
+			srv, out := newServer(t, opts...)
+			mustNil(t, srv.Register(routes(conf)))
+			base := start(t, srv)
+
+			if res := get(t, base+tt.path); res.status != tt.status {
+				t.Fatalf("status %d, want %d", res.status, tt.status)
+			}
+			eventually(t, func() bool { return len(out.access(t)) == 1 }, "1 access record")
+
+			var got []call
+			for len(calls) > 0 {
+				got = append(got, <-calls)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("hook calls %+v, want %+v", got, tt.want)
+			}
+			for i, c := range got {
+				if !errors.Is(c.err, tt.want[i].err) || c.report != tt.want[i].report {
+					t.Fatalf("hook call %+v, want %+v", c, tt.want[i])
+				}
+			}
+		})
+	}
+
+	t.Run("renderer: panicking hook on a status-only abort", func(t *testing.T) {
+		t.Parallel()
+
+		srv, out := newServer(t, srvr.WithErrorRenderer(newRecordingRenderer(4)),
+			srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) { panic("hook") }))
+		mustNil(t, srv.Register(routes(conf)))
+
+		if res := get(t, start(t, srv)+"/401"); res.status != http.StatusUnauthorized {
+			t.Fatalf("status %d, want 401", res.status)
+		}
+		eventually(t, func() bool { return len(out.access(t)) == 1 }, "1 access record")
+	})
 }
 
 // TestProblemGroup_CustomRenderer covers triage-error-records / Scenario:

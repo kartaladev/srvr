@@ -42,7 +42,7 @@ func TestFiberErrors(t *testing.T) {
 
 			var hooks int
 
-			srv, _ := newServer(t, srvr.WithErrorHook(func(context.Context, error, *prblm.Problem) { hooks++ }))
+			srv, _ := newServer(t, srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) { hooks++ }))
 			res := serve(t, srv, http.MethodGet, "/items/7", nil, nil, routes(func(r fiber.Router) { r.Get("/items/:id", tt.handler) }))
 
 			if res.status != tt.status || res.header.Get("Content-Type") != tt.contentType {

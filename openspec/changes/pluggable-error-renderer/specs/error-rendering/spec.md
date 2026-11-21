@@ -51,7 +51,7 @@ With `WithErrorRenderer(r)`, srvr SHALL call `r` once for every error answer it 
 | a route returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http, gin) | `GET /x` | `errors.Is(err, srvr.ErrClientClosed)` and `errors.Is(err, context.Canceled)` | `499` |
 | fiber with headers over its read buffer (fiber only) | `GET /x` with a 16 KiB header | `errors.Is(err, srvr.ErrHeadersTooLarge)` | `431` |
 | fiber with `ReadTimeout` `50ms` (fiber only) | a request whose headers arrive after `100ms` | `errors.Is(err, srvr.ErrRequestTimeout)` | `408` |
-| gin route calling `c.AbortWithStatus(401)` (gin only) | `GET /x` | not called; the response is the bare `401` gin wrote, as today | `401` |
+| gin route calling `c.AbortWithStatus(401)` (gin only) | `GET /x` | not called; the response is the bare `401` gin wrote, as today (`ErrorHook` still receives it, see error-responses) | `401` |
 
 #### Scenario: What the renderer receives
 - **Given** a net/http server with `WithErrorRenderer(R)` recording its arguments and a route `GET /items/{id}` returning `ErrQuota`

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/kartaladev/prblm/adapters/ginprblm"
 	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/internal/errchain"
 )
@@ -16,7 +17,9 @@ import (
 // (srvr's recovery records a panic there too), or the router's 404 or 405
 // for a request no route or mount matched. A status-only abort such as
 // c.AbortWithStatus(401) is no error: its bare status is sent, as
-// without a renderer. The response writer defers the status, because gin
+// without a renderer, and the error hook still receives it as
+// ginprblm.ErrStatusOnly with the status sent, as on ginprblm's path
+// (owner decision 2026-11-21). The response writer defers the status, because gin
 // commits it early (c.AbortWithError writes its status before the error
 // is answered), so the renderer's status replaces it.
 func renderErrors(core *engine.Core) gin.HandlerFunc {
@@ -35,6 +38,16 @@ func renderErrors(core *engine.Core) gin.HandlerFunc {
 		}
 
 		w.commitNow()
+		reportStatusOnly(core, c, w)
+	}
+}
+
+// reportStatusOnly hands a status-only abort, an error status sent
+// without a body or an error, to the error hook. It records no failure:
+// the request did not fail (design D2).
+func reportStatusOnly(core *engine.Core, c *gin.Context, w *deferredWriter) {
+	if status := w.Status(); status >= http.StatusBadRequest && w.Size() <= 0 {
+		core.CallErrorHook(c.Request.Context(), ginprblm.ErrStatusOnly, engine.ErrorReport{Status: status})
 	}
 }
 

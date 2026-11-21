@@ -136,44 +136,48 @@ func TestErrorToProblem(t *testing.T) {
 
 var errQuota = errors.New("quota exceeded")
 
-// TestErrorExtension covers error-responses / Scenario: Consumer mapper and hook.
-func TestErrorExtension(t *testing.T) {
+// TestErrorHook covers error-responses / Scenario: Consumer mapper and
+// hook: the hook receives the error answered and an ErrorReport of the
+// answer sent, on the default path and with a renderer.
+func TestErrorHook(t *testing.T) {
 	t.Parallel()
 
 	type seen struct {
 		err    error
-		status int
+		report srvr.ErrorReport
 	}
+
+	panicking := srvr.ErrorRendererFunc(func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse { panic("renderer") })
 
 	tests := []struct {
 		name   string
-		opts   func(got *atomic.Pointer[seen]) []srvr.Option
+		opts   []srvr.Option
 		err    error
 		status int
-		hook   bool // the hook must have seen err with the response status
+		hook   bool // the hook must have seen err and want
+		want   srvr.ErrorReport
 	}{
 		{
 			name: "consumer mapper",
-			opts: func(*atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(errQuota, http.StatusTooManyRequests)))}
-			},
-			err: errQuota, status: http.StatusTooManyRequests,
+			opts: []srvr.Option{srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(errQuota, http.StatusTooManyRequests)))},
+			err:  errQuota, status: http.StatusTooManyRequests,
 		},
 		{
 			name: "consumer hook",
-			opts: func(got *atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
-					got.Store(&seen{err: err, status: p.Status})
-				})}
-			},
-			err: prblm.ErrNotFound, status: http.StatusNotFound, hook: true,
+			err:  prblm.ErrNotFound, status: http.StatusNotFound, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusNotFound, Type: "about:blank", Title: "Not Found"},
 		},
 		{
-			name: "panicking consumer hook",
-			opts: func(*atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithErrorHook(func(context.Context, error, *prblm.Problem) { panic("hook") })}
-			},
-			err: prblm.ErrNotFound, status: http.StatusNotFound,
+			name: "renderer and hook",
+			opts: []srvr.Option{srvr.WithErrorRenderer(&testRenderer{status: http.StatusTooManyRequests, code: "quota"})},
+			err:  errQuota, status: http.StatusTooManyRequests, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusTooManyRequests},
+		},
+		{
+			name: "panicking renderer and hook",
+			opts: []srvr.Option{srvr.WithErrorRenderer(panicking)},
+			err:  errQuota, status: http.StatusInternalServerError, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusInternalServerError, Type: "about:blank", Title: "Internal Server Error"},
 		},
 	}
 
@@ -182,7 +186,10 @@ func TestErrorExtension(t *testing.T) {
 			t.Parallel()
 
 			var got atomic.Pointer[seen]
-			srv := newServer(t, tt.opts(&got)...)
+			hook := srvr.WithErrorHook(func(_ context.Context, err error, sent srvr.ErrorReport) {
+				got.Store(&seen{err: err, report: sent})
+			})
+			srv := newServer(t, append(tt.opts, hook)...)
 			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
 				g.GET("/x", func(http.ResponseWriter, *http.Request) error { return tt.err })
 			})))
@@ -193,12 +200,23 @@ func TestErrorExtension(t *testing.T) {
 			}
 			if tt.hook {
 				s := got.Load()
-				if s == nil || !errors.Is(s.err, tt.err) || s.status != tt.status {
-					t.Fatalf("hook saw %+v, want %v with status %d", s, tt.err, tt.status)
+				if s == nil || !errors.Is(s.err, tt.err) || s.report != tt.want {
+					t.Fatalf("hook saw %+v, want %v with %+v", s, tt.err, tt.want)
 				}
 			}
 		})
 	}
+
+	t.Run("panicking consumer hook", func(t *testing.T) {
+		t.Parallel()
+
+		base, logs := loggedServer(t, func(g *srvr.Group) { g.GET("/x", returning(prblm.ErrNotFound)) },
+			srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) { panic("hook") }))
+		if res := get(t, base+"/x"); res.status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", res.status)
+		}
+		logs.waitRecord(t, "http.request.failed")
+	})
 }
 
 // reportHook returns an error hook adding name to log, marked when the
@@ -219,6 +237,16 @@ func reportHook(log *callLog, name string, panics bool) func(context.Context, er
 		if panics {
 			panic(name + " panics")
 		}
+	}
+}
+
+// reportErrorHook adapts reportHook to srvr.ErrorHook: the report's
+// status stands for the problem's.
+func reportErrorHook(log *callLog, name string) srvr.ErrorHook {
+	hook := reportHook(log, name, false)
+
+	return func(ctx context.Context, err error, sent srvr.ErrorReport) {
+		hook(ctx, err, &prblm.Problem{Status: sent.Status})
 	}
 }
 
@@ -259,7 +287,7 @@ func TestConsumerPrblmHooks(t *testing.T) {
 			opts: func(log *callLog) []srvr.Option {
 				return []srvr.Option{
 					srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", false))),
-					srvr.WithErrorHook(reportHook(log, "gn", false)),
+					srvr.WithErrorHook(reportErrorHook(log, "gn")),
 				}
 			},
 			calls: []string{"fn", "gn after srvr"},
@@ -662,7 +690,7 @@ func TestTypedErrors(t *testing.T) {
 			t.Parallel()
 
 			errs := make(chan error, 4)
-			srv := newServer(t, srvr.WithErrorHook(func(_ context.Context, err error, _ *prblm.Problem) { errs <- err }))
+			srv := newServer(t, srvr.WithErrorHook(func(_ context.Context, err error, _ srvr.ErrorReport) { errs <- err }))
 			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) { g.POST("/x", status(http.StatusOK)) })))
 			mustNil(t, srv.Register(srvr.Static("/assets", site)))
 			base := startServer(t, srv)

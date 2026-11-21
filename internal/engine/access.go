@@ -23,33 +23,25 @@ import (
 type failure struct {
 	err       error
 	panic     *prblm.PanicError
-	sent      answer
+	sent      ErrorReport
 	committed bool
 	// rendererFailure names the fault of a consumer's renderer whose
 	// answer srvr replaced with its safe 500; empty otherwise.
 	rendererFailure string
 }
 
-// answer is what the client was sent for an error: the status and, when
-// the renderer gave them, the type and title. The zero answer means none
-// was sent.
-type answer struct {
-	status     int
-	typ, title string
-}
-
-// answerOf returns the answer of problem p; the zero answer for nil.
-func answerOf(p *prblm.Problem) answer {
+// answerOf returns the report of problem p sent; the zero report for nil.
+func answerOf(p *prblm.Problem) ErrorReport {
 	if p == nil {
-		return answer{}
+		return ErrorReport{}
 	}
 
-	return answer{status: p.Status, typ: p.EffectiveType(), title: p.Title}
+	return ErrorReport{Status: p.Status, Type: p.EffectiveType(), Title: p.Title}
 }
 
 // newFailure returns the failure of err, looking up the panic it reports
 // once, so later readers do not walk the chain again.
-func newFailure(err error, sent answer, committed bool) *failure {
+func newFailure(err error, sent ErrorReport, committed bool) *failure {
 	pe, _ := panicOf(err)
 
 	return &failure{err: err, panic: pe, sent: sent, committed: committed}
@@ -90,12 +82,12 @@ func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
 
 // recordAnswer is [recordFailure] for the answer sent, the zero answer
 // when none was, and the fault of a renderer srvr replaced ("" for none).
-func recordAnswer(req *RequestState, err error, sent answer, fault string) {
+func recordAnswer(req *RequestState, err error, sent ErrorReport, fault string) {
 	if req == nil || isNote(err) {
 		return
 	}
 
-	if req.failure != nil && (req.failure.sent.status != 0 || sent.status == 0) {
+	if req.failure != nil && (req.failure.sent.Status != 0 || sent.Status == 0) {
 		return
 	}
 
@@ -294,7 +286,7 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 // addFailure adds what the client saw: the problem sent, or that the
 // response had already started.
 func addFailure(record *slog.Record, fail *failure) {
-	if fail.committed || fail.sent.status == 0 {
+	if fail.committed || fail.sent.Status == 0 {
 		record.AddAttrs(slog.Bool(keyCommitted, true))
 
 		return
@@ -302,14 +294,14 @@ func addFailure(record *slog.Record, fail *failure) {
 
 	sent := fail.sent
 	attrs := make([]any, 1, 3)
-	attrs[0] = slog.Int(keyProblemStatus, sent.status)
+	attrs[0] = slog.Int(keyProblemStatus, sent.Status)
 
-	if sent.typ != "" {
-		attrs = append(attrs, slog.String(keyProblemType, sent.typ))
+	if sent.Type != "" {
+		attrs = append(attrs, slog.String(keyProblemType, sent.Type))
 	}
 
-	if sent.title != "" {
-		attrs = append(attrs, slog.String(keyProblemTitle, sent.title))
+	if sent.Title != "" {
+		attrs = append(attrs, slog.String(keyProblemTitle, sent.Title))
 	}
 
 	record.AddAttrs(slog.Group(keyProblem, attrs...))
@@ -343,8 +335,8 @@ func (f *failure) level(status int) slog.Level {
 	}
 
 	level := levelFor(status)
-	if f.sent.status != 0 {
-		level = max(level, levelFor(f.sent.status))
+	if f.sent.Status != 0 {
+		level = max(level, levelFor(f.sent.Status))
 	}
 
 	return level

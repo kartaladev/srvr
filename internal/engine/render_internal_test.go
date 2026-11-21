@@ -368,7 +368,7 @@ func TestRender(t *testing.T) {
 
 			var (
 				calls []renderCall
-				hooks []*prblm.Problem
+				hooks []ErrorReport
 			)
 
 			renderer := ErrorRendererFunc(func(ctx context.Context, req ErrorRequest, err error) ErrorResponse {
@@ -378,7 +378,7 @@ func TestRender(t *testing.T) {
 
 			c, err := ResolveConfig([]Option{func(s *Settings) {
 				s.ErrorRenderer = renderer
-				s.ErrorHook = func(_ context.Context, _ error, p *prblm.Problem) { hooks = append(hooks, p) }
+				s.ErrorHook = func(_ context.Context, _ error, sent ErrorReport) { hooks = append(hooks, sent) }
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -408,8 +408,8 @@ func TestRender(t *testing.T) {
 				if len(target.writes) != 0 || fail == nil || !fail.committed {
 					t.Fatalf("writes %v failure %+v, want nothing written and a committed failure", target.writes, fail)
 				}
-				if len(hooks) != 1 || hooks[0] != nil {
-					t.Fatalf("hook got %v, want one call without a problem", hooks)
+				if len(hooks) != 1 || hooks[0] != (ErrorReport{}) {
+					t.Fatalf("hook got %v, want one call with the zero report", hooks)
 				}
 
 				return
@@ -420,11 +420,11 @@ func TestRender(t *testing.T) {
 			}
 
 			res := target.writes[0]
-			if fail == nil || fail.sent.status != tt.status || fail.rendererFailure != tt.failure {
+			if fail == nil || fail.sent.Status != tt.status || fail.rendererFailure != tt.failure {
 				t.Fatalf("failure %+v, want status %d renderer failure %q", fail, tt.status, tt.failure)
 			}
 
-			if len(hooks) != 1 || hooks[0] == nil || hooks[0].Status != tt.hookStatus {
+			if len(hooks) != 1 || hooks[0].Status != tt.hookStatus {
 				t.Fatalf("hook got %v, want one call with status %d", hooks, tt.hookStatus)
 			}
 
@@ -433,7 +433,7 @@ func TestRender(t *testing.T) {
 					!bytes.Contains(res.Body, []byte(`"title":"Internal Server Error"`)) {
 					t.Fatalf("safe 500 %v %s", res.Header, res.Body)
 				}
-				if fail.sent.typ != "about:blank" || fail.sent.title != "Internal Server Error" {
+				if fail.sent.Type != "about:blank" || fail.sent.Title != "Internal Server Error" {
 					t.Fatalf("recorded answer %+v", fail.sent)
 				}
 			}
@@ -452,7 +452,7 @@ func TestRender_HookPanics(t *testing.T) {
 
 	c, err := ResolveConfig([]Option{func(s *Settings) {
 		s.ErrorRenderer = ErrorRendererFunc(func(context.Context, ErrorRequest, error) ErrorResponse { return ErrorResponse{Status: 404} })
-		s.ErrorHook = func(context.Context, error, *prblm.Problem) { panic("hook") }
+		s.ErrorHook = func(context.Context, error, ErrorReport) { panic("hook") }
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -554,4 +554,67 @@ func TestRender_DeadlineEndToEnd(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestErrorHook_NoAllocation proves design D8's claim: passing the
+// ErrorReport value to a hook adds no allocation on either path, prblm's
+// (onError) and the renderer's (Render). Each case counts the allocations
+// with and without a hook, and requires them equal.
+// It does not run in parallel: testing.AllocsPerRun counts every
+// goroutine's allocations.
+//
+//nolint:paralleltest // AllocsPerRun counts the allocations of parallel tests too.
+func TestErrorHook_NoAllocation(t *testing.T) {
+	hook := func(context.Context, error, ErrorReport) {}
+	problem := &prblm.Problem{Status: 404, Type: "about:blank", Title: "Not Found"}
+	renderer := ErrorRendererFunc(func(context.Context, ErrorRequest, error) ErrorResponse { return ErrorResponse{Status: 404} })
+
+	tests := []struct {
+		name string
+		run  func(c *Core, ctx context.Context)
+	}{
+		{"prblm hook", func(c *Core, ctx context.Context) { c.onError(ctx, prblm.ErrNotFound, problem) }},
+		{"renderer", func(c *Core, ctx context.Context) { c.Render(ctx, &fakeTarget{}, ErrorRequest{}, prblm.ErrNotFound) }},
+	}
+
+	allocs := func(t *testing.T, run func(*Core, context.Context), withHook bool) float64 {
+		t.Helper()
+
+		c, err := ResolveConfig([]Option{func(s *Settings) {
+			s.ErrorRenderer = renderer
+			if withHook {
+				s.ErrorHook = hook
+			}
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx := c.BeginRequest(t.Context(), nil)
+
+		return testing.AllocsPerRun(100, func() { run(c, ctx) })
+	}
+
+	for _, tt := range tests { //nolint:paralleltest // see the function comment
+		t.Run(tt.name, func(t *testing.T) {
+			without, with := allocs(t, tt.run, false), allocs(t, tt.run, true)
+			if with != without {
+				t.Fatalf("allocs/op with a hook %v, without %v: the hook call allocates", with, without)
+			}
+		})
+	}
+
+	// The comparison above misses an allocation made whether or not a
+	// hook is set (an escaping report); the hook call itself must make
+	// none.
+	t.Run("hook call", func(t *testing.T) {
+		c, err := ResolveConfig([]Option{func(s *Settings) { s.ErrorHook = hook }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, sent := t.Context(), ErrorReport{Status: 404, Type: "about:blank", Title: "Not Found"}
+
+		if n := testing.AllocsPerRun(100, func() { c.CallErrorHook(ctx, prblm.ErrNotFound, sent) }); n != 0 {
+			t.Fatalf("allocs/op of a hook call %v, want 0", n)
+		}
+	})
 }

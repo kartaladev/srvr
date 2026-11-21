@@ -142,15 +142,29 @@ func (c *Core) EngineOptions(engine string) ([]any, error) {
 	return values, errors.Join(errs...)
 }
 
-// ErrorHook is called for every error the server answers with a problem,
-// with the problem sent (nil for a note about a problem that was not sent,
-// such as a panic after the response started). It also receives prblm's
-// notes, which srvr does not record as the request's failure: a
-// mistake in rendering, and, before the error itself, a note
-// wrapping prblm.ErrUnwalkableError when prblm cannot walk the error's
-// chain and sent the safe 500 problem instead. Consumers use it as
-// srvr.ErrorHook.
-type ErrorHook func(ctx context.Context, err error, p *prblm.Problem)
+// ErrorHook is called for every error the server answers, with sent
+// describing the answer sent: on the default path prblm's problem, with a
+// consumer renderer its answer (or srvr's safe 500 replacing a faulty
+// one). The zero ErrorReport marks a note about an answer that was not
+// sent, such as a panic after the response started. It also receives
+// prblm's notes, which srvr does not record as the request's failure: a
+// mistake in rendering, and, before the error itself, a note wrapping
+// prblm.ErrUnwalkableError when prblm cannot walk the error's chain and
+// sent the safe 500 problem instead. Consumers use it as srvr.ErrorHook.
+type ErrorHook func(ctx context.Context, err error, sent ErrorReport)
+
+// ErrorReport describes the error answer sent, as the access record's
+// problem group does. It is a value (design D8): passing it allocates
+// nothing, its strings share the answer's text and a hook may keep it.
+// Type and Title are empty when a consumer renderer gave none.
+type ErrorReport struct {
+	// Status is the HTTP status sent; 0 when no answer was sent.
+	Status int
+	// Type is the problem type URI sent, if any.
+	Type string
+	// Title is the problem title sent, if any.
+	Title string
+}
 
 // newProblems builds a problem handler from opts and returns an invalid
 // option, which makes prblm.NewHandler panic, as an error wrapping
@@ -182,17 +196,19 @@ func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
 
 	recordFailure(ctx, err, p)
 	captureProblem(ctx, err, p)
-	c.callHook(ctx, err, p)
+	c.CallErrorHook(ctx, err, answerOf(p))
 }
 
-// callHook calls the consumer's error hook, if any, containing a panic in
-// it.
-func (c *Core) callHook(ctx context.Context, err error, p *prblm.Problem) {
+// CallErrorHook calls the consumer's error hook, if any, with err and
+// sent, containing a panic in it. It records nothing: engines call it
+// directly only for an answer that is no failure, such as gin's
+// status-only abort under a consumer renderer.
+func (c *Core) CallErrorHook(ctx context.Context, err error, sent ErrorReport) {
 	if c.settings.ErrorHook == nil {
 		return
 	}
 
 	defer func() { _ = recover() }()
 
-	c.settings.ErrorHook(ctx, err, p)
+	c.settings.ErrorHook(ctx, err, sent)
 }

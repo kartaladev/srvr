@@ -753,9 +753,9 @@ func TestWithErrorRenderer_Accepted(t *testing.T) {
 
 		hooked := make(chan int, 4)
 		base, _ := loggedServer(t, func(g *srvr.Group) { g.GET("/x", returning(errQuota)) }, srvr.WithErrorRenderer(second),
-			srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
-				if errors.Is(err, errQuota) && p != nil {
-					hooked <- p.Status
+			srvr.WithErrorHook(func(_ context.Context, err error, sent srvr.ErrorReport) {
+				if errors.Is(err, errQuota) {
+					hooked <- sent.Status
 				}
 			}))
 		get(t, base+"/x")

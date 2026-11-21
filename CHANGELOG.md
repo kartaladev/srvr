@@ -21,8 +21,8 @@ once tagged.
 - ginsrvr supports `srvr.WithErrorRenderer`: srvr's own error middleware and recovery replace
   ginprblm's, so the renderer answers the last `c.Errors` entry, recovered panics, gin's 404 and
   405 and static misses (a status set by `c.AbortWithError` is replaced by the renderer's); a
-  status-only abort such as `c.AbortWithStatus(401)` keeps gin's bare status and calls neither
-  the renderer nor the error hook. A request the client closed is answered `499` through the
+  status-only abort such as `c.AbortWithStatus(401)` keeps gin's bare status and does not call
+  the renderer; the error hook still receives it as `ginprblm.ErrStatusOnly` with the status sent. A request the client closed is answered `499` through the
   renderer (without one, gin keeps v0.3.0's empty `200`).
 - fibersrvr supports `srvr.WithErrorRenderer`: the renderer answers handler errors, recovered
   panics, fiber's 404 and 405 (as `srvr.ErrNotFound` and `*srvr.MethodNotAllowedError`), static
@@ -33,6 +33,37 @@ once tagged.
 
 ### Changed
 
+- **BREAKING (API):** `srvr.ErrorHook` is now `func(ctx context.Context, err error, sent
+  srvr.ErrorReport)`. The new value type `srvr.ErrorReport{Status int; Type, Title string}`
+  describes the answer sent, on the default path and with `srvr.WithErrorRenderer` (whose answers
+  prblm never sees); the zero report marks a note about an answer not sent (it was a nil problem).
+  `Type` is the effective type, so prblm's empty type reads `about:blank`, as in the log. Passing
+  it allocates nothing, and a hook may keep it. prblm's own hooks (`prblm.OnError`,
+  `prblm.AddErrorHook`) keep prblm's signature. Migration:
+
+  ```go
+  // before
+  srvr.WithErrorHook(func(ctx context.Context, err error, p *prblm.Problem) {
+      if p != nil {
+          metrics.Count(p.Status)
+      }
+  })
+  // after
+  srvr.WithErrorHook(func(ctx context.Context, err error, sent srvr.ErrorReport) {
+      if sent.Status != 0 {
+          metrics.Count(sent.Status)
+      }
+  })
+  ```
+
+- `srvr.ErrorHook` receives srvr's own errors for srvr's own answers: `srvr.ErrNotFound` (still
+  matching `errors.Is(err, prblm.ErrNotFound)`) for net/http's router `404` and static misses,
+  and `*srvr.MethodNotAllowedError` for a net/http router or static `405`; with
+  `srvr.WithErrorRenderer`, for gin's and fiber's router answers too.
+- The `error.fingerprint` of the failed record of srvr's own `404`s (net/http's router, static
+  misses) changes once, because its error type is now srvr's; keys, types, `exception.message` and
+  `error.chain` length are unchanged. See LOGGING.md for this and the fiber rejection-record
+  difference between the default and renderer paths.
 - **Breaking (API, `engine`, unstable before v1):** the package `github.com/kartaladev/srvr/engine`
   moved to `github.com/kartaladev/srvr/internal/engine` and can no longer be imported from outside
   srvr's modules. Use the `srvr` names instead (`srvr.Config`, `srvr.ErrConfig`, `srvr.ConfigError`,

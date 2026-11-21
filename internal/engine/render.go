@@ -180,12 +180,10 @@ func (c *Core) Render(ctx context.Context, t ErrorTarget, req ErrorRequest, err 
 		res = safeAnswer(ctx, req)
 	}
 
-	sent := answer{status: res.Status, typ: res.Type, title: res.Title}
+	sent := ErrorReport{Status: res.Status, Type: res.Type, Title: res.Title}
 	recordAnswer(requestFrom(ctx), err, sent, fault)
 
-	if c.settings.ErrorHook != nil {
-		c.callHook(ctx, err, &prblm.Problem{Status: sent.status, Type: sent.typ, Title: sent.title})
-	}
+	c.CallErrorHook(ctx, err, sent)
 	t.WriteError(res)
 }
 

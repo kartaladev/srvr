@@ -63,15 +63,22 @@ type (
 	// ShutdownPhase is when a shutdown hook runs while the server stops:
 	// [BeforeDrain] or [AfterDrain].
 	ShutdownPhase = engine.ShutdownPhase
-	// ErrorHook is called for every error the server answers with a
-	// problem, with the problem sent (nil for a note about a problem that
-	// was not sent, such as a panic after the response started). It also
-	// receives prblm's notes, which srvr does not record as the request's
-	// failure: a mistake in rendering (prblm.ErrInvalidStatus and the
-	// like), and, before the error itself, a note wrapping
-	// prblm.ErrUnwalkableError when prblm cannot walk the error's chain
-	// and sent the safe 500 problem instead.
+	// ErrorHook is called for every error the server answers, with an
+	// [ErrorReport] of the answer sent: prblm's problem on the default
+	// path, the renderer's answer (or the safe 500 replacing a faulty one)
+	// with [WithErrorRenderer]. The zero report marks a note about an
+	// answer that was not sent, such as a panic after the response
+	// started. It also receives prblm's notes, which srvr does not record
+	// as the request's failure: a mistake in rendering
+	// (prblm.ErrInvalidStatus and the like), and, before the error itself,
+	// a note wrapping prblm.ErrUnwalkableError when prblm cannot walk the
+	// error's chain and sent the safe 500 problem instead.
 	ErrorHook = engine.ErrorHook
+	// ErrorReport describes the error answer sent: its status and, when
+	// the answer gave them, its problem type and title (always on the
+	// default path). It is passed by value, so a hook may keep it; see
+	// [engine.ErrorReport].
+	ErrorReport = engine.ErrorReport
 )
 
 const (

@@ -358,8 +358,8 @@ func (p *bufferPolicy) shouldFlush(req *RequestState, status int) bool {
 		return true
 	}
 
-	if fail != nil && fail.sent.status != 0 {
-		status = fail.sent.status
+	if fail != nil && fail.sent.Status != 0 {
+		status = fail.sent.Status
 	}
 
 	return status >= p.flushStatus

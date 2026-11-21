@@ -68,7 +68,7 @@ func TestFailure_PanicThroughWrapper(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			f := newFailure(tt.err, answer{}, false)
+			f := newFailure(tt.err, ErrorReport{}, false)
 			if got := f.level(200); got != slog.LevelError {
 				t.Errorf("level = %v, want ERROR", got)
 			}
