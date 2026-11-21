@@ -13,6 +13,18 @@
 // unless its StrictRouting is on (both as set through [WithFiberConfig]),
 // and routes of mounted sub-apps at their full mounted path.
 //
+// With srvr.WithErrorRenderer, the consumer's renderer answers every error
+// in place of fiberprblm: handler errors, recovered panics (a
+// *srvr.PanicError), fiber's 404 and 405 and a static mount's
+// (srvr.ErrNotFound, *srvr.MethodNotAllowedError), and requests fasthttp
+// rejects before routing: srvr.ErrRequestTooLarge (413),
+// srvr.ErrHeadersTooLarge (431), srvr.ErrRequestTimeout (408), or fiber's
+// *fiber.Error for another status. fasthttp sends nothing before the
+// chain returns, so only a body stream the handler set commits the
+// response (the renderer is then not called); a buffered body is replaced
+// by the renderer's answer. ErrorRequest.Header is valid only during
+// Render.
+//
 // srvr derives fiber's configuration from its own (error handler, body
 // limit, read, write and idle timeouts, header buffer) and owns the
 // ListenConfig: the startup message is off and prefork is never enabled,

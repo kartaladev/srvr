@@ -41,6 +41,21 @@ same error while the request context is live or past its deadline (a server-side
 stays `500` at `ERROR`. On
 fiber a disconnect is not detected, so it stays `500`.
 
+v0.4.0 changes, keys and types unchanged (`srvr.log.schema` stays `1`):
+
+- `error.fingerprint` of the `http.request.failed` record of srvr's own `404`s (net/http's router
+  and every static miss) changes once: the error is now `srvr.ErrNotFound`, whose chain type is
+  `errchain.notFoundError` instead of `*errors.errorString`. `exception.message` (`prblm: not
+  found`) and the one-link `error.chain` are unchanged. Re-key alerts and deduplication on the new
+  fingerprint.
+- `srvr.ErrorHook` receives srvr's own errors for srvr's own answers: `srvr.ErrNotFound` (it still
+  matches `errors.Is(err, prblm.ErrNotFound)`) and `*srvr.MethodNotAllowedError` for a router or
+  static `405` instead of a `*prblm.Problem`.
+- On fiber with `srvr.WithErrorRenderer`, the record of a request rejected before routing (`413`,
+  `431`, `408`) names the renderer's answer and carries `error.chain` and `exception.message` of
+  the error the renderer received (`srvr.ErrRequestTooLarge` and the like); on the default path the
+  rejection record carries neither, as in v0.3.0.
+
 | Key | Type | Meaning |
 |-----|------|---------|
 | `http.request.method` | string | request method |
@@ -53,7 +68,8 @@ fiber a disconnect is not detected, so it stays `500`.
 | `url.query` | string | only with `AccessLogConfig.IncludeQuery` |
 | `client.address` | string | only with `AccessLogConfig.IncludeClientAddress` |
 | `srvr.unmatched.suppressed` | number | only with an unmatched-record limit: the unmatched records suppressed since the last one written, on the first one written after them |
-| `problem` (`status`, `type`, `title`) | group | the problem sent to the client (failed records) |
+| `problem` (`status`, `type`, `title`) | group | the answer sent to the client (failed records): `status` always; `type` and `title` always on the default (prblm) path, and with `srvr.WithErrorRenderer` only when the renderer's answer gave them (optional keys, schema `1`) |
+| `srvr.renderer.failure` | string | with `srvr.WithErrorRenderer` only: srvr replaced the renderer's answer with the safe `500` problem, because the renderer panicked (`panic`), answered a status outside `400`-`599` (`invalid_status`), a body over 1 MiB (`oversized_body`), a body without `Content-Type` (`missing_content_type`) or missed the 5-second deadline (`deadline`) |
 | `srvr.response.committed` | bool | the response had started when the error arrived, so no problem was sent |
 | `srvr.response.aborted` | bool | the handler panicked with `http.ErrAbortHandler` |
 | `error.type` | string | returned error: the Go type of the innermost error reached through `Unwrap() error` (an error wrapping several errors is itself the innermost); panic: the constant `panic` |

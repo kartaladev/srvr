@@ -2,22 +2,22 @@
 
 ## Context
 
-See proposal.md, Why. Current state at v0.3.0 (`main` `25fa456`), checked in the code:
+See proposal.md, Why. Current state at v0.3.0 plus `engine-internal-split` (unreleased; `main` `78c8165`), rechecked in the code on 2026-11-21. Package `engine` is now `internal/engine`; srvr's error values live in `internal/errchain`; import order `tracectx` < `errchain` < `static` < `engine` is pinned by `TestImportDirection` (`internal/paritytest/layout_test.go`):
 
-- `engine.Core` holds one `*prblm.Handler` (`Problems()`), built by `newProblems` from `ProblemOptions()`: the consumer's options, then `clientClosedMapper` (499), `traceIDEnricher`, and `prblm.AddErrorHook(c.onError)`. `onError` calls `recordFailure(ctx, err, *prblm.Problem)` and then the consumer's `ErrorHook`, recovering a panic in it.
-- `recordFailure` keeps a `failure{err, panic *prblm.PanicError, problem *prblm.Problem, committed}`; it drops prblm's notes (`prblmNotes`). `RecordRejection` builds a `prblm.Problem` for fiber's pre-routing 413/431/408. `addFailure` writes `problem.status`, `problem.type`, `problem.title`.
+- `engine.Core` (`internal/engine/core.go`) holds one `*prblm.Handler` (`Problems()`), built by `newProblems` from `ProblemOptions()`: the consumer's options, then `clientClosedMapper` (499), `traceIDEnricher`, and `prblm.AddErrorHook(c.onError)`. `onError` calls `recordFailure(ctx, err, *prblm.Problem)` and then the consumer's `ErrorHook`, recovering a panic in it.
+- `recordFailure` keeps a `failure{err, panic *prblm.PanicError, problem *prblm.Problem, committed}`; it drops prblm's notes (`prblmNotes`) (`internal/engine/access.go`). `RecordRejection` builds a `prblm.Problem` for fiber's pre-routing 413/431/408. `addFailure` writes `problem.status`, `problem.type`, `problem.title`.
 - net/http (`server.go`): `stages` = `LogAccess(LimitBody(Problems().Recover(answerUnmatched(mux))))`; handlers go through `wrapHandler` = `Problems().Wrap` over `GuardChain(h(w, r))`; `answerUnmatched` writes `prblm.ErrNotFound` and `prblm.New(405, WithHeader("Allow", ...))`. The 413 is prblm's built-in mapping of `*http.MaxBytesError`. net/http's own `431` happens before srvr runs and is not rendered by srvr.
-- Static mounts (`engine/static.go` `StaticResult.Failure`) return `prblm.ErrNotFound` and `prblm.New(405, ...)` from the handler, so they reach whatever renders handler errors on each engine.
+- Static mounts (`engine.StaticFailure` in `internal/engine/staticfailure.go`, mapping an `internal/static` `Result`) return `prblm.ErrNotFound` and `prblm.New(405, ...)` from the handler, so they reach whatever renders handler errors on each engine. fiber's mount also returns `prblm.ErrNotFound` directly through `notFound` (`fibersrvr/static.go`: path outside the mount, file vanished before `SendFile`).
 - gin (`ginsrvr/server.go` `newEngine`): `requestStage`, `ginprblm.Middleware(opts...)`, `guardErrors`, `ginprblm.Recovery(opts...)`, with an extra hook `clearStatusOnly` that undoes the failure of a `c.AbortWithStatus` (`ginprblm.ErrStatusOnly`).
 - fiber (`fibersrvr/server.go`): `s.problems = fiberprblm.ErrorHandler(core.ProblemOptions()...)`, `renderError` = `s.problems(c, GuardChain(err))`, `fiberprblm.Recovery()` in `Use`, and `requestStage` calling `RecordRejection` for a status fasthttp set before routing, then `renderError` for the chain's error.
-- `GuardChain` (`engine/triage.go`) replaces a cyclic chain by `*unresolvable`; `panicOf` finds a `*prblm.PanicError` in a chain. `otelsrvr` reads `*prblm.PanicError` from `ResultInfo.Err`.
-- `srvr.ErrorHook` is `engine.ErrorHook func(ctx, err error, p *prblm.Problem)`.
+- `GuardChain` (`internal/engine/triage.go`, built on `internal/errchain`'s chain walking) replaces a cyclic chain by `*unresolvable`; `panicOf` finds a `*prblm.PanicError` in a chain. `otelsrvr` reads `*prblm.PanicError` from `ResultInfo.Err`.
+- `srvr.ErrorHook` is `engine.ErrorHook func(ctx, err error, p *prblm.Problem)` (`internal/engine/core.go`).
 - LOGGING.md: schema `1`; `problem` group with `status`, `type`, `title`.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- One srvr-owned render path in `engine` that every engine calls when a custom renderer is set, with all safety rules in one place.
+- One srvr-owned render path in `internal/engine` that every engine calls when a custom renderer is set, with all safety rules in one place.
 - Zero-config output byte-for-byte unchanged, proven by golden parity rows taken at the base commit.
 - srvr's own answers expressed as srvr errors, so a renderer never needs prblm to recognise them.
 
@@ -29,7 +29,7 @@ See proposal.md, Why. Current state at v0.3.0 (`main` `25fa456`), checked in the
 
 ## Slices
 
-1. **Slice 2: types and default renderer, no behaviour change** (core, net/http): `ErrorRenderer`, `ErrorRequest`, `ErrorResponse`, the typed errors (D3) sent by `answerUnmatched`, `StaticResult.Failure` and the 499 mapper, and a default renderer wrapping today's prblm handler. Benchmark baseline first. Satisfies error-rendering "prblm is the default renderer and its output is unchanged" (net/http rows). Hot paths: `answerUnmatched`, static `Failure`, `clientClosed`, the default mapping of each typed error.
+1. **Slice 2: types and default renderer, no behaviour change** (core, net/http): `ErrorRenderer`, `ErrorRequest`, `ErrorResponse`, the typed errors (D3) sent by `answerUnmatched`, `engine.StaticFailure`, fiber's static `notFound` and the 499 mapper, and a default renderer wrapping today's prblm handler. Benchmark baseline first. Satisfies error-rendering "prblm is the default renderer and its output is unchanged" (net/http rows). Hot paths: `answerUnmatched`, `engine.StaticFailure`, `clientClosed`, the default mapping of each typed error.
 2. **Slice 3: `WithErrorRenderer` on net/http**: option and validation, `engine.Render` with every safety rule, the net/http pipeline switching to it when set; the hook receives a problem synthesised from the response (D8 interim). Satisfies error-rendering "custom renderer", "validated", "safety" scenarios on net/http, and triage-error-records rows for custom renderers. Hot paths: `engine.Render`, `writeResponse`, the recovery stage, `recordFailure` with optional type/title.
 3. **Slice 4: gin**: srvr's own gin error middleware and recovery when a renderer is set; ginprblm unchanged otherwise. Gin rows of the same scenarios.
 4. **Slice 5: fiber**: `renderError`, recovery and `RecordRejection` through `engine.Render` when set. Fiber rows.
@@ -41,7 +41,7 @@ Each slice works alone: slice 2 ships the typed errors with the default renderer
 
 ## Decisions
 
-### D1: The interface and its value types live in `engine`, aliased in `srvr`
+### D1: The interface and its value types live in `internal/engine`, aliased in `srvr`
 
 ```go
 type ErrorRenderer interface {
@@ -59,7 +59,7 @@ type ErrorResponse struct {
 }
 ```
 
-Like every shared type, they are declared in `engine` (the engine modules cannot import core `internal/`) and aliased in `srvr`. An `ErrorRendererFunc` adapter is provided.
+Like every shared type, they are declared in `internal/engine` beside the prblm handler (the nested engine modules may import it; modules outside `github.com/kartaladev/srvr/` cannot) and aliased in `srvr`. The typed errors of D3 are declared in `internal/errchain` beside srvr's other error values and aliased in `srvr`; no new internal package is planned (one would have to be added to `internalOrder` and the leak-walk list in `internal/paritytest`). An `ErrorRendererFunc` adapter is provided.
 
 `ErrorRequest` is new rather than the observer's `RequestInfo`: `RequestInfo.Path` is empty unless the access log includes paths (a privacy switch for logs), while a renderer needs the path for a response (`instance`). The query string is never passed. The route is passed for renderers that key answers by route.
 
@@ -142,7 +142,7 @@ Until the owner decides, slices 3-5 use D internally (the existing hook receives
 ## Hot Paths
 
 - `engine.Render`: committed check, guard, recover, deadline, validation, safe 500, record, hooks, write — every branch has a spec row.
-- `answerUnmatched` (404, 405, replay), `StaticResult.Failure`, `clientClosed` and its wrapping, `RecordRejection` on fiber.
+- `answerUnmatched` (404, 405, replay), `engine.StaticFailure` and fiber's static `notFound`, `clientClosed` and its wrapping, `RecordRejection` on fiber.
 - Per engine: net/http `wrapHandler` and recovery, gin error middleware and recovery (status-only aborts unchanged), fiber `renderError`, recovery and rejections.
 - `recordFailure`/`addFailure` with optional type and title and `srvr.renderer.failure`; redaction unchanged.
 - Construction: `WithErrorRenderer` validation and the `ProblemOptions` conflict on every engine.

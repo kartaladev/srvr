@@ -405,15 +405,19 @@ func setLogHandler(s *engine.Settings, field, from string, h slog.Handler) {
 // its deadline (a server-side timeout), stays 500. The built-ins are
 // consulted even when prblm.WithoutBuiltins is passed here.
 func WithProblemOptions(opts ...prblm.Option) Option {
-	return func(s *engine.Settings) { s.ProblemOptions = slices.Concat(s.ProblemOptions, opts) }
+	return func(s *engine.Settings) {
+		s.ProblemOptions = slices.Concat(s.ProblemOptions, opts)
+		s.ProblemOptionsSet = true
+	}
 }
 
 // WithErrorHook sets a hook called for every error the server answers,
-// from srvr's own hook once it has recorded the error, so it runs after a
-// [prblm.OnError] or [prblm.AddErrorHook] hook passed to
-// [WithProblemOptions]. Either way of observing answered errors works; this
-// one is validated at construction and typed as [ErrorHook]. A hook that
-// panics does not affect the response. fn must not be nil.
+// with an [ErrorReport] of the answer sent, once srvr has recorded the
+// error, so it runs after a [prblm.OnError] or [prblm.AddErrorHook] hook
+// passed to [WithProblemOptions]. Unlike those, it also runs with
+// [WithErrorRenderer], receiving the renderer's answer. It is validated at
+// construction and typed as [ErrorHook]. A hook that panics does not
+// affect the response. fn must not be nil.
 func WithErrorHook(fn ErrorHook) Option {
 	return func(s *engine.Settings) {
 		if fn == nil {
@@ -554,4 +558,57 @@ func TotalBytes(n int) DebugBufferOption {
 // name. A later [WithLogConfig] replaces the whole configuration.
 func WithDebugBufferConfig(c DebugBufferConfig) Option {
 	return func(s *engine.Settings) { s.Log.DebugBuffer = c }
+}
+
+// WithErrorRenderer makes r render every error answer of the server in
+// place of prblm: handler errors, recovered panics, the router's 404 and
+// 405, static misses, oversized bodies and requests the client closed.
+// srvr hands r an error matching what happened ([ErrNotFound],
+// [MethodNotAllowedError], [ErrRequestTooLarge], [ErrClientClosed],
+// [PanicError] or the handler's own error) and writes r's answer, keeping
+// these rules around it:
+//
+//   - r is not called once the response started; the client keeps what it
+//     got and the record says srvr.response.committed.
+//   - r receives an error whose chain can be walked: a cyclic chain, or
+//     one whose Unwrap panics, is replaced by a stand-in wrapping nothing.
+//   - r runs in the request goroutine with a context that keeps the
+//     request's values (the trace among them) but not its cancellation,
+//     bounded by a 5-second deadline. The deadline is checked when r
+//     returns: a renderer ignoring its context still delays the response,
+//     like a slow handler, bounded by WriteTimeout and the shutdown drain.
+//   - A faulty answer is replaced by srvr's fixed safe 500 problem
+//     (application/problem+json, no error text) and the record names the
+//     fault in srvr.renderer.failure: a panic, a status outside 400-599,
+//     a body over 1 MiB, a body without Content-Type, or a return after
+//     the deadline. srvr never calls r again for that request.
+//   - Content-Length, Transfer-Encoding and hop-by-hop headers r returns
+//     are dropped (srvr sets Content-Length from the body); Cache-Control
+//     replaces the handler's, Vary values are merged, other headers
+//     replace the handler's. srvr copies the headers before writing.
+//   - ErrorResponse.Type and Title go to the record's problem group and to
+//     the error hook, never to the response; empty ones are omitted.
+//
+// The limits are fixed: an error body over 1 MiB is a bug or an attack
+// amplifier, and an in-memory renderer answers well within 5 seconds.
+// There is no Config field: a renderer is code, not configuration.
+//
+// srvr's guarantee that responses carry no internals covers prblm and the
+// safe 500 only: a renderer that writes err.Error() leaks what the error
+// says, and that leak is the renderer's to prevent.
+//
+// r must not be nil, and it cannot be combined with [WithProblemOptions]
+// (even an empty call), which configure the prblm renderer r replaces: to
+// keep prblm for some errors, delegate to [DefaultErrorRenderer]. A later
+// WithErrorRenderer replaces an earlier one. Every engine supports it.
+func WithErrorRenderer(r ErrorRenderer) Option {
+	return func(s *engine.Settings) {
+		if errchain.IsNil(r) {
+			s.Errs = append(s.Errs, errchain.NewConfigError("ErrorRenderer", errchain.TypeName(r), "is nil"))
+
+			return
+		}
+
+		s.ErrorRenderer = r
+	}
 }

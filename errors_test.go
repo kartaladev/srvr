@@ -10,10 +10,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
+	"github.com/kartaladev/srvr/internal/errchain"
 )
 
 // TestHandlerResult covers route-registration / Scenario: Handler result.
@@ -134,44 +136,48 @@ func TestErrorToProblem(t *testing.T) {
 
 var errQuota = errors.New("quota exceeded")
 
-// TestErrorExtension covers error-responses / Scenario: Consumer mapper and hook.
-func TestErrorExtension(t *testing.T) {
+// TestErrorHook covers error-responses / Scenario: Consumer mapper and
+// hook: the hook receives the error answered and an ErrorReport of the
+// answer sent, on the default path and with a renderer.
+func TestErrorHook(t *testing.T) {
 	t.Parallel()
 
 	type seen struct {
 		err    error
-		status int
+		report srvr.ErrorReport
 	}
+
+	panicking := srvr.ErrorRendererFunc(func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse { panic("renderer") })
 
 	tests := []struct {
 		name   string
-		opts   func(got *atomic.Pointer[seen]) []srvr.Option
+		opts   []srvr.Option
 		err    error
 		status int
-		hook   bool // the hook must have seen err with the response status
+		hook   bool // the hook must have seen err and want
+		want   srvr.ErrorReport
 	}{
 		{
 			name: "consumer mapper",
-			opts: func(*atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(errQuota, http.StatusTooManyRequests)))}
-			},
-			err: errQuota, status: http.StatusTooManyRequests,
+			opts: []srvr.Option{srvr.WithProblemOptions(prblm.WithMappers(prblm.Status(errQuota, http.StatusTooManyRequests)))},
+			err:  errQuota, status: http.StatusTooManyRequests,
 		},
 		{
 			name: "consumer hook",
-			opts: func(got *atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithErrorHook(func(_ context.Context, err error, p *prblm.Problem) {
-					got.Store(&seen{err: err, status: p.Status})
-				})}
-			},
-			err: prblm.ErrNotFound, status: http.StatusNotFound, hook: true,
+			err:  prblm.ErrNotFound, status: http.StatusNotFound, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusNotFound, Type: "about:blank", Title: "Not Found"},
 		},
 		{
-			name: "panicking consumer hook",
-			opts: func(*atomic.Pointer[seen]) []srvr.Option {
-				return []srvr.Option{srvr.WithErrorHook(func(context.Context, error, *prblm.Problem) { panic("hook") })}
-			},
-			err: prblm.ErrNotFound, status: http.StatusNotFound,
+			name: "renderer and hook",
+			opts: []srvr.Option{srvr.WithErrorRenderer(&testRenderer{status: http.StatusTooManyRequests, code: "quota"})},
+			err:  errQuota, status: http.StatusTooManyRequests, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusTooManyRequests},
+		},
+		{
+			name: "panicking renderer and hook",
+			opts: []srvr.Option{srvr.WithErrorRenderer(panicking)},
+			err:  errQuota, status: http.StatusInternalServerError, hook: true,
+			want: srvr.ErrorReport{Status: http.StatusInternalServerError, Type: "about:blank", Title: "Internal Server Error"},
 		},
 	}
 
@@ -180,7 +186,10 @@ func TestErrorExtension(t *testing.T) {
 			t.Parallel()
 
 			var got atomic.Pointer[seen]
-			srv := newServer(t, tt.opts(&got)...)
+			hook := srvr.WithErrorHook(func(_ context.Context, err error, sent srvr.ErrorReport) {
+				got.Store(&seen{err: err, report: sent})
+			})
+			srv := newServer(t, append(tt.opts, hook)...)
 			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) {
 				g.GET("/x", func(http.ResponseWriter, *http.Request) error { return tt.err })
 			})))
@@ -191,9 +200,70 @@ func TestErrorExtension(t *testing.T) {
 			}
 			if tt.hook {
 				s := got.Load()
-				if s == nil || !errors.Is(s.err, tt.err) || s.status != tt.status {
-					t.Fatalf("hook saw %+v, want %v with status %d", s, tt.err, tt.status)
+				if s == nil || !errors.Is(s.err, tt.err) || s.report != tt.want {
+					t.Fatalf("hook saw %+v, want %v with %+v", s, tt.err, tt.want)
 				}
+			}
+		})
+	}
+
+	t.Run("panicking consumer hook", func(t *testing.T) {
+		t.Parallel()
+
+		base, logs := loggedServer(t, func(g *srvr.Group) { g.GET("/x", returning(prblm.ErrNotFound)) },
+			srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) { panic("hook") }))
+		if res := get(t, base+"/x"); res.status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", res.status)
+		}
+		logs.waitRecord(t, "http.request.failed")
+	})
+}
+
+// TestErrorHook_AfterResponseStarted covers error-responses / Scenario:
+// Consumer mapper and hook, the late rows on net/http: an error or panic
+// arriving after the response started reaches the hook with the zero
+// report (nothing sent), on the default path and with a renderer.
+func TestErrorHook_AfterResponseStarted(t *testing.T) {
+	t.Parallel()
+
+	written := late(http.StatusOK, func() error { return errQuota })
+	flushed := srvr.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
+		_, _ = io.WriteString(w, "x")
+		_ = http.NewResponseController(w).Flush()
+		panic("late")
+	})
+
+	tests := []struct {
+		name     string
+		renderer bool
+		handler  srvr.HandlerFunc
+	}{
+		{"default: error after write", false, written},
+		{"renderer: error after write", true, written},
+		{"default: panic after flush", false, flushed},
+		{"renderer: panic after flush", true, flushed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reports := make(chan srvr.ErrorReport, 4)
+			opts := []srvr.Option{srvr.WithErrorHook(func(_ context.Context, _ error, sent srvr.ErrorReport) { reports <- sent })}
+			if tt.renderer {
+				opts = append(opts, srvr.WithErrorRenderer(&testRenderer{status: http.StatusTooManyRequests, code: "quota"}))
+			}
+			base, logs := loggedServer(t, func(g *srvr.Group) { g.GET("/x", tt.handler) }, opts...)
+
+			if res := get(t, base+"/x"); res.status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", res.status)
+			}
+			logs.waitRecord(t, "http.request.failed")
+			if len(reports) != 1 {
+				t.Fatalf("hook called %d times, want once", len(reports))
+			}
+			if got := <-reports; got != (srvr.ErrorReport{}) {
+				t.Fatalf("hook report %+v, want zero (nothing sent)", got)
 			}
 		})
 	}
@@ -217,6 +287,16 @@ func reportHook(log *callLog, name string, panics bool) func(context.Context, er
 		if panics {
 			panic(name + " panics")
 		}
+	}
+}
+
+// reportErrorHook adapts reportHook to srvr.ErrorHook: the report's
+// status stands for the problem's.
+func reportErrorHook(log *callLog, name string) srvr.ErrorHook {
+	hook := reportHook(log, name, false)
+
+	return func(ctx context.Context, err error, sent srvr.ErrorReport) {
+		hook(ctx, err, &prblm.Problem{Status: sent.Status})
 	}
 }
 
@@ -257,7 +337,7 @@ func TestConsumerPrblmHooks(t *testing.T) {
 			opts: func(log *callLog) []srvr.Option {
 				return []srvr.Option{
 					srvr.WithProblemOptions(prblm.OnError(reportHook(log, "fn", false))),
-					srvr.WithErrorHook(reportHook(log, "gn", false)),
+					srvr.WithErrorHook(reportErrorHook(log, "gn")),
 				}
 			},
 			calls: []string{"fn", "gn after srvr"},
@@ -616,6 +696,122 @@ func TestClientClosedRequest(t *testing.T) {
 			}
 			if got := len(where(trail, "msg", "ctx")) == 1; got != tt.flushed {
 				t.Errorf("ctx flushed = %v, want %v: %v", got, tt.flushed, messages(trail))
+			}
+		})
+	}
+}
+
+// TestTypedErrors covers error-rendering / Scenario: Custom renderer on
+// every engine, match column (design D3), on net/http: the srvr names are
+// the internal errors, and the router's and a static mount's 404 and 405
+// hand srvr's errors to the error hook.
+func TestTypedErrors(t *testing.T) {
+	t.Parallel()
+
+	site := fstest.MapFS{"app.js": &fstest.MapFile{Data: []byte("1")}}
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		status int
+		match  func(err error) bool
+	}{
+		{"router 404", http.MethodGet, "/missing", http.StatusNotFound, func(err error) bool {
+			return errors.Is(err, srvr.ErrNotFound) && errors.Is(err, prblm.ErrNotFound)
+		}},
+		{"router 405", http.MethodGet, "/x", http.StatusMethodNotAllowed, func(err error) bool {
+			var mna *srvr.MethodNotAllowedError
+
+			return errors.As(err, &mna) && slices.Equal(mna.Allow, []string{"POST"})
+		}},
+		{"static miss", http.MethodGet, "/assets/missing.js", http.StatusNotFound, func(err error) bool {
+			return errors.Is(err, srvr.ErrNotFound)
+		}},
+		{"static 405", http.MethodDelete, "/assets/app.js", http.StatusMethodNotAllowed, func(err error) bool {
+			var mna *srvr.MethodNotAllowedError
+
+			return errors.As(err, &mna) && slices.Equal(mna.Allow, []string{"GET", "HEAD"})
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			errs := make(chan error, 4)
+			srv := newServer(t, srvr.WithErrorHook(func(_ context.Context, err error, _ srvr.ErrorReport) { errs <- err }))
+			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) { g.POST("/x", status(http.StatusOK)) })))
+			mustNil(t, srv.Register(srvr.Static("/assets", site)))
+			base := startServer(t, srv)
+
+			if res := do(t, tt.method, base+tt.path, nil, nil); res.status != tt.status {
+				t.Fatalf("status = %d, want %d", res.status, tt.status)
+			}
+
+			if err := receive(t, errs, "error hook"); !tt.match(err) {
+				t.Fatalf("hook got %T %v, want a match", err, err)
+			}
+		})
+	}
+
+	t.Run("aliases", func(t *testing.T) {
+		t.Parallel()
+
+		pe := &prblm.PanicError{Value: "boom"}
+		if got, ok := errors.AsType[*srvr.PanicError](fmt.Errorf("w: %w", pe)); !ok || got != pe {
+			t.Fatal("*srvr.PanicError is not *prblm.PanicError")
+		}
+
+		for _, pair := range [][2]error{
+			{srvr.ErrNotFound, errchain.ErrNotFound},
+			{srvr.ErrRequestTooLarge, errchain.ErrRequestTooLarge},
+			{srvr.ErrClientClosed, errchain.ErrClientClosed},
+			{srvr.ErrHeadersTooLarge, errchain.ErrHeadersTooLarge},
+			{srvr.ErrRequestTimeout, errchain.ErrRequestTimeout},
+		} {
+			if pair[0] != pair[1] { //nolint:errorlint // identity of the alias, not a match
+				t.Errorf("%v is not the internal value", pair[0])
+			}
+		}
+	})
+}
+
+// TestDefaultErrorRenderer covers the public default renderer (design D7)
+// and the ErrorRendererFunc adapter: a consumer's renderer can decorate one
+// error and delegate the rest to prblm's answer.
+func TestDefaultErrorRenderer(t *testing.T) {
+	t.Parallel()
+
+	errTeapot := errors.New("teapot")
+	def := srvr.DefaultErrorRenderer()
+
+	var r srvr.ErrorRenderer = srvr.ErrorRendererFunc(func(ctx context.Context, req srvr.ErrorRequest, err error) srvr.ErrorResponse {
+		if errors.Is(err, errTeapot) {
+			return srvr.ErrorResponse{Status: http.StatusTeapot}
+		}
+
+		return def.Render(ctx, req, err)
+	})
+
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		title  string
+	}{
+		{"decorated", errTeapot, http.StatusTeapot, ""},
+		{"delegated ErrNotFound", srvr.ErrNotFound, http.StatusNotFound, "Not Found"},
+		{"delegated MethodNotAllowedError", &srvr.MethodNotAllowedError{Allow: []string{"GET"}}, http.StatusMethodNotAllowed, "Method Not Allowed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := r.Render(t.Context(), srvr.ErrorRequest{Method: http.MethodGet, Path: "/x"}, tt.err)
+			if got.Status != tt.status || got.Title != tt.title {
+				t.Fatalf("got %d %q, want %d %q", got.Status, got.Title, tt.status, tt.title)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package fibersrvr_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,12 +31,14 @@ func errorChain(n int) error {
 // BenchmarkPipeline measures one request through the fiber engine's full
 // pipeline with app.Test (no listener) and logging to io.Discard: a
 // success, a handler error rendered as a 500 problem, an unmatched path
-// answered as a 404 problem, a panic recovered as a 500, a 32-link error
+// answered as a 404 problem, a panic recovered as a 500, a known path
+// with another method answered as a 405 problem, a 32-link error
 // chain, a success on a skip path, whose access record is suppressed, an
 // unmatched path whose record WithUnmatchedRecordLimit suppresses, and a
 // success from a client sending a User-Agent that
 // WithoutAccessLogUserAgent leaves out of the record, and a file a static
-// mount serves from disk, without and with fiber's open-file cache. Each case runs sequentially and, as "<case>
+// mount serves from disk, without and with fiber's open-file cache, and the
+// handler error with an error hook installed. Each case runs sequentially and, as "<case>
 // parallel", from GOMAXPROCS goroutines with b.RunParallel. app.Test's in-memory
 // connection is part of every measurement.
 //
@@ -51,6 +54,7 @@ func BenchmarkPipeline(b *testing.B) {
 		r.Get("/fail", func(fiber.Ctx) error { return errors.New("boom") })
 		r.Get("/panic", func(fiber.Ctx) error { panic("boom") })
 		r.Get("/chain", func(fiber.Ctx) error { return chain })
+		r.Post("/upload", ok)
 	})
 
 	cases := []struct {
@@ -71,6 +75,7 @@ func BenchmarkPipeline(b *testing.B) {
 		{name: "handler error", path: "/fail", status: http.StatusInternalServerError},
 		{name: "unmatched", path: "/nope", status: http.StatusNotFound},
 		{name: "panic", path: "/panic", status: http.StatusInternalServerError},
+		{name: "method not allowed", path: "/upload", status: http.StatusMethodNotAllowed},
 		{name: "32-link error chain", path: "/chain", status: http.StatusInternalServerError},
 		{name: "suppressed access record", path: "/health", status: http.StatusOK},
 		{
@@ -89,6 +94,11 @@ func BenchmarkPipeline(b *testing.B) {
 			// WithSendFileCache buys (design D2).
 			name: "static cached", path: "/assets/app.js", status: http.StatusOK, static: true,
 			staticOpts: []srvr.StaticOption{fibersrvr.WithSendFileCache(time.Minute)},
+		},
+		{
+			// design D8: compared with "handler error", zero added allocs/op.
+			name: "handler error with error hook", path: "/fail", status: http.StatusInternalServerError,
+			opts: []srvr.Option{srvr.WithErrorHook(func(context.Context, error, srvr.ErrorReport) {})},
 		},
 	}
 

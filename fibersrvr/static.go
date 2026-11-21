@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/internal/engine"
 	"github.com/kartaladev/srvr/internal/errchain"
@@ -435,9 +434,9 @@ func setIf(h *fasthttp.ResponseHeader, name, v string) {
 }
 
 // notFound marks the request as answered by the router (design D5) and
-// returns the 404 problem.
+// returns srvr.ErrNotFound.
 func notFound(c fiber.Ctx) error {
 	engine.MarkRouterAnswered(c.Context())
 
-	return prblm.ErrNotFound
+	return srvr.ErrNotFound
 }

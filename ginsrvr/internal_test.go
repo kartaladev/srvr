@@ -1,6 +1,7 @@
 package ginsrvr
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -184,5 +185,36 @@ func TestGinEngineHook(t *testing.T) {
 				t.Fatalf("New = %v, %v; want an error wrapping ErrConfig containing %q", srv, err, tt.want)
 			}
 		})
+	}
+}
+
+// TestRenderErrors_WithoutState covers srvr's error middleware outside
+// srvr's pipeline (no request state, as for a gin engine driven directly):
+// it cannot tell a router answer, so a status without an error is sent
+// bare and the renderer is not called.
+func TestRenderErrors_WithoutState(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	r := srvr.ErrorRendererFunc(func(context.Context, srvr.ErrorRequest, error) srvr.ErrorResponse {
+		called = true
+
+		return srvr.ErrorResponse{Status: http.StatusInternalServerError}
+	})
+
+	srv, err := New(srvr.WithLogOutput(io.Discard), srvr.WithErrorRenderer(r))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/nope", nil)
+	c.Status(http.StatusNotFound)
+
+	renderErrors(srv.core)(c)
+
+	if rec.Code != http.StatusNotFound || rec.Body.Len() != 0 || called {
+		t.Fatalf("response %d %q, renderer called %v; want a bare 404 and no call", rec.Code, rec.Body, called)
 	}
 }
