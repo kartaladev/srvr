@@ -37,7 +37,8 @@ func errorChain(n int) error {
 // MaxRequestBodyBytes answered 413, a 32-link error chain, a success
 // from a client sending a User-Agent that WithoutAccessLogUserAgent
 // leaves out of the record, a file a static mount serves from disk, and
-// the handler error with an error hook installed.
+// the handler error with an error hook installed, and success and the error rows with
+// trivialRenderer (design D10).
 // Each case
 // runs sequentially and, as "<case> parallel", from GOMAXPROCS goroutines
 // with b.RunParallel.
@@ -161,6 +162,27 @@ var pipelineCases = []pipelineCase{
 		name: "handler error with error hook", method: http.MethodGet, path: "/fail", status: http.StatusInternalServerError,
 		opts: []Option{WithErrorHook(func(context.Context, error, ErrorReport) {})},
 	},
+	// design D10: the trivial custom renderer on every error row and success.
+	{
+		name: "success trivial renderer", method: http.MethodGet, path: "/ok", status: http.StatusOK,
+		opts: []Option{WithErrorRenderer(trivialRenderer)},
+	},
+	{
+		name: "handler error trivial renderer", method: http.MethodGet, path: "/fail", status: http.StatusInternalServerError,
+		opts: []Option{WithErrorRenderer(trivialRenderer)},
+	},
+	{
+		name: "unmatched trivial renderer", method: http.MethodGet, path: "/nope", status: http.StatusNotFound,
+		opts: []Option{WithErrorRenderer(trivialRenderer)},
+	},
+	{
+		name: "panic trivial renderer", method: http.MethodGet, path: "/panic", status: http.StatusInternalServerError,
+		opts: []Option{WithErrorRenderer(trivialRenderer)},
+	},
+	{
+		name: "method not allowed trivial renderer", method: http.MethodGet, path: "/upload", status: http.StatusMethodNotAllowed,
+		opts: []Option{WithErrorRenderer(trivialRenderer)},
+	},
 }
 
 // request returns the case's request. serve rewinds its body, so it is
@@ -197,3 +219,28 @@ func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 
 	return w
 }
+
+// trivialBody is the trivial renderer's fixed 20-byte JSON body.
+var trivialBody = []byte(`{"code":"bad_thing"}`)
+
+// trivialRenderer is design D10's trivial custom renderer: a fixed
+// 20-byte JSON body with the status of srvr's own errors (404, 405) and
+// 500 otherwise.
+var trivialRenderer = ErrorRendererFunc(func(_ context.Context, _ ErrorRequest, err error) ErrorResponse {
+	status := http.StatusInternalServerError
+
+	var mna *MethodNotAllowedError
+
+	switch {
+	case errors.Is(err, ErrNotFound):
+		status = http.StatusNotFound
+	case errors.As(err, &mna):
+		status = http.StatusMethodNotAllowed
+	}
+
+	return ErrorResponse{
+		Status: status,
+		Header: http.Header{"Content-Type": {"application/json"}},
+		Body:   trivialBody,
+	}
+})

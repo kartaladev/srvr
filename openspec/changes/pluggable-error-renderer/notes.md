@@ -182,7 +182,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** revisit when a second engine needs to call the hook without recording.
 
 ### Slice 7: benchmarks pending the owner's go-ahead (3.5, 4.3, 5.3, slice 6 hook row, 7.3)
-- **Status:** open
+- **Status:** closed 2026-11-22: measured, see "Final D10 benchmark comparison"
 - **Target:** pluggable-error-renderer (tasks 3.5, 4.3, 5.3, 7.3)
 - **Context:** owner 2026-11-21: machine busy. Tasks 3.5, 4.3, 5.3, the slice 6 "handler error with error hook" row and the final comparison 7.3 are all still to measure. Lead decision 2026-11-21: the hook row was added to `BenchmarkPipeline` in `ginsrvr` and `fibersrvr` too (slice 7); only a compile smoke ran (`GOWORK=off go test -run '^$' -bench 'Pipeline/handler_error_with' -benchtime=1x .` in both modules, passes).
 - **Suggested action:** once the owner confirms the machine is quiet, run 3.5/4.3/5.3 and 7.3 together (base vs branch, every engine, default and trivial renderer, hook row against "handler error" for zero added allocs/op, 10 interleaved runs, `benchstat`), record the table here and STOP for the owner if a threshold is crossed.
@@ -191,3 +191,29 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Status:** closed: recorded
 - **Target:** pluggable-error-renderer
 - **Context:** `TestParity_CustomRendering` (`internal/paritytest/custom_rendering_test.go`) runs every "Custom renderer on every engine" row on the three engines with R (status, Content-Type, Allow, body, one call with a matching error, access record) and records differences as `except` entries: fiber client-closed (R gets the plain handler error, answers 500), net/http and gin 431 (Go's plain-text 431 before srvr, R not called), fiber buffered body then error (R replaces it; net/http and gin keep the 200). `TestParity_DefaultRendering` now runs the fiber client-closed row explicitly (safe 500 problem without the error text) instead of skipping it; the gin default empty 200 stays pinned by the golden. The Faulty, Hostile and lifecycle scenarios stay covered per engine (`renderer_test.go` of each module, `internal/engine` render tests), not duplicated in paritytest. The gin status-only abort row stays in `ginsrvr` (gin only).
+
+### Final D10 benchmark comparison (tasks 3.5, 4.3, 5.3, 7.3)
+
+- **Status:** done 2026-11-22; within thresholds
+- **Target:** pluggable-error-renderer
+- **Context:** owner go-ahead given (machine free). One comprehensive interleaved run covers 3.5 (net/http), 4.3 (gin), 5.3 (fiber) and 7.3 (final). Base: detached worktree at `ca21c12` (`main` `78c8165` plus consolidation docs) with the branch's `server_bench_test.go` copied in minus the rows the base API lacks (error hook row, trivial-renderer rows). Branch: worktree at `6bdd5cc` plus this commit's renderer rows. `BenchmarkPipeline` gained, in all three modules, `<row> trivial renderer` rows for success, handler error, unmatched, panic and method not allowed: `trivialRenderer`, a fixed 20-byte JSON body, 404/405 for srvr's own errors and 500 otherwise. Command per module (root, ginsrvr, fibersrvr), base then branch, 10 rounds: `GOWORK=off go test -run '^$' -bench Pipeline -benchmem -count=1 .`; `benchstat base-<m>.txt head-<m>.txt`. Apple M4 Pro, darwin/arm64. Worktrees removed afterwards.
+- **Evidence (sequential rows; `parallel` rows omitted):** sec/op is still very noisy (±50-325%), so no ns/op change is significant (every row `~`, p ≥ 0.31); no error row crosses +5% with p < 0.05. allocs/op on `success`: 20 → 20 (root, gin), 47 → 47 (fiber). The error hook row equals `handler error` in allocs/op on every engine (root 77, gin 79, fiber 105): D8's zero added allocations holds. The only alloc change at the default renderer: root `method not allowed` 112 → 114 (+2, as in the slice 2 baseline). B/op: +0.2-1.6% on root/gin error rows; fiber `panic` +4.75% (p=0.000), `unmatched` +0.89%. Trivial renderer is cheaper than prblm on every error row.
+
+| row (allocs/op) | root base → branch | root trivial | gin base → branch | gin trivial | fiber base → branch | fiber trivial |
+|---|---|---|---|---|---|---|
+| success | 20 → 20 | 19 | 20 → 20 | 20 | 47 → 47 | 47 |
+| handler error | 77 → 77 | 63 | 79 → 79 | 65 | 105 → 105 | 87 |
+| handler error with error hook | - → 77 | | - → 79 | | - → 105 | |
+| unmatched (not_found) | 103 → 103 | 88 | 83 → 83 | 59 | 111 → 111 | 83 |
+| method not allowed | 112 → 114 | 94 | 87 → 87 | 65 | 114 → 114 | 89 |
+| panic | 83 → 83 | 70 | 83 → 83 | 72.5 | 117 → 117 | 98.5 |
+
+| row (sec/op, base → branch, p) | root | gin | fiber |
+|---|---|---|---|
+| success | 4.863µ → 3.391µ ~ (0.481) | 5.616µ → 4.530µ ~ (0.481) | 28.66µ → 24.78µ ~ (0.739) |
+| handler error | 18.42µ → 14.80µ ~ (1.000) | 24.91µ → 26.29µ ~ (0.971) | 53.12µ → 50.17µ ~ (0.971) |
+| unmatched | 22.55µ → 15.24µ ~ (0.739) | 24.33µ → 30.65µ ~ (0.393) | 52.91µ → 26.94µ ~ (0.912) |
+| method not allowed | 24.84µ → 20.65µ ~ (0.971) | 18.11µ → 22.91µ ~ (0.631) | 54.07µ → 46.99µ ~ (0.853) |
+| panic | 316.9µ → 295.3µ ~ (0.739) | 417.7µ → 372.9µ ~ (0.529) | 260.9µ → 221.0µ ~ (0.631) |
+
+- **Suggested action:** none for this change. D10 thresholds (default renderer error-row ns/op > +5% with p < 0.05, or extra allocs/op on `success`) not reached. The sec/op spread makes ns/op comparisons weak; a quieter or longer run (`-count` higher, `-benchtime`) would tighten it if ever needed.

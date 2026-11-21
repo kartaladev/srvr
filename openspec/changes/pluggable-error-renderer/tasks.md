@@ -45,7 +45,7 @@
   - RED: the four new rows, including the hostile `Title` and the panic value not logged
   - GREEN: `failure` holds status, type, title instead of `*prblm.Problem`; `addFailure` omits empty type and title and writes `srvr.renderer.failure`
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.5 Re-run the D10 benchmarks for net/http (ask the owner first, as in 2.2); record in `notes.md`; STOP for the owner if a threshold is crossed (pending: owner said the machine is busy, 2026-11-21; see notes.md)
+- [x] 3.5 Re-run the D10 benchmarks for net/http (ask the owner first, as in 2.2); record in `notes.md`; STOP for the owner if a threshold is crossed (done 2026-11-22: one interleaved run, notes.md "Final D10 benchmark comparison")
 - [x] 3.6 Documentation: godoc on `ErrorRenderer`, `ErrorRequest`, `ErrorResponse`, `WithErrorRenderer` (every rule, the fixed limits and why, no config field, the leak the renderer owns), an `ExampleWithErrorRenderer`; `CHANGELOG.md` `[Unreleased]` Added; verify `go test -run Example .` passes
 - [x] 3.7 Verify the slice end to end: `make check MODULES=". internal/paritytest"`; coverage of every branch of `engine.Render` with `go tool cover -func`; golden default rows unchanged; gopls diagnostics clean; goleak passes (no rendering goroutine)
 - [x] 3.8 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): render errors with a consumer's ErrorRenderer`; verify with `git log -1 --stat`
@@ -60,7 +60,7 @@
   - RED: `httptest` rows; expected failure: ginprblm renders instead of `R`
   - GREEN: when a renderer is set, `newEngine` installs srvr's error middleware (last `c.Errors` entry, guarded, through `engine.Render`, status-only aborts skipped as `clearStatusOnly` does today) and srvr's recovery instead of `ginprblm.Middleware`/`Recovery`; the router's 404/405 deliver `srvr.ErrNotFound`/`*MethodNotAllowedError` with gin's sorted `Allow`
   - REFACTOR: share the status-only rule between `clearStatusOnly` and the new middleware (Extract Function); then `/simplify`
-- [ ] 4.3 Re-run the D10 benchmarks for gin (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed (skipped 2026-11-21, machine busy: notes.md "Slice 4: benchmarks skipped")
+- [x] 4.3 Re-run the D10 benchmarks for gin (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed (done 2026-11-22: one interleaved run, notes.md "Final D10 benchmark comparison")
 - [x] 4.4 Verify: `make check MODULES="ginsrvr internal/paritytest"`; coverage of the new middleware and recovery; default golden rows unchanged; gopls diagnostics clean
 - [x] 4.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(ginsrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
 
@@ -74,7 +74,7 @@
   - RED: `app.Test` rows (431 and 408 over a real listener where `app.Test` cannot produce them); expected failure: fiberprblm renders instead of `R`
   - GREEN: `renderError` and srvr's recovery call `engine.Render` when set; `RecordRejection` passes `ErrHeadersTooLarge`/`ErrRequestTimeout`/`ErrRequestTooLarge` and the renderer renders the rejection; router answers map `fiber.ErrNotFound`/`ErrMethodNotAllowed` to srvr's errors
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 5.3 Re-run the D10 benchmarks for fiber (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed
+- [x] 5.3 Re-run the D10 benchmarks for fiber (ask the owner first); record in `notes.md`; STOP for the owner if a threshold is crossed (done 2026-11-22: one interleaved run, notes.md "Final D10 benchmark comparison")
   - skipped 2026-11-21 (owner: machine busy); see notes.md "Slice 5: benchmarks skipped"
 - [x] 5.4 Verify: `make check MODULES="fibersrvr internal/paritytest"`; coverage; default golden rows unchanged; gopls diagnostics clean
 - [x] 5.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(fibersrvr): render errors with the server's ErrorRenderer`; verify with `git log -1 --stat`
@@ -96,7 +96,7 @@
 
 - [x] 7.1 Parity: `internal/paritytest` runs every Examples row of error-rendering on all three engines with the default renderer (golden, byte-for-byte) and with `R` (identical status, body and listed headers); documented differences (fiber never cancels a context, net/http's pre-routing 431) are pinned as engine-parity exceptions; verify `go test -race ./...` passes in `internal/paritytest`
 - [x] 7.2 Documentation: README section "Custom error rendering" (wrapping `DefaultErrorRenderer`, a house-format renderer that never echoes error text), LOGGING.md (`problem` group optionality, `srvr.renderer.failure`, schema note), godoc review of every new name, CHANGELOG complete; verify `go test -run Example ./...` passes
-- [ ] 7.3 Final benchmark comparison (design D10): ask the owner first; base commit vs branch on every engine, default and trivial renderer, 10 interleaved runs, `benchstat`; record the table in `notes.md`; STOP for the owner if a threshold is crossed
+- [x] 7.3 Final benchmark comparison (design D10): ask the owner first; base commit vs branch on every engine, default and trivial renderer, 10 interleaved runs, `benchstat`; record the table in `notes.md`; STOP for the owner if a threshold is crossed (done 2026-11-22: one interleaved run, notes.md "Final D10 benchmark comparison")
 - [x] 7.4 End-to-end verification locally (GitHub CI is disabled): `make check` and `make cover` from the root; every hot path of design Hot Paths covered (`go tool cover -func`); `govulncheck`; `openspec validate pluggable-error-renderer --strict`; gopls diagnostics clean
 - [x] 7.5 Run `/simplify`, apply what holds up, re-run the tests, then commit `test(paritytest): pin error rendering parity and document custom renderers`; verify with `git log -1 --stat`
 
