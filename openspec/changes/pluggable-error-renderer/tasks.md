@@ -85,6 +85,7 @@
   - RED: change the rows to the new signature; expected failure: compile error in the test files only, then wrong report contents
   - GREEN: `ErrorReport` (or the decided type), `onError` and `engine.Render` build it; drop the D8 interim synthesised problem; `clearStatusOnly` keeps prblm's hook signature internally
   - REFACTOR: find references with gopls to every `ErrorHook` use; then `/simplify`
+  - Also (owner decision 2026-11-21): with a renderer, a gin status-only abort (`c.AbortWithStatus(401)`) still reaches `ErrorHook` (its bare status stays the answer; the renderer is not called); RED: a `TestErrorHook` gin renderer row for `c.AbortWithStatus(401)` expecting one hook call with status 401
 - [ ] 6.3 Log schema per 1.8: golden-record test pins `problem.type`/`problem.title` as optional and `srvr.renderer.failure`; `srvr.log.schema` stays `1` or becomes `2` as decided (structured-logging "The log schema is versioned" rows refreshed in this change's specs if bumped); verify `go test -race -run 'TestGolden|TestSchema' ./...` passes
 - [ ] 6.4 `CHANGELOG.md` `[Unreleased]`: **BREAKING** `ErrorHook` with a migration snippet; LOGGING.md entries; verify `go vet ./...` passes in every module
 - [ ] 6.5 Verify: `make check`; gopls diagnostics clean

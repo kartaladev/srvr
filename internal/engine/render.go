@@ -285,3 +285,10 @@ func safeAnswer(ctx context.Context, req ErrorRequest) ErrorResponse {
 		Type: "about:blank", Title: http.StatusText(http.StatusInternalServerError),
 	}
 }
+
+// SetRenderDeadline replaces the deadline that bounds c's renderer calls
+// (default 5 s). It exists for srvr's own tests, so the engine modules can
+// cover the deadline end to end without waiting for the default; only srvr's
+// modules can import this package, so it is not public API. It must be
+// called before c serves requests.
+func SetRenderDeadline(c *Core, d time.Duration) { c.renderDeadline = d }

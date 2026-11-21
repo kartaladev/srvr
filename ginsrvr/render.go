@@ -94,33 +94,20 @@ func recoverPanics(c *gin.Context) {
 	returned = true
 }
 
-// deferredWriter holds back the status a handler sets until the body is
-// written or the chain returned, so an error answered after gin committed
-// a status early gets the renderer's status. It is the engine.ErrorTarget
+// deferredWriter holds back the header a handler commits until the body
+// is written or the chain returned, so an error answered after gin
+// committed a status early gets the renderer's status. gin's WriteHeader
+// only records the status (the header goes out with WriteHeaderNow or the
+// first write), so holding back WriteHeaderNow is enough. It is the engine.ErrorTarget
 // of [renderErrors].
 type deferredWriter struct {
 	gin.ResponseWriter
 
-	// status is the status held back; 0 for none.
-	status int
 	// committed reports whether the response reached the underlying writer.
 	committed bool
 }
 
 var _ engine.ErrorTarget = (*deferredWriter)(nil)
-
-// WriteHeader holds code back until the response commits.
-func (w *deferredWriter) WriteHeader(code int) {
-	if w.committed {
-		w.ResponseWriter.WriteHeader(code)
-
-		return
-	}
-
-	if code > 0 {
-		w.status = code
-	}
-}
 
 // WriteHeaderNow commits only a response already committed: gin's
 // c.AbortWithStatus calls it, which must not commit the status yet.
@@ -161,37 +148,18 @@ func (w *deferredWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // Unwrap returns the underlying writer, for http.ResponseController.
 func (w *deferredWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// Status returns the held-back status, or the underlying writer's.
-func (w *deferredWriter) Status() int {
-	if w.committed || w.status == 0 {
-		return w.ResponseWriter.Status()
-	}
-
-	return w.status
-}
-
 // Committed reports whether the response already started.
 func (w *deferredWriter) Committed() bool { return w.committed }
 
 // WriteError writes res through the deferred status, replacing a status
 // gin set early.
 func (w *deferredWriter) WriteError(res engine.ErrorResponse) {
-	w.status = 0
 	engine.WriteHTTPError(w, res)
 }
 
-// commit sends the held-back status to the underlying writer, once.
-func (w *deferredWriter) commit() {
-	if w.committed {
-		return
-	}
-
-	w.committed = true
-
-	if w.status != 0 {
-		w.ResponseWriter.WriteHeader(w.status)
-	}
-}
+// commit marks the response committed; gin's writer sends the status it
+// recorded with the first write.
+func (w *deferredWriter) commit() { w.committed = true }
 
 // commitNow commits and writes the header without a body.
 func (w *deferredWriter) commitNow() {
