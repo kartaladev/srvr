@@ -76,8 +76,10 @@ type (
 	ErrorHook = engine.ErrorHook
 	// ErrorReport describes the error answer sent: its status and, when
 	// the answer gave them, its problem type and title (always on the
-	// default path). It is passed by value, so a hook may keep it; see
-	// [engine.ErrorReport].
+	// default path). It is passed by value, so a hook may keep it. It
+	// stays comparable, but fields may be added in later versions: compare
+	// its fields rather than whole values against a literal, and build it
+	// with keyed literals; see [engine.ErrorReport].
 	ErrorReport = engine.ErrorReport
 )
 

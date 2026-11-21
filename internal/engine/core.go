@@ -157,6 +157,10 @@ type ErrorHook func(ctx context.Context, err error, sent ErrorReport)
 // problem group does. It is a value (design D8): passing it allocates
 // nothing, its strings share the answer's text and a hook may keep it.
 // Type and Title are empty when a consumer renderer gave none.
+//
+// ErrorReport stays comparable, but fields may be added in later
+// versions: compare its fields rather than whole values against a
+// literal, and build it with keyed literals.
 type ErrorReport struct {
 	// Status is the HTTP status sent; 0 when no answer was sent.
 	Status int
@@ -194,9 +198,15 @@ func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
 		return
 	}
 
-	recordFailure(ctx, err, p)
+	req, sent := requestFrom(ctx), answerOf(p)
+	recordAnswer(req, err, sent, "")
 	captureProblem(ctx, err, p)
-	c.CallErrorHook(ctx, err, answerOf(p))
+
+	if req != nil && req.committed() {
+		sent = ErrorReport{} // the client got the started response, not p
+	}
+
+	c.CallErrorHook(ctx, err, sent)
 }
 
 // CallErrorHook calls the consumer's error hook, if any, with err and

@@ -835,6 +835,63 @@ func TestErrorHook(t *testing.T) {
 	})
 }
 
+// TestErrorHook_AfterResponseStarted covers error-responses / Scenario:
+// Consumer mapper and hook, the late rows on gin: an error or panic
+// arriving after the response started reaches the hook with the zero
+// report (nothing sent), on the default path and with a renderer.
+func TestErrorHook_AfterResponseStarted(t *testing.T) {
+	t.Parallel()
+
+	conf := func(g *gin.RouterGroup) {
+		g.GET("/error", func(c *gin.Context) {
+			c.String(http.StatusOK, "x")
+			_ = c.Error(errQuota)
+		})
+		g.GET("/panic", func(c *gin.Context) {
+			c.String(http.StatusOK, "x")
+			c.Writer.Flush()
+			panic("late")
+		})
+	}
+
+	tests := []struct {
+		name     string
+		renderer bool
+		path     string
+	}{
+		{"default: error after write", false, "/error"},
+		{"renderer: error after write", true, "/error"},
+		{"default: panic after flush", false, "/panic"},
+		{"renderer: panic after flush", true, "/panic"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reports := make(chan srvr.ErrorReport, 4)
+			opts := []srvr.Option{srvr.WithErrorHook(func(_ context.Context, _ error, sent srvr.ErrorReport) { reports <- sent })}
+			if tt.renderer {
+				opts = append(opts, srvr.WithErrorRenderer(newRecordingRenderer(4)))
+			}
+			srv, out := newServer(t, opts...)
+			mustNil(t, srv.Register(routes(conf)))
+			base := start(t, srv)
+
+			if res := get(t, base+tt.path); res.status != http.StatusOK {
+				t.Fatalf("status %d, want 200", res.status)
+			}
+			eventually(t, func() bool { return len(out.access(t)) == 1 }, "1 access record")
+			if len(reports) != 1 {
+				t.Fatalf("hook called %d times, want once", len(reports))
+			}
+			if got := <-reports; got != (srvr.ErrorReport{}) {
+				t.Fatalf("hook report %+v, want zero (nothing sent)", got)
+			}
+		})
+	}
+}
+
 // TestProblemGroup_CustomRenderer covers triage-error-records / Scenario:
 // Problem group, the custom-renderer rows on gin.
 func TestProblemGroup_CustomRenderer(t *testing.T) {

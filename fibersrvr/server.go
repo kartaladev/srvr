@@ -749,13 +749,13 @@ func (s *Server) serveChain(c fiber.Ctx, state *engine.RequestState) {
 		state.MarkRouterAnswered()
 	}
 
-	s.answer(c, err, routed)
-
-	// fiberprblm keeps a body stream that already started; the client got
+	// fiberprblm keeps a body stream that already started; the client gets
 	// that, not the problem.
 	if c.Response().IsBodyStream() {
 		state.MarkCommitted()
 	}
+
+	s.answer(c, err, routed)
 }
 
 // routerAnswered reports whether err, which the chain returned for c, is

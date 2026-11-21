@@ -22,7 +22,9 @@ once tagged.
   ginprblm's, so the renderer answers the last `c.Errors` entry, recovered panics, gin's 404 and
   405 and static misses (a status set by `c.AbortWithError` is replaced by the renderer's); a
   status-only abort such as `c.AbortWithStatus(401)` keeps gin's bare status and does not call
-  the renderer; the error hook still receives it as `ginprblm.ErrStatusOnly` with the status sent. A request the client closed is answered `499` through the
+  the renderer; the error hook still receives it, and any other 4xx or 5xx status sent with an
+  empty body and no error (such as `c.Status(404)` with nothing written), as
+  `ginprblm.ErrStatusOnly` with the status sent. A request the client closed is answered `499` through the
   renderer (without one, gin keeps v0.3.0's empty `200`).
 - fibersrvr supports `srvr.WithErrorRenderer`: the renderer answers handler errors, recovered
   panics, fiber's 404 and 405 (as `srvr.ErrNotFound` and `*srvr.MethodNotAllowedError`), static

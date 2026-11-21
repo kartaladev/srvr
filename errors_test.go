@@ -219,6 +219,56 @@ func TestErrorHook(t *testing.T) {
 	})
 }
 
+// TestErrorHook_AfterResponseStarted covers error-responses / Scenario:
+// Consumer mapper and hook, the late rows on net/http: an error or panic
+// arriving after the response started reaches the hook with the zero
+// report (nothing sent), on the default path and with a renderer.
+func TestErrorHook_AfterResponseStarted(t *testing.T) {
+	t.Parallel()
+
+	written := late(http.StatusOK, func() error { return errQuota })
+	flushed := srvr.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) error {
+		_, _ = io.WriteString(w, "x")
+		_ = http.NewResponseController(w).Flush()
+		panic("late")
+	})
+
+	tests := []struct {
+		name     string
+		renderer bool
+		handler  srvr.HandlerFunc
+	}{
+		{"default: error after write", false, written},
+		{"renderer: error after write", true, written},
+		{"default: panic after flush", false, flushed},
+		{"renderer: panic after flush", true, flushed},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reports := make(chan srvr.ErrorReport, 4)
+			opts := []srvr.Option{srvr.WithErrorHook(func(_ context.Context, _ error, sent srvr.ErrorReport) { reports <- sent })}
+			if tt.renderer {
+				opts = append(opts, srvr.WithErrorRenderer(&testRenderer{status: http.StatusTooManyRequests, code: "quota"}))
+			}
+			base, logs := loggedServer(t, func(g *srvr.Group) { g.GET("/x", tt.handler) }, opts...)
+
+			if res := get(t, base+"/x"); res.status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", res.status)
+			}
+			logs.waitRecord(t, "http.request.failed")
+			if len(reports) != 1 {
+				t.Fatalf("hook called %d times, want once", len(reports))
+			}
+			if got := <-reports; got != (srvr.ErrorReport{}) {
+				t.Fatalf("hook report %+v, want zero (nothing sent)", got)
+			}
+		})
+	}
+}
+
 // reportHook returns an error hook adding name to log, marked when the
 // report is not prblm.ErrNotFound with a 404 problem and when srvr's own
 // hook has already recorded the failure, and then panicking when panics is

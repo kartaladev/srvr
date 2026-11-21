@@ -65,6 +65,9 @@ type RequestState struct {
 	// itself answer the request with a 404 or 405 (see
 	// [RequestState.MarkRouterAnswered]).
 	routerAnswered bool
+	// started is set by an engine without rec whose response started
+	// (see [RequestState.MarkCommitted]).
+	started bool
 	// failure is the error the request failed with, as srvr's prblm hook
 	// or the unmatched interception recorded it.
 	failure *failure
@@ -106,9 +109,10 @@ func (r *RequestState) SetLocation(loc Location) {
 	}
 }
 
-// committed reports whether the net/http access stage saw the response
-// start; false on an engine without a response recorder.
-func (r *RequestState) committed() bool { return r.rec != nil && r.rec.wroteHeader }
+// committed reports whether the response started: the net/http access
+// stage saw it start, or an engine without a response recorder marked it
+// with [RequestState.MarkCommitted].
+func (r *RequestState) committed() bool { return r.started || r.rec != nil && r.rec.wroteHeader }
 
 // Matched reports whether a route matched the request.
 func (r *RequestState) Matched() bool { return r.route != "" }
@@ -139,10 +143,13 @@ func (r *RequestState) Panicked() bool { return r.failure != nil && r.failure.pa
 // ginprblm for a status-only abort.
 func (r *RequestState) ClearFailure() { r.failure = nil }
 
-// MarkCommitted records that the request's failure arrived after its
-// response had started, for an engine without a response recorder (fiber
-// keeps a body stream that started before the error).
+// MarkCommitted records that the request's response started, for an
+// engine without a response recorder (fiber keeps a body stream the
+// handler set). Called before the error is answered, the failure is then
+// recorded as committed and the error hook receives the zero report;
+// called after, it marks the failure already recorded.
 func (r *RequestState) MarkCommitted() {
+	r.started = true
 	if r.failure != nil {
 		r.failure.committed = true
 	}

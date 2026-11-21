@@ -15,9 +15,11 @@ import (
 // renderer, in place of ginprblm's: once the chain returned, it answers
 // through engine.Core.RenderHTTP the last error recorded in c.Errors
 // (srvr's recovery records a panic there too), or the router's 404 or 405
-// for a request no route or mount matched. A status-only abort such as
-// c.AbortWithStatus(401) is no error: its bare status is sent, as
-// without a renderer, and the error hook still receives it as
+// for a request no route or mount matched. A status-only answer, any
+// 4xx or 5xx status sent with an empty body and no recorded error (an
+// abort such as c.AbortWithStatus(401), or c.Status(404) with nothing
+// written), is no error: its bare status is sent, and the error hook
+// still receives it as
 // ginprblm.ErrStatusOnly with the status sent, as on ginprblm's path
 // (owner decision 2026-11-21). The response writer defers the status, because gin
 // commits it early (c.AbortWithError writes its status before the error

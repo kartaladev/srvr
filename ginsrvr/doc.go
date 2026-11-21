@@ -17,8 +17,11 @@
 // error, a recovered panic (a *srvr.PanicError) and the router's 404 and
 // 405 (srvr.ErrNotFound, *srvr.MethodNotAllowedError), including a static
 // mount's; a status the handler set before c.AbortWithError is replaced
-// by the renderer's. A status-only abort is not an error answer: the
-// renderer is not called and gin's bare status is sent.
+// by the renderer's. A status-only answer is not an error answer: any
+// 4xx or 5xx status sent with an empty body and no recorded error (an
+// abort such as c.AbortWithStatus(401), but also c.Status(404) with
+// nothing written) is sent bare, the renderer is not called, and the
+// error hook receives it as ginprblm.ErrStatusOnly with that status.
 //
 // srvr builds the engine with gin.New and installs its own pipeline before
 // any consumer group: trace context, access record, body limit

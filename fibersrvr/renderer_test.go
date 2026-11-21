@@ -851,6 +851,9 @@ func TestErrorHook(t *testing.T) {
 		{"default: error", false, http.MethodGet, "/404", nil, 404, call{prblm.ErrNotFound, srvr.ErrorReport{Status: 404, Type: "about:blank", Title: "Not Found"}}},
 		{"renderer: error", true, http.MethodGet, "/x", nil, 429, call{errQuota, srvr.ErrorReport{Status: 429}}},
 		{"renderer: router 404", true, http.MethodGet, "/missing", nil, 404, call{srvr.ErrNotFound, srvr.ErrorReport{Status: 404}}},
+		{"default: rejection", false, http.MethodPost, "/post", []byte("12345678901"), 413, call{fiber.ErrRequestEntityTooLarge, srvr.ErrorReport{Status: 413, Type: "about:blank", Title: "Request Entity Too Large"}}},
+		{"default: error after the body stream started", false, http.MethodGet, "/stream", nil, 200, call{errQuota, srvr.ErrorReport{}}},
+		{"renderer: error after the body stream started", true, http.MethodGet, "/stream", nil, 200, call{errQuota, srvr.ErrorReport{}}},
 		{"renderer: rejection", true, http.MethodPost, "/post", []byte("12345678901"), 413, call{srvr.ErrRequestTooLarge, srvr.ErrorReport{Status: 413}}},
 	}
 
@@ -871,6 +874,10 @@ func TestErrorHook(t *testing.T) {
 				g.Get("/x", func(fiber.Ctx) error { return errQuota })
 				g.Get("/404", func(fiber.Ctx) error { return prblm.ErrNotFound })
 				g.Post("/post", ok)
+				g.Get("/stream", func(c fiber.Ctx) error {
+					c.Response().SetBodyStream(strings.NewReader("x"), 1)
+					return errQuota
+				})
 			})))
 			start(t, srv)
 
