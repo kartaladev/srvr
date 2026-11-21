@@ -658,8 +658,8 @@ func TestParity_Exceptions(t *testing.T) {
 			t.Fatalf("%d access records, want 1 (the other 2 suppressed by the limit): %v", len(recs), recs)
 		}
 
-		if r := recs[0]; r["exception.message"] != srvr.ErrNotFound.Error() || r["http.route"] != nil || r["level"] != "WARN" {
-			t.Errorf("record %v, want exception.message %q, no http.route, WARN", r, srvr.ErrNotFound.Error())
+		if r := recs[0]; r["exception.message"] != "prblm: not found" || r["http.route"] != nil || r["level"] != "WARN" {
+			t.Errorf("record %v, want exception.message \"prblm: not found\", no http.route, WARN", r)
 		}
 	})
 

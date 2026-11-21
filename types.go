@@ -112,8 +112,10 @@ var (
 // each one is answered with the same problem as before they existed.
 var (
 	// ErrNotFound is the error of a request no route or static file
-	// matched (404). It wraps prblm.ErrNotFound, so a prblm mapper on that
-	// sentinel still matches it. A handler may return it too.
+	// matched (404). It is a distinct error of its own that matches
+	// prblm.ErrNotFound with errors.Is, so a prblm mapper on that sentinel
+	// still matches it, and its text is prblm.ErrNotFound's ("prblm: not
+	// found"), as v0.3.0 logged. A handler may return it too.
 	ErrNotFound = errchain.ErrNotFound
 	// ErrRequestTooLarge is wrapped, together with the engine's own error
 	// (*http.MaxBytesError on net/http and gin), by the error of a request

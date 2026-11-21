@@ -18,11 +18,11 @@ var answerMapper prblm.Mapper = prblm.MapperFunc(answerProblem)
 
 // answerProblem returns the problem of srvr's own answer err, or nil for
 // any other error, which prblm resolves as usual. ErrNotFound needs no
-// case: it wraps prblm.ErrNotFound, which prblm's built-ins answer.
+// case: it matches prblm.ErrNotFound, which prblm's built-ins answer.
 func answerProblem(_ context.Context, err error) *prblm.Problem {
 	if mna, ok := errors.AsType[*errchain.MethodNotAllowedError](err); ok {
 		p := prblm.New(http.StatusMethodNotAllowed)
-		if len(mna.Allow) > 0 {
+		if mna != nil && len(mna.Allow) > 0 { // a typed nil lists no method
 			p.Header = http.Header{"Allow": {strings.Join(mna.Allow, allowSeparator)}}
 		}
 

@@ -29,6 +29,7 @@ func TestAnswerProblem(t *testing.T) {
 		{"405 with Allow", &errchain.MethodNotAllowedError{Allow: []string{"GET", "HEAD"}}, 405, "Method Not Allowed", "", []string{"GET, HEAD"}},
 		{"405 wrapped", fmt.Errorf("w: %w", &errchain.MethodNotAllowedError{Allow: []string{"POST"}}), 405, "Method Not Allowed", "", []string{"POST"}},
 		{"405 without methods has no Allow", &errchain.MethodNotAllowedError{}, 405, "Method Not Allowed", "", nil},
+		{"405 typed nil has no Allow", fmt.Errorf("w: %w", (*errchain.MethodNotAllowedError)(nil)), 405, "Method Not Allowed", "", nil},
 		{"413 wrapping *http.MaxBytesError", errchain.RequestTooLarge(&http.MaxBytesError{Limit: 1}), 413, "Request Entity Too Large", "The request body is too large.", nil},
 		{"413 alone", errchain.ErrRequestTooLarge, 413, "Request Entity Too Large", "The request body is too large.", nil},
 		{"431", errchain.ErrHeadersTooLarge, 431, "Request Header Fields Too Large", "", nil},

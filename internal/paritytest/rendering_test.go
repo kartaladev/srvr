@@ -87,6 +87,7 @@ var renderRows = []renderRow{
 		readBody: true, opts: []srvr.Option{srvr.WithMaxRequestBodyBytes(10)},
 	},
 	{name: "static miss", method: "GET", path: "/assets/missing.js", static: true},
+	{name: "static method not allowed", method: "DELETE", path: "/assets/app.js", static: true},
 	{name: "client closed", method: "GET", path: "/x", route: "/x", routeMethod: "GET", clientCloses: true, fail: func() error { return fmt.Errorf("q: %w", context.Canceled) }},
 	{name: "cyclic chain", method: "GET", path: "/x", route: "/x", routeMethod: "GET", ginAssign: true, fail: func() error { return &renderCyclicError{} }},
 	{

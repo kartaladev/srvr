@@ -12,9 +12,8 @@ import (
 // matches them with errors.Is and errors.As without importing prblm.
 var (
 	// ErrNotFound is the error of a request no route or static file
-	// matched. It wraps prblm.ErrNotFound, so a prblm mapper on that
-	// sentinel still matches it.
-	ErrNotFound = fmt.Errorf("srvr: not found: %w", prblm.ErrNotFound)
+	// matched; see [notFoundError].
+	ErrNotFound error = notFoundError{}
 	// ErrRequestTooLarge is wrapped, with the engine's own error, by the
 	// error of a request body over MaxRequestBodyBytes (see
 	// [RequestTooLarge]).
@@ -29,6 +28,17 @@ var (
 	// of a request whose client went away (see [ClientClosed]).
 	ErrClientClosed = errors.New("srvr: client closed request")
 )
+
+// notFoundError is [ErrNotFound]: a distinct error that keeps v0.3.0's
+// prblm.ErrNotFound text and matches it through Is instead of wrapping
+// it, so a 404's access record (exception.message, a one-link
+// error.chain) reads as in v0.3.0 and the 404 costs no extra chain link.
+type notFoundError struct{}
+
+func (notFoundError) Error() string { return "prblm: not found" }
+
+// Is reports whether target is prblm.ErrNotFound.
+func (notFoundError) Is(target error) bool { return target == prblm.ErrNotFound }
 
 // MethodNotAllowedError is the error of a request whose path a route or a
 // static mount serves, but not with the request's method.

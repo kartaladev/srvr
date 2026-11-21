@@ -77,18 +77,19 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** the +9 allocs of net/http's router 404 come from `srvr.ErrNotFound` being a wrapper of `prblm.ErrNotFound` (one more chain link for prblm's resolution, the access record's chain walk and redaction; unprofiled). Re-run on a quiet machine after slice 3 together with its renderer rows; profile the 404 row (`-memprofile`) if the owner wants the allocations back (e.g. an `Is` method instead of `Unwrap`).
 
 ### Slice 2: access records of srvr's own 404s name srvr.ErrNotFound
-- **Status:** open (owner awareness; CHANGELOG/LOGGING in slice 7)
-- **Target:** pluggable-error-renderer
-- **Context:** responses are unchanged (`TestParity_DefaultRendering`), but the error behind net/http's router 404 and every static miss is now `srvr.ErrNotFound` (design D3), so its `http.request.failed` record has `exception.message` `srvr: not found: prblm: not found`, `error.chain` `[*fmt.wrapError *errors.errorString]` and a different `error.fingerprint`; `ErrorHook` receives the new error, and the router/static 405 hands it `*srvr.MethodNotAllowedError` instead of `*prblm.Problem`. Keys and types are unchanged (schema stays `1`, D9). gin's and fiber's router 404/405 still go through ginprblm/fiberprblm with `prblm` errors until slices 4 and 5.
-- **Evidence:** `TestParity_Exceptions` "fiber answers a lasting permission error ..." expected `exception.message` `prblm: not found` and failed until updated to `srvr.ErrNotFound.Error()`.
-- **Suggested action:** slice 7 states it in CHANGELOG (fingerprints of 404 records change once) and LOGGING.md.
+- **Status:** decided (owner 2026-11-21); CHANGELOG/LOGGING.md item for slice 7
+- **Target:** pluggable-error-renderer (slice 7)
+- **Context:** owner decision 2026-11-21: `srvr.ErrNotFound` must not wrap `prblm.ErrNotFound`. It is now a distinct unexported `notFoundError` (`internal/errchain/answers.go`) whose `Error()` is v0.3.0's `prblm: not found` and whose `Is` matches `prblm.ErrNotFound`, so `errors.Is(srvr.ErrNotFound, prblm.ErrNotFound)` holds, prblm answers the same 404, and the `http.request.failed` record of net/http's router 404 and every static miss keeps v0.3.0's `exception.message` and a one-link `error.chain`. What still changes once: `error.fingerprint` (it hashes the chain's type names, `internal/engine/triage.go` ~line 96: `*errors.errorString` becomes `errchain.notFoundError`); `ErrorHook` receives `srvr.ErrNotFound` instead of `prblm.ErrNotFound` (it still matches `errors.Is(err, prblm.ErrNotFound)`), and the router/static 405 hands it `*srvr.MethodNotAllowedError` instead of `*prblm.Problem`. Keys and types are unchanged (schema stays `1`, D9). gin's and fiber's router 404/405 still go through ginprblm/fiberprblm until slices 4 and 5.
+- **Evidence:** `TestParity_Exceptions` expects `exception.message` `prblm: not found` again (as at v0.3.0); `TestTypedErrors` "ErrNotFound is distinct, keeps v0.3.0 text and wraps nothing". `go test -run '^$' -bench 'Pipeline/unmatched' -benchmem -count=5 .` (root): 103 allocs/op, ~7516-7523 B/op (was 112 with the wrapper; 103 at the base).
+- **Suggested action:** slice 7 states in CHANGELOG and LOGGING.md that the `error.fingerprint` of srvr's own 404 records changes once in v0.4.0 and that `ErrorHook` receives the srvr errors.
 
 ### Golden: gin answers a client-closed request with an empty 200, not 499
-- **Status:** open
+- **Status:** closed (owner 2026-11-21: fix the spec row, no behaviour change)
 - **Target:** pluggable-error-renderer
 - **Context:** error-rendering "Default rendering is unchanged" lists the client-closed row as `499` for net/http and gin. The v0.3.0 golden recorded at the base (`internal/paritytest/testdata/default_rendering.json`, row `client closed`) shows gin sends `200` with no body: ginprblm's `isClientGone` writes nothing when the request context is cancelled and the error wraps `context.Canceled`, and gin then completes with its default 200. No client normally reads it (the client half-closed in the test), so it is not a user-visible defect, but the spec row is wrong for gin and the access record says 200.
 - **Evidence:** `TestParity_DefaultRendering/gin/client_closed` records status 200, empty body; net/http records 499 `Client Closed Request`.
 - **Suggested action:** correct the spec row (gin: as v0.3.0, nothing rendered) in slice 4 or 7; decide in slice 4 whether srvr's gin path renders 499 like net/http.
+- **Decision:** owner 2026-11-21: the default path keeps v0.3.0 (net/http `499`, gin an empty `200` with `Content-Length: 0`); the "Default rendering is unchanged" Examples now list the two engines as separate rows. The custom-renderer row (`ErrClientClosed`, `499`) is unchanged.
 
 ### Slice 2: notes for slice 3 (engine.Render)
 - **Status:** open

@@ -24,7 +24,8 @@ Without `WithErrorRenderer`, every error answer SHALL be rendered by prblm with 
 | a route `POST /x` only | `GET /x` | `405` problem with `Allow` |
 | `MaxRequestBodyBytes` `10`, a route `POST /x` reading the body | `POST /x` with 11 bytes | `413` problem |
 | `Static("/assets", site)` | `GET /assets/missing.js` | `404` problem |
-| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http and gin) | `GET /x` | `499` problem titled `Client Closed Request` |
+| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (net/http) | `GET /x` | `499` problem titled `Client Closed Request` |
+| a route `GET /x` returning `fmt.Errorf("q: %w", context.Canceled)` after the client disconnected (gin) | `GET /x` | empty `200` with `Content-Length: 0`, nothing rendered |
 | a route `GET /x` returning an error whose `Unwrap` chain is cyclic | `GET /x` | the safe `500` problem |
 | `WithProblemOptions(prblm.WithMappers(prblm.Status(ErrQuota, 429)))`, a route returning `ErrQuota` | `GET /x` | `429` problem |
 

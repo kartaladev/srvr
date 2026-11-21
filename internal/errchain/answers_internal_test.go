@@ -24,8 +24,13 @@ func TestTypedErrors(t *testing.T) {
 		name  string
 		match func() bool
 	}{
-		{"ErrNotFound wraps prblm.ErrNotFound", func() bool {
+		{"ErrNotFound matches prblm.ErrNotFound", func() bool {
 			return errors.Is(ErrNotFound, prblm.ErrNotFound)
+		}},
+		{"ErrNotFound is distinct, keeps v0.3.0 text and wraps nothing", func() bool {
+			_, distinct := errors.AsType[notFoundError](ErrNotFound)
+
+			return distinct && errors.Unwrap(ErrNotFound) == nil && ErrNotFound.Error() == prblm.ErrNotFound.Error()
 		}},
 		{"MethodNotAllowedError carries Allow", func() bool {
 			var mna *MethodNotAllowedError
