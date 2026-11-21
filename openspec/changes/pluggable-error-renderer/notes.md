@@ -96,3 +96,28 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** pluggable-error-renderer (slice 3)
 - **Context:** (1) `engine.DefaultRenderer` answers through the request's `Core.Problems().Respond`, which runs srvr's hook: it records the failure and calls the consumer's `ErrorHook`. `engine.Render` must not record or hook a second time when the custom renderer is (or wraps) `DefaultErrorRenderer`. (2) `errchain.RequestTooLarge` and `errchain.ClientClosed` exist (tested) but nothing calls them yet: the default path must not change, so the 499 mapper (`clientClosed`) still receives the unwrapped error; slice 3 wraps on the custom path. (3) `ErrHeadersTooLarge`/`ErrRequestTimeout` are mapped (431/408) but produced only in slice 5. (4) `/simplify` findings skipped: keep `MethodNotAllowedError.Allow []string` (D3 public shape) despite the split/join round trip (+2 allocs on 405); keep the 413 detail copy in `answerProblem` for a fiber `ErrRequestTooLarge` without `*http.MaxBytesError`; `captureProblem`'s `ctx.Value` lookup in `onError` could become a `RequestState` field when slice 3 touches it.
 - **Suggested action:** handle in slice 3.
+- **Outcome (slice 3, 2026-11-21):** (1) handled: while a custom renderer runs, `RequestState.rendering` makes `onError` only capture the problem (prblm notes still reach the hook); `Core.Render` records the answer actually sent and calls the hook once (`TestRender` "delegating to DefaultRenderer records and hooks once"). (2) handled: `Core.Render` wraps with `ErrClientClosed` (same `clientClosed` predicate) and `ErrRequestTooLarge` (for an unwrapped `*http.MaxBytesError`) on the custom path only; the default path is unchanged. (3) unchanged, slice 5. (4) not revisited.
+
+### Slice 3: benchmarks pending the owner's go-ahead (task 3.5)
+- **Status:** open
+- **Target:** pluggable-error-renderer (slice 3, task 3.5)
+- **Context:** the owner said on 2026-11-21 that the machine is busy: no benchmark was run in slice 3 (only `go vet`/`make check`, which compile the benchmark files). The D10 re-run for net/http, with the custom-renderer rows, is still to do.
+- **Suggested action:** run task 3.5 once the owner confirms the machine is quiet; add the custom-renderer rows to `BenchmarkPipeline` then.
+
+### Slice 3: spec examples that do not match the code
+- **Status:** open (owner to confirm)
+- **Target:** pluggable-error-renderer (spec refresh, slice 7 at the latest)
+- **Context:** (1) error-rendering "Rejected renderer configuration" uses `prblm.WithNamespace("https://x")`, which prblm v0.3.0 rejects itself ("path must not be empty or /"), so that row reports a `ProblemOptions` error beside the `ErrorRenderer` one; tests use `https://errors.example/p`. (2) "What the renderer receives" expects `Route` `GET /items/{id}`; net/http records the route without the method (`http.route` is `/items/{id}`), and `ErrorRequest.Route` follows it ("the engine's syntax"). (3) The "returns after the 5-second deadline" row is tested at the decision level only (`TestRender`, deadline shortened through `Core.renderDeadline`); the HTTP suite cannot reach the internal hook.
+- **Suggested action:** correct the two example values in the spec; owner confirms `Route` follows `http.route`.
+
+### Slice 3: Render is a Core method
+- **Status:** closed: recorded
+- **Target:** pluggable-error-renderer
+- **Context:** the plan names `engine.Render`; it is `(*Core).Render(ctx, ErrorTarget, ErrorRequest, error)`, since it needs the server's renderer, hook and render deadline. Engines supply an `ErrorTarget` (`Committed`, `WriteError`); net/http's is in `internal/engine/renderhttp.go`, chosen once through `Core.HTTPErrors()` (prblm's handler or the renderer, same three methods). gin and fiber implement their own targets in slices 4 and 5.
+- **Suggested action:** none.
+
+### Slice 3: one unexplained `make cover` failure
+- **Status:** open (unconfirmed)
+- **Target:** unassigned
+- **Context:** during slice 3 verification one `make cover` run exited with `make: *** [cover] Error 1`; the output was cut by a pipe, so the failing test is unknown. The rerun, three `go test -race -count=1 .` runs and `make check` all passed. Not reproduced, so no defect is claimed (rule 2).
+- **Suggested action:** if it recurs, keep the full log and reproduce the failing test.

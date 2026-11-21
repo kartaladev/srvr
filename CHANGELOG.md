@@ -6,6 +6,19 @@ once tagged.
 
 ## [Unreleased]
 
+### Added
+
+- `srvr.WithErrorRenderer(r)` replaces prblm with the consumer's `srvr.ErrorRenderer` (with
+  `srvr.ErrorRendererFunc`, `srvr.ErrorRequest`, `srvr.ErrorResponse` and
+  `srvr.DefaultErrorRenderer` to delegate to prblm) on the net/http engine: handler errors,
+  recovered panics, the router's 404 and 405, static misses, oversized bodies and requests the
+  client closed reach it as srvr's errors. srvr keeps its safety rules around it: no call once the
+  response started, a walkable error, a 5-second deadline, status `400`-`599`, a body of at most
+  1 MiB with a `Content-Type`; a faulty answer becomes the safe `500` problem and the record names
+  the fault in the new key `srvr.renderer.failure` (`srvr.log.schema` stays `1`). It cannot be
+  combined with `WithProblemOptions`; ginsrvr and fibersrvr reject it until they support it.
+  Without it, every response and record is unchanged.
+
 ### Changed
 
 - **Breaking (API, `engine`, unstable before v1):** the package `github.com/kartaladev/srvr/engine`

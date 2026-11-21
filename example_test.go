@@ -413,3 +413,47 @@ func ExampleWithSPAFallback() {
 	// /dashboard */* 404 no-store
 	// Start returned <nil>
 }
+
+// ExampleWithErrorRenderer answers errors in an application's own JSON
+// format, never writing the error's text, and delegates nothing to prblm.
+func ExampleWithErrorRenderer() {
+	renderer := srvr.ErrorRendererFunc(func(_ context.Context, req srvr.ErrorRequest, err error) srvr.ErrorResponse {
+		status, code := http.StatusInternalServerError, "internal"
+		if errors.Is(err, srvr.ErrNotFound) {
+			status, code = http.StatusNotFound, "not_found"
+		}
+
+		return srvr.ErrorResponse{
+			Status: status,
+			Header: http.Header{"Content-Type": {"application/json"}},
+			Body:   []byte(`{"code":"` + code + `","trace":"` + req.TraceID + `"}`),
+			Title:  code, // for the access record and error hooks only
+		}
+	})
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard), srvr.WithErrorRenderer(renderer))
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = srv.Start(ctx) }()
+	<-srv.Ready()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/missing", nil)
+	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer res.Body.Close()
+
+	body, _ := io.ReadAll(res.Body)
+	fmt.Println(res.StatusCode, res.Header.Get("Content-Type"), string(body))
+
+	// Output:
+	// 404 application/json {"code":"not_found","trace":"4bf92f3577b34da6a3ce929d0e0e4736"}
+}

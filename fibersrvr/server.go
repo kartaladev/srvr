@@ -64,6 +64,10 @@ func New(opts ...srvr.Option) (*Server, error) {
 		return nil, err
 	}
 
+	if err := core.RejectErrorRenderer(); err != nil {
+		return nil, err
+	}
+
 	hooks, err := core.EngineOptions(engineName)
 	if err != nil {
 		return nil, err

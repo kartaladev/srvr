@@ -29,26 +29,26 @@
 
 ## 3. Slice: WithErrorRenderer on net/http
 
-- [ ] 3.1 Renderer configuration is validated (error-rendering / Scenario: Rejected renderer configuration, net/http rows and the accepted rows); gin and fiber reject `WithErrorRenderer` with a `ConfigError` "not supported by this engine yet" until slices 4 and 5; verify `go test -race -run 'TestWithErrorRenderer' . ./ginsrvr/... ./fibersrvr/...` passes
+- [x] 3.1 Renderer configuration is validated (error-rendering / Scenario: Rejected renderer configuration, net/http rows and the accepted rows); gin and fiber reject `WithErrorRenderer` with a `ConfigError` "not supported by this engine yet" until slices 4 and 5; verify `go test -race -run 'TestWithErrorRenderer' . ./ginsrvr/... ./fibersrvr/...` passes
   - RED: one case per row, `errors.As` to `*ConfigError` with `Field` `ErrorRenderer`, the typed-nil row, both option orders, the joined row
   - GREEN: `WithErrorRenderer`, `Settings.ErrorRenderer`, `IsNil`, the `ProblemOptions` conflict in `ResolveConfig` (an empty `WithProblemOptions()` marks the field set)
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.2 `engine.Render` enforces the safety rules (error-rendering / Scenario: Faulty renderer, Hostile errors and committed responses, decision level without HTTP); verify `go test -race -run TestRender ./internal/engine` passes
+- [x] 3.2 `engine.Render` enforces the safety rules (error-rendering / Scenario: Faulty renderer, Hostile errors and committed responses, decision level without HTTP); verify `go test -race -run TestRender ./internal/engine` passes
   - RED: `TestRender` (`internal/engine/render_internal_test.go`), one case per row, with a fake writer, a test hook shortening the 5 s deadline, and a recording hook; expected failure: undefined `Render`
   - GREEN: design D4 steps 1-7 and D5 safe 500; `srvr.renderer.failure` on the failure; the hook gets a synthesised `*prblm.Problem` (design D8 interim)
   - REFACTOR: Decompose Conditional for the validation ladder (one predicate per rule); then `/simplify`
-- [ ] 3.3 net/http answers every error through the renderer when one is set (error-rendering / Scenario: Custom renderer on every engine, What the renderer receives, Faulty renderer, Hostile errors, Renderer and lifecycle; net/http rows); verify `go test -race -run 'TestErrorRenderer_' .` passes
+- [x] 3.3 net/http answers every error through the renderer when one is set (error-rendering / Scenario: Custom renderer on every engine, What the renderer receives, Faulty renderer, Hostile errors, Renderer and lifecycle; net/http rows); verify `go test -race -run 'TestErrorRenderer_' .` passes
   - RED: `httptest` rows; the client-closed row disconnects mid-handler; the 413 row sends 11 bytes over a 10-byte limit; the concurrency row uses 50 goroutines
   - GREEN: `stages`, `wrapHandler` and `answerUnmatched` call `engine.Render` when a renderer is set (recovery with srvr's own `recover` producing `*PanicError`); unchanged otherwise
   - REFACTOR: Replace Conditional with Polymorphism if the two paths spread `if renderer != nil` across stages (one `errorWriter` chosen at construction); then `/simplify`
-- [ ] 3.4 Records for custom renderers (triage-error-records / Scenario: Problem group, the custom-renderer rows); verify `go test -race -run 'TestProblemGroup' .` passes
+- [x] 3.4 Records for custom renderers (triage-error-records / Scenario: Problem group, the custom-renderer rows); verify `go test -race -run 'TestProblemGroup' .` passes
   - RED: the four new rows, including the hostile `Title` and the panic value not logged
   - GREEN: `failure` holds status, type, title instead of `*prblm.Problem`; `addFailure` omits empty type and title and writes `srvr.renderer.failure`
   - REFACTOR: none expected beyond `/simplify`
-- [ ] 3.5 Re-run the D10 benchmarks for net/http (ask the owner first, as in 2.2); record in `notes.md`; STOP for the owner if a threshold is crossed
-- [ ] 3.6 Documentation: godoc on `ErrorRenderer`, `ErrorRequest`, `ErrorResponse`, `WithErrorRenderer` (every rule, the fixed limits and why, no config field, the leak the renderer owns), an `ExampleWithErrorRenderer`; `CHANGELOG.md` `[Unreleased]` Added; verify `go test -run Example .` passes
-- [ ] 3.7 Verify the slice end to end: `make check MODULES=". internal/paritytest"`; coverage of every branch of `engine.Render` with `go tool cover -func`; golden default rows unchanged; gopls diagnostics clean; goleak passes (no rendering goroutine)
-- [ ] 3.8 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): render errors with a consumer's ErrorRenderer`; verify with `git log -1 --stat`
+- [ ] 3.5 Re-run the D10 benchmarks for net/http (ask the owner first, as in 2.2); record in `notes.md`; STOP for the owner if a threshold is crossed (pending: owner said the machine is busy, 2026-11-21; see notes.md)
+- [x] 3.6 Documentation: godoc on `ErrorRenderer`, `ErrorRequest`, `ErrorResponse`, `WithErrorRenderer` (every rule, the fixed limits and why, no config field, the leak the renderer owns), an `ExampleWithErrorRenderer`; `CHANGELOG.md` `[Unreleased]` Added; verify `go test -run Example .` passes
+- [x] 3.7 Verify the slice end to end: `make check MODULES=". internal/paritytest"`; coverage of every branch of `engine.Render` with `go tool cover -func`; golden default rows unchanged; gopls diagnostics clean; goleak passes (no rendering goroutine)
+- [x] 3.8 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): render errors with a consumer's ErrorRenderer`; verify with `git log -1 --stat`
 
 ## 4. Slice: gin renders through the ErrorRenderer
 

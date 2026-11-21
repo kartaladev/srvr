@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/errchain"
@@ -159,3 +161,309 @@ func TestDefaultRenderer_Edges(t *testing.T) {
 		}
 	})
 }
+
+// fakeTarget records what Render writes.
+type fakeTarget struct {
+	committed bool
+	writes    []ErrorResponse
+}
+
+func (f *fakeTarget) Committed() bool            { return f.committed }
+func (f *fakeTarget) WriteError(r ErrorResponse) { f.writes = append(f.writes, r) }
+
+// typedNilError is an error type returned as a typed nil.
+type typedNilError struct{}
+
+func (*typedNilError) Error() string { return "typed nil" }
+
+// renderCall is one call of a test renderer.
+type renderCall struct {
+	ctx    context.Context
+	ctxErr error // ctx.Err() during the call
+	req    ErrorRequest
+	err    error
+}
+
+// TestRender covers error-rendering / Scenario: Faulty renderer and
+// Scenario: Hostile errors and committed responses at the decision level,
+// without HTTP: what Render hands the renderer, what it writes, what it
+// records and what the error hook receives.
+func TestRender(t *testing.T) {
+	t.Parallel()
+
+	const mib = 1 << 20
+
+	testCT := http.Header{"Content-Type": {"application/vnd.test+json"}}
+	ok := func(context.Context, ErrorRequest, error) ErrorResponse {
+		return ErrorResponse{Status: 429, Header: testCT, Body: []byte(`{"code":"quota"}`)}
+	}
+	answer := func(res ErrorResponse) ErrorRendererFunc {
+		return func(context.Context, ErrorRequest, error) ErrorResponse { return res }
+	}
+	cyclic := &renderCycleError{}
+
+	tests := []struct {
+		name      string
+		renderer  ErrorRendererFunc
+		err       error
+		committed bool
+		cancelled bool // the request context is cancelled (client gone)
+		// want: renderer calls, written status (0: nothing written),
+		// recorded status and renderer failure, hook problem status.
+		calls      int
+		status     int
+		failure    string
+		check      func(t *testing.T, call renderCall, res ErrorResponse)
+		hookStatus int
+	}{
+		{name: "valid answer", renderer: ok, err: errors.New("db down"), calls: 1, status: 429, hookStatus: 429},
+		{name: "panics", renderer: func(context.Context, ErrorRequest, error) ErrorResponse { panic("render boom") }, err: errors.New("db down"), calls: 1, status: 500, failure: "panic", hookStatus: 500},
+		{name: "panics with nil", renderer: func(context.Context, ErrorRequest, error) ErrorResponse { panic(nilPanicValue) }, err: errors.New("db down"), calls: 1, status: 500, failure: "panic", hookStatus: 500},
+		{name: "status 0", renderer: answer(ErrorResponse{}), err: errors.New("db down"), calls: 1, status: 500, failure: "invalid_status", hookStatus: 500},
+		{name: "status 200", renderer: answer(ErrorResponse{Status: 200}), err: errors.New("x"), calls: 1, status: 500, failure: "invalid_status", hookStatus: 500},
+		{name: "status 399", renderer: answer(ErrorResponse{Status: 399}), err: errors.New("x"), calls: 1, status: 500, failure: "invalid_status", hookStatus: 500},
+		{name: "status 600", renderer: answer(ErrorResponse{Status: 600}), err: errors.New("x"), calls: 1, status: 500, failure: "invalid_status", hookStatus: 500},
+		{name: "status -1", renderer: answer(ErrorResponse{Status: -1}), err: errors.New("x"), calls: 1, status: 500, failure: "invalid_status", hookStatus: 500},
+		{name: "body of exactly 1 MiB", renderer: answer(ErrorResponse{Status: 400, Header: testCT, Body: make([]byte, mib)}), err: errors.New("x"), calls: 1, status: 400, hookStatus: 400},
+		{name: "body of 1 MiB + 1", renderer: answer(ErrorResponse{Status: 400, Header: testCT, Body: make([]byte, mib+1)}), err: errors.New("x"), calls: 1, status: 500, failure: "oversized_body", hookStatus: 500},
+		{name: "body without Content-Type", renderer: answer(ErrorResponse{Status: 400, Body: make([]byte, 10)}), err: errors.New("x"), calls: 1, status: 500, failure: "missing_content_type", hookStatus: 500},
+		{name: "lower-case content-type", renderer: answer(ErrorResponse{Status: 400, Header: http.Header{"content-type": {"text/plain"}}, Body: []byte("x")}), err: errors.New("x"), calls: 1, status: 400, hookStatus: 400},
+		{name: "bare 404", renderer: answer(ErrorResponse{Status: 404}), err: errors.New("x"), calls: 1, status: 404, hookStatus: 404},
+		{
+			name: "returns after the deadline",
+			renderer: func(ctx context.Context, _ ErrorRequest, _ error) ErrorResponse {
+				<-ctx.Done()
+				return ErrorResponse{Status: 429}
+			},
+			err: errors.New("db down"), calls: 1, status: 500, failure: "deadline", hookStatus: 500,
+		},
+		{
+			name: "client gone, returns before the deadline", renderer: ok, err: errors.New("db down"), cancelled: true, calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if call.ctxErr != nil {
+					t.Errorf("renderer context ended: %v", call.ctxErr)
+				}
+			},
+		},
+		{name: "nil header", renderer: answer(ErrorResponse{Status: 404, Header: nil}), err: errors.New("x"), calls: 1, status: 404, hookStatus: 404},
+		{
+			name: "Content-Length and hop-by-hop headers dropped",
+			renderer: answer(ErrorResponse{Status: 429, Header: http.Header{
+				"Content-Type": {"application/json"}, "Content-Length": {"999"}, "Transfer-Encoding": {"chunked"},
+				"Connection": {"close"}, "X-Kept": {"1"},
+			}, Body: []byte("{}")}),
+			err: errors.New("x"), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, _ renderCall, res ErrorResponse) {
+				t.Helper()
+
+				for _, k := range []string{"Content-Length", "Transfer-Encoding", "Connection"} {
+					if _, ok := res.Header[k]; ok {
+						t.Errorf("header %s kept: %v", k, res.Header)
+					}
+				}
+				if res.Header.Get("X-Kept") != "1" || res.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("headers %v, want X-Kept and Content-Type", res.Header)
+				}
+			},
+		},
+		{name: "committed", renderer: ok, err: errors.New("late"), committed: true, calls: 0, status: 0},
+		{
+			name: "cyclic chain", renderer: ok, err: cyclic, calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if errchain.HasCycle(call.err) {
+					t.Errorf("renderer received a cyclic chain")
+				}
+			},
+		},
+		{
+			name: "Unwrap panics", renderer: ok, err: panicUnwrapError{}, calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				_ = errors.Is(call.err, context.Canceled) // must not panic
+			},
+		},
+		{
+			name: "typed nil error", renderer: ok, err: (*typedNilError)(nil), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if _, ok := call.err.(*typedNilError); !ok { //nolint:errorlint // the very value.
+					t.Errorf("renderer received %T, want *typedNilError", call.err)
+				}
+			},
+		},
+		{
+			name: "client closed", renderer: ok, err: fmt.Errorf("q: %w", context.Canceled), cancelled: true, calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if !errors.Is(call.err, errchain.ErrClientClosed) || !errors.Is(call.err, context.Canceled) {
+					t.Errorf("renderer received %v, want ErrClientClosed and context.Canceled", call.err)
+				}
+			},
+		},
+		{
+			name: "server-side cancellation is not client closed", renderer: ok, err: fmt.Errorf("q: %w", context.Canceled), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if errors.Is(call.err, errchain.ErrClientClosed) {
+					t.Errorf("renderer received ErrClientClosed for a live request")
+				}
+			},
+		},
+		{
+			name: "body over the limit", renderer: ok, err: fmt.Errorf("read: %w", &http.MaxBytesError{Limit: 10}), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if !errors.Is(call.err, errchain.ErrRequestTooLarge) || !errors.As(call.err, new(*http.MaxBytesError)) {
+					t.Errorf("renderer received %v, want ErrRequestTooLarge and *http.MaxBytesError", call.err)
+				}
+			},
+		},
+		{
+			name: "already ErrRequestTooLarge is not wrapped again", renderer: ok, err: errchain.RequestTooLarge(&http.MaxBytesError{Limit: 10}), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if call.err.Error() != errchain.RequestTooLarge(&http.MaxBytesError{Limit: 10}).Error() {
+					t.Errorf("renderer received %q", call.err)
+				}
+			},
+		},
+		{
+			name: "request fields and context", renderer: ok, err: errors.New("x"), calls: 1, status: 429, hookStatus: 429,
+			check: func(t *testing.T, call renderCall, _ ErrorResponse) {
+				t.Helper()
+
+				if call.req.Method != http.MethodGet || call.req.Path != "/items/7" || call.req.Header.Get("Accept") != "application/json" {
+					t.Errorf("request %+v", call.req)
+				}
+				if tr, ok := TraceFromContext(call.ctx); !ok || tr.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" {
+					t.Errorf("trace %v %v", tr, ok)
+				}
+				if _, ok := call.ctx.Deadline(); !ok {
+					t.Errorf("renderer context has no deadline")
+				}
+			},
+		},
+		{
+			name: "delegating to DefaultRenderer records and hooks once", err: prblm.ErrConflict, calls: 1, status: 409, hookStatus: 409,
+			renderer: func(ctx context.Context, req ErrorRequest, err error) ErrorResponse {
+				return DefaultRenderer.Render(ctx, req, err)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var (
+				calls []renderCall
+				hooks []*prblm.Problem
+			)
+
+			renderer := ErrorRendererFunc(func(ctx context.Context, req ErrorRequest, err error) ErrorResponse {
+				calls = append(calls, renderCall{ctx, ctx.Err(), req, err})
+				return tt.renderer(ctx, req, err)
+			})
+
+			c, err := ResolveConfig([]Option{func(s *Settings) {
+				s.ErrorRenderer = renderer
+				s.ErrorHook = func(_ context.Context, _ error, p *prblm.Problem) { hooks = append(hooks, p) }
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c.renderDeadline = 20 * time.Millisecond
+
+			ctx := c.BeginRequest(t.Context(), []string{goldenTraceparent})
+			if tt.cancelled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+
+			target := &fakeTarget{committed: tt.committed}
+			req := ErrorRequest{Method: "GET", Path: "/items/7", Header: httpHeader{"Accept": {"application/json"}}}
+			c.Render(ctx, target, req, tt.err)
+
+			if len(calls) != tt.calls {
+				t.Fatalf("renderer called %d times, want %d", len(calls), tt.calls)
+			}
+
+			state, _ := StateFrom(ctx)
+			fail := state.failure
+
+			if tt.status == 0 {
+				if len(target.writes) != 0 || fail == nil || !fail.committed {
+					t.Fatalf("writes %v failure %+v, want nothing written and a committed failure", target.writes, fail)
+				}
+				if len(hooks) != 1 || hooks[0] != nil {
+					t.Fatalf("hook got %v, want one call without a problem", hooks)
+				}
+
+				return
+			}
+
+			if len(target.writes) != 1 || target.writes[0].Status != tt.status {
+				t.Fatalf("writes %+v, want one with status %d", target.writes, tt.status)
+			}
+
+			res := target.writes[0]
+			if fail == nil || fail.sent.status != tt.status || fail.rendererFailure != tt.failure {
+				t.Fatalf("failure %+v, want status %d renderer failure %q", fail, tt.status, tt.failure)
+			}
+
+			if len(hooks) != 1 || hooks[0] == nil || hooks[0].Status != tt.hookStatus {
+				t.Fatalf("hook got %v, want one call with status %d", hooks, tt.hookStatus)
+			}
+
+			if tt.failure != "" {
+				if res.Header.Get("Content-Type") != "application/problem+json" || bytes.Contains(res.Body, []byte("db down")) ||
+					!bytes.Contains(res.Body, []byte(`"title":"Internal Server Error"`)) {
+					t.Fatalf("safe 500 %v %s", res.Header, res.Body)
+				}
+				if fail.sent.typ != "about:blank" || fail.sent.title != "Internal Server Error" {
+					t.Fatalf("recorded answer %+v", fail.sent)
+				}
+			}
+
+			if tt.check != nil {
+				tt.check(t, calls[0], res)
+			}
+		})
+	}
+}
+
+// TestRender_HookPanics covers the error hook panicking on the custom
+// path: the panic is contained and the answer is written.
+func TestRender_HookPanics(t *testing.T) {
+	t.Parallel()
+
+	c, err := ResolveConfig([]Option{func(s *Settings) {
+		s.ErrorRenderer = ErrorRendererFunc(func(context.Context, ErrorRequest, error) ErrorResponse { return ErrorResponse{Status: 404} })
+		s.ErrorHook = func(context.Context, error, *prblm.Problem) { panic("hook") }
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := &fakeTarget{}
+	c.Render(c.BeginRequest(t.Context(), nil), target, ErrorRequest{}, errors.New("x"))
+
+	if len(target.writes) != 1 || target.writes[0].Status != 404 {
+		t.Fatalf("writes %+v, want a 404", target.writes)
+	}
+}
+
+// nilPanicValue is panicked with for the spec's panic(nil) row.
+var nilPanicValue any

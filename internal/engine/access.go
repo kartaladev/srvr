@@ -17,22 +17,42 @@ import (
 	"github.com/kartaladev/srvr/internal/errchain"
 )
 
-// failure is why a request failed: the error srvr's prblm hook received,
-// the panic it reports (nil for a returned error), the problem sent and
-// whether the response had already started when the error arrived.
+// failure is why a request failed: the error srvr answered, the panic it
+// reports (nil for a returned error), the answer sent and whether the
+// response had already started when the error arrived.
 type failure struct {
 	err       error
 	panic     *prblm.PanicError
-	problem   *prblm.Problem
+	sent      answer
 	committed bool
+	// rendererFailure names the fault of a consumer's renderer whose
+	// answer srvr replaced with its safe 500; empty otherwise.
+	rendererFailure string
+}
+
+// answer is what the client was sent for an error: the status and, when
+// the renderer gave them, the type and title. The zero answer means none
+// was sent.
+type answer struct {
+	status     int
+	typ, title string
+}
+
+// answerOf returns the answer of problem p; the zero answer for nil.
+func answerOf(p *prblm.Problem) answer {
+	if p == nil {
+		return answer{}
+	}
+
+	return answer{status: p.Status, typ: p.EffectiveType(), title: p.Title}
 }
 
 // newFailure returns the failure of err, looking up the panic it reports
 // once, so later readers do not walk the chain again.
-func newFailure(err error, p *prblm.Problem, committed bool) *failure {
+func newFailure(err error, sent answer, committed bool) *failure {
 	pe, _ := panicOf(err)
 
-	return &failure{err: err, panic: pe, problem: p, committed: committed}
+	return &failure{err: err, panic: pe, sent: sent, committed: committed}
 }
 
 // prblmNotes returns the prblm notes that are not the request's own failure:
@@ -65,17 +85,22 @@ func isNote(err error) bool {
 // it. prblm's notes ([prblmNotes]) are not failures and are dropped without a
 // record.
 func recordFailure(ctx context.Context, err error, p *prblm.Problem) {
-	req := requestFrom(ctx)
+	recordAnswer(requestFrom(ctx), err, answerOf(p), "")
+}
+
+// recordAnswer is [recordFailure] for the answer sent, the zero answer
+// when none was, and the fault of a renderer srvr replaced ("" for none).
+func recordAnswer(req *RequestState, err error, sent answer, fault string) {
 	if req == nil || isNote(err) {
 		return
 	}
 
-	if req.failure != nil && (req.failure.problem != nil || p == nil) {
+	if req.failure != nil && (req.failure.sent.status != 0 || sent.status == 0) {
 		return
 	}
 
-	committed := req.rec != nil && req.rec.wroteHeader
-	req.failure = newFailure(err, p, committed)
+	req.failure = newFailure(err, sent, req.committed())
+	req.failure.rendererFailure = fault
 }
 
 // errRejected is the failure of a request the engine's server rejected
@@ -269,18 +294,29 @@ func (c *Core) writeAccess(ctx context.Context, req *RequestState, info AccessIn
 // addFailure adds what the client saw: the problem sent, or that the
 // response had already started.
 func addFailure(record *slog.Record, fail *failure) {
-	if fail.committed || fail.problem == nil {
+	if fail.committed || fail.sent.status == 0 {
 		record.AddAttrs(slog.Bool(keyCommitted, true))
 
 		return
 	}
 
-	p := fail.problem
-	record.AddAttrs(slog.Group(keyProblem,
-		slog.Int(keyProblemStatus, p.Status),
-		slog.String(keyProblemType, p.EffectiveType()),
-		slog.String(keyProblemTitle, p.Title),
-	))
+	sent := fail.sent
+	attrs := make([]any, 1, 3)
+	attrs[0] = slog.Int(keyProblemStatus, sent.status)
+
+	if sent.typ != "" {
+		attrs = append(attrs, slog.String(keyProblemType, sent.typ))
+	}
+
+	if sent.title != "" {
+		attrs = append(attrs, slog.String(keyProblemTitle, sent.title))
+	}
+
+	record.AddAttrs(slog.Group(keyProblem, attrs...))
+
+	if fail.rendererFailure != "" {
+		record.AddAttrs(slog.String(keyRendererFailure, fail.rendererFailure))
+	}
 }
 
 // outcome returns the event and level of the access record of a request
@@ -307,8 +343,8 @@ func (f *failure) level(status int) slog.Level {
 	}
 
 	level := levelFor(status)
-	if f.problem != nil {
-		level = max(level, levelFor(f.problem.Status))
+	if f.sent.status != 0 {
+		level = max(level, levelFor(f.sent.status))
 	}
 
 	return level

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/kartaladev/prblm"
 	"github.com/kartaladev/srvr/internal/errchain"
@@ -29,6 +30,9 @@ type Core struct {
 	serviceAttrs []slog.Attr
 	// observers are the server's observers, guarded.
 	observers []*guardedObserver
+	// renderDeadline bounds a consumer renderer's call: defaultRenderDeadline,
+	// shortened by tests.
+	renderDeadline time.Duration
 	// unmatched limits the failed records of unmatched requests; nil
 	// without a limit.
 	unmatched *unmatchedLimiter
@@ -55,6 +59,7 @@ func ResolveConfig(opts []Option) (*Core, error) {
 	}
 
 	c.problems, c.cfg, c.observers = problems, s.resolve(), guardObservers(s.Observers)
+	c.renderDeadline = defaultRenderDeadline
 	c.unmatched = newUnmatchedLimiter(s.Access.UnmatchedLimit, s.Now)
 	c.log = newLogHandler(&c.settings.Log)
 	c.serviceAttrs = s.Service.attrs(s.ReadBuild)
@@ -110,6 +115,16 @@ func srvrProblemOptions(hook func(context.Context, error, *prblm.Problem)) []prb
 	}
 }
 
+// RejectErrorRenderer returns an error wrapping [errchain.ErrConfig] when
+// a renderer was set, for an engine that cannot render through one yet.
+func (c *Core) RejectErrorRenderer() error {
+	if c.settings.ErrorRenderer == nil {
+		return nil
+	}
+
+	return errchain.NewConfigError("ErrorRenderer", errchain.TypeName(c.settings.ErrorRenderer), "not supported by this engine yet")
+}
+
 // EngineOptions returns, in order, the values of the engine-specific
 // options for engine. An engine-specific option of another engine is an
 // error wrapping [errchain.ErrConfig] naming that option: configuration is never
@@ -159,10 +174,26 @@ func newProblems(opts []prblm.Option) (h *prblm.Handler, err error) {
 // onError is srvr's prblm hook. It records the failure for the request's
 // access record, which the access stage writes, and calls the consumer's
 // hook, if any, containing a panic in it.
+//
+// While a consumer's renderer delegates to [DefaultRenderer] (whose
+// capture slot is in ctx), the answer is only captured: [Core.Render]
+// records the answer actually sent and calls the hook once. prblm's notes
+// still reach the hook.
 func (c *Core) onError(ctx context.Context, err error, p *prblm.Problem) {
+	if c.settings.ErrorRenderer != nil && ctx.Value(captureKey{}) != nil && !isNote(err) {
+		captureProblem(ctx, err, p)
+
+		return
+	}
+
 	recordFailure(ctx, err, p)
 	captureProblem(ctx, err, p)
+	c.callHook(ctx, err, p)
+}
 
+// callHook calls the consumer's error hook, if any, containing a panic in
+// it.
+func (c *Core) callHook(ctx context.Context, err error, p *prblm.Problem) {
 	if c.settings.ErrorHook == nil {
 		return
 	}

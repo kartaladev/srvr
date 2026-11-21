@@ -106,6 +106,10 @@ func (r *RequestState) SetLocation(loc Location) {
 	}
 }
 
+// committed reports whether the net/http access stage saw the response
+// start; false on an engine without a response recorder.
+func (r *RequestState) committed() bool { return r.rec != nil && r.rec.wroteHeader }
+
 // Matched reports whether a route matched the request.
 func (r *RequestState) Matched() bool { return r.route != "" }
 

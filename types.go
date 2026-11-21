@@ -145,16 +145,27 @@ type (
 
 type (
 	// ErrorRenderer turns an error the server answers into the response
-	// sent to the client. Without one, every engine renders errors with
-	// prblm, as [DefaultErrorRenderer] does.
+	// sent to the client, set with [WithErrorRenderer]. Without one, every
+	// engine renders errors with prblm, as [DefaultErrorRenderer] does.
+	// srvr calls it in the request goroutine, at most once per request,
+	// with a walkable error and a context keeping the request's values but
+	// not its cancellation, bounded by 5 seconds; see [WithErrorRenderer]
+	// for every rule srvr keeps around it. It may be called concurrently
+	// for different requests.
 	ErrorRenderer = engine.ErrorRenderer
 	// ErrorRendererFunc adapts a function to [ErrorRenderer].
 	ErrorRendererFunc = engine.ErrorRendererFunc
 	// ErrorRequest is what a renderer knows of the request: method, path
-	// (never the query string), matched route, trace id and headers.
+	// (never the query string; for the response, never logged by srvr),
+	// matched route in the engine's syntax (as http.route logs it), trace
+	// id and headers. Header.Get returns copies; on fiber the reader is
+	// valid only during Render.
 	ErrorRequest = engine.ErrorRequest
-	// ErrorResponse is a renderer's answer: status, headers and body, plus
-	// a type and title for logs and error hooks only.
+	// ErrorResponse is a renderer's answer: status (400-599), headers
+	// (Content-Type required with a body; Content-Length and hop-by-hop
+	// headers are dropped) and body (at most 1 MiB), plus a Type and Title
+	// for the record's problem group and error hooks only, never sent; an
+	// answer breaking a rule is replaced by srvr's safe 500.
 	ErrorResponse = engine.ErrorResponse
 )
 
