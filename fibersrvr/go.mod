@@ -6,7 +6,7 @@ require (
 	github.com/gofiber/fiber/v3 v3.7.0
 	github.com/kartaladev/prblm v0.3.0
 	github.com/kartaladev/prblm/adapters/fiberprblm v0.3.0
-	github.com/kartaladev/srvr v0.3.0
+	github.com/kartaladev/srvr v0.4.0
 	github.com/valyala/fasthttp v1.78.0
 	go.uber.org/goleak v1.3.0
 )
@@ -30,4 +30,3 @@ require (
 
 // Development builds use the modules in this repository; RELEASING.md drops
 // these lines in the commit that is tagged.
-replace github.com/kartaladev/srvr => ../
