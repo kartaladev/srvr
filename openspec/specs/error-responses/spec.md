@@ -115,7 +115,7 @@ When a handler returns an error or panics after the response status has been wri
 | `500` | returns `prblm.ErrConflict` | `ERROR` |
 
 ### Requirement: Consumers extend error rendering
-The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types, `prblm.OnError` and `prblm.AddErrorHook`) through `WithProblemOptions` and an error hook through `WithErrorHook`. srvr SHALL add its own hook, which records the error for the access record, with `prblm.AddErrorHook`, so no consumer option replaces or removes it. A panic in any consumer hook SHALL NOT affect the response or the access record.
+The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types, `prblm.OnError` and `prblm.AddErrorHook`) through `WithProblemOptions`, or replace prblm with `WithErrorRenderer` (never both), and set an error hook through `WithErrorHook` that receives the error and an `ErrorReport` of what was sent (status, type, title), never a `*prblm.Problem`. srvr's own recording hook SHALL NOT be replaceable. A panic in any consumer hook SHALL NOT affect the response or the access record.
 
 #### Scenario: Consumer mapper and hook
 - **Given** a server configured with `<option>`
@@ -127,7 +127,11 @@ The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace,
 | option | error | status | hook |
 |--------|-------|--------|------|
 | `WithProblemOptions(prblm.WithMappers(prblm.Status(ErrQuota, 429)))` | `ErrQuota` | `429` | (none) |
-| `WithErrorHook(fn)` | `prblm.ErrNotFound` | `404` | receives the error and a problem with status `404` |
+| `WithErrorHook(fn)` | `prblm.ErrNotFound` | `404` | receives the error and an `ErrorReport` with status `404`, type `about:blank`, title `Not Found` |
+| `WithErrorRenderer(R)`, `WithErrorHook(fn)` | `ErrQuota` | `429` (from `R`) | receives `ErrQuota` and an `ErrorReport` with status `429`, empty type and title |
+| `WithErrorRenderer(F)` where `F` panics, `WithErrorHook(fn)` | `ErrQuota` | `500` (safe problem) | receives `ErrQuota` and an `ErrorReport` with status `500`, type `about:blank`, title `Internal Server Error` |
+| gin: `WithErrorRenderer(R)`, `WithErrorHook(fn)`, the handler calls `c.AbortWithStatus(401)` | (none) | `401` (gin's bare status; `R` not called) | receives `ginprblm.ErrStatusOnly` and an `ErrorReport` with status `401`, empty type and title |
+| `WithErrorRenderer(R)`, `WithProblemOptions(prblm.OnError(fn))` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` naming `ErrorRenderer` |
 | `WithErrorHook(fn)` where `fn` panics | `prblm.ErrNotFound` | `404` | panics and the access record is still written |
 | `WithErrorHook(nil)` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` |
 | `WithProblemOptions(prblm.WithNamespace("not a uri"))` | (none) | (none) | construction returns an error wrapping `srvr.ErrConfig` naming `ProblemOptions` |
@@ -145,10 +149,10 @@ The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace,
 | option | hooks |
 |--------|-------|
 | (none) | no consumer hook runs |
-| `WithProblemOptions(prblm.OnError(fn))` | `fn` receives `prblm.ErrNotFound` and a problem with status `404`, once |
+| `WithProblemOptions(prblm.OnError(fn))` | `fn` receives `prblm.ErrNotFound` and a problem with status `404` (prblm's own hooks keep prblm's signature), once |
 | `WithProblemOptions(prblm.OnError(fn))` where `fn` panics | `fn` panics once |
 | `WithProblemOptions(prblm.OnError(fn))`, `WithErrorHook(gn)` | `fn` and then `gn` each receive `prblm.ErrNotFound` and a problem with status `404`, once |
-| `WithProblemOptions(prblm.AddErrorHook(fn))` | `fn` receives `prblm.ErrNotFound` and a problem with status `404`, once |
+| `WithProblemOptions(prblm.AddErrorHook(fn))` | `fn` receives `prblm.ErrNotFound` and a problem with status `404` (prblm's own hooks keep prblm's signature), once |
 | `WithProblemOptions(prblm.OnError(fn), prblm.OnError(nil))` | no consumer hook runs (`prblm.OnError(nil)` removes only the consumer's hook) |
 
 #### Scenario: Consumer prblm error hook on every engine
