@@ -3,8 +3,8 @@ module github.com/kartaladev/srvr/otelsetup
 go 1.27
 
 require (
-	github.com/kartaladev/srvr v0.3.0
-	github.com/kartaladev/srvr/otelsrvr v0.3.0
+	github.com/kartaladev/srvr v0.4.0
+	github.com/kartaladev/srvr/otelsrvr v0.4.0
 	github.com/prometheus/client_golang v1.25.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.47.0
@@ -48,6 +48,3 @@ require (
 
 // Development builds use the modules in this repository; RELEASING.md drops
 // these lines in the commit that is tagged.
-replace github.com/kartaladev/srvr => ../
-
-replace github.com/kartaladev/srvr/otelsrvr => ../otelsrvr
