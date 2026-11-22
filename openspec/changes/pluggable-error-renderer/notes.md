@@ -231,3 +231,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
   - Step 6: `gh` authenticated; `gh release view v0.3.0` exists ("srvr v0.3.0"), `v0.4.0` not found; `--verify-tag` would refuse until the core tag exists.
   - Tags to push, in order: `v0.4.0`, `ginsrvr/v0.4.0`, `fibersrvr/v0.4.0`, `otelsrvr/v0.4.0`, `otelsetup/v0.4.0`.
 - **Suggested action:** 8.3 owner confirmation of `v0.4.0` and of pushing the tags.
+
+### Release v0.4.0 (tasks 8.3, 8.4)
+
+- **Status:** done 2026-11-22
+- **Target:** pluggable-error-renderer
+- **Context:** 8.3: the owner explicitly confirmed version `v0.4.0` and pushing the tags `v0.4.0`, `ginsrvr/v0.4.0`, `fibersrvr/v0.4.0`, `otelsrvr/v0.4.0`, `otelsetup/v0.4.0`, in that order. 8.4 followed `RELEASING.md` with direct commits to `main`, as for v0.3.0.
+- **Evidence:**
+  - `make check` passed on `main` at `44adc8b` before tagging.
+  - Tags (annotated, pushed in order): `v0.4.0` -> `44adc8b`, `ginsrvr/v0.4.0` -> `5dc961f`, `fibersrvr/v0.4.0` -> `1074926`, `otelsrvr/v0.4.0` -> `c055495`, `otelsetup/v0.4.0` -> `c2dea00`. Each engine module dropped its `replace` before `go get ...@v0.4.0`, then `go mod tidy`, `go vet ./...` and `go test -race ./...` passed with `GOWORK=off`.
+  - Step 5: `bcfe20c chore: restore development replace directives after v0.4.0` (also moves `internal/paritytest` to `v0.4.0`); `make check` passed after the restore.
+  - Release page: https://github.com/kartaladev/srvr/releases/tag/v0.4.0 ("srvr v0.4.0", intro, `## Modules` table, changelog section).
+  - Proxy: `GOWORK=off GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m <mod>@v0.4.0` resolves all five modules.
+  - Scratch consumer (outside the repository, proxy only) requiring the core, `ginsrvr` and `fibersrvr` at `v0.4.0` with one custom `srvr.ErrorRendererFunc` on each engine: `go run .` printed `500 application/json {"code":"internal"}` for a handler error and `404 application/json {"code":"not_found"}` for an unmatched path on net/http, gin and fiber.
+- **Suggested action:** none; archive the change.

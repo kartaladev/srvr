@@ -104,8 +104,8 @@
 
 - [x] 8.1 Precondition: this change is reviewed and merged to `main`; verify `git log origin/main --oneline -1` contains the merge
 - [x] 8.2 Prepare: move `CHANGELOG.md` `[Unreleased]` under a version heading (placeholder), run `make check` and `make cover` on `main`, dry-run the `RELEASING.md` steps without tagging; verify every step passes
-- [ ] 8.3 STOP for the owner: present the proposed version (`v0.4.0`: breaking `ErrorHook`, new API), the changelog section, the final benchmark table and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
-- [ ] 8.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page, verify every module through the proxy and with a scratch consumer using a custom renderer on each engine; record the result in `notes.md`
+- [x] 8.3 STOP for the owner: present the proposed version (`v0.4.0`: breaking `ErrorHook`, new API), the changelog section, the final benchmark table and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [x] 8.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page, verify every module through the proxy and with a scratch consumer using a custom renderer on each engine; record the result in `notes.md`
 
 ## Workflow follow-up
 
