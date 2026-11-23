@@ -93,7 +93,7 @@
 - [x] 6.1 Precondition: this change is reviewed and merged to `main`, and no `scrty-integration` code has been merged since (only its planning files may be on `main`); verify `git log origin/main --oneline -1` contains the merge and `git diff v0.4.0..origin/main --stat -- security/` lists nothing
 - [x] 6.2 Prepare: move `CHANGELOG.md` `[Unreleased]` under a `v0.5.0` heading (date placeholder), run `make check` and `make cover` on `main`, dry-run the `RELEASING.md` steps without tagging; verify every step passes
 - [x] 6.3 STOP for the owner: present the proposed version (`v0.5.0`: breaking `Start` semantics, new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
-- [ ] 6.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page with the migration note; verify every module resolves through the proxy at `v0.5.0` and a scratch consumer builds `Run` and `Start`+`Wait` on each engine; record the result in `notes.md`
+- [x] 6.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page with the migration note; verify every module resolves through the proxy at `v0.5.0` and a scratch consumer builds `Run` and `Start`+`Wait` on each engine; record the result in `notes.md`
 
 ## Workflow follow-up
 

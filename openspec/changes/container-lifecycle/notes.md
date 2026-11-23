@@ -142,3 +142,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Presented v0.5.0 (breaking `Start` semantics; new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results. The owner confirmed "Yes, release v0.5.0": tag and push all five modules and publish the GitHub Release page.
 - **Evidence:** owner answer in session, 2026-11-23.
 - **Suggested action:** task 6.4.
+
+### v0.5.0 released (task 6.4, 2026-11-23)
+- **Status:** closed: released
+- **Target:** container-lifecycle
+- **Context:** Released in `RELEASING.md` order on `release/prepare-v0.5.0` (PR #34, merged as `cfabb5c`): core `v0.5.0`; `otelsrvr`, `ginsrvr`, `fibersrvr` each committed against the core `v0.5.0` without `replace` and tagged; `otelsetup` against core and `otelsrvr` `v0.5.0`, tagged; development `replace` lines restored with `internal/paritytest` now requiring the core `v0.5.0`, `make check` exit 0 after the restore. GitHub Release page published: https://github.com/kartaladev/srvr/releases/tag/v0.5.0 (intro, `## Modules` table, changelog section). The feature itself merged as PR #33 (`8b8c417`).
+- **Evidence:** `proxy.golang.org/.../@v/v0.5.0.info` resolves for all five modules; a scratch consumer outside the repository (`GOWORK=off`, released modules only) passes a test running `Start`/`HealthCheck`/`Shutdown`/`Wait` and `Run` on net/http, gin and fiber; every tag is an ancestor of `main`.
+- **Suggested action:** archive the change after review (`/opsx:archive`); `scrty-integration` consolidation takes "scrty-integration must move off the blocking Start".
