@@ -135,3 +135,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** 6.1: PR #33 merged to `main` as `8b8c417`; `git diff v0.4.0..origin/main --stat -- security/` lists nothing (no `scrty-integration` code). The repository reports no CI checks, so `make check` is the gate. 6.2: on `release/prepare-v0.5.0` from `8b8c417`, `CHANGELOG.md` `[Unreleased]` moved under `## [v0.5.0] - YYYY-MM-DD`. Dry run of `RELEASING.md`: no `v0.5.0` or `<module>/v0.5.0` tag exists yet; `ginsrvr`, `fibersrvr`, `otelsrvr` require the core `v0.4.0` with one `replace`, `otelsetup` two, `internal/paritytest` builds through `replace`; `gh` is authenticated. Steps 3-6 (go get of the tagged core, dropping `replace`, tags, restore, release page) cannot run before the core tag exists.
 - **Evidence:** `make check` exit 0 (govulncheck clean in 6 modules); `make cover` internal 99.8%.
 - **Suggested action:** task 6.3, owner confirmation.
+
+### Owner release decision (task 6.3, 2026-11-23)
+- **Status:** closed: confirmed
+- **Target:** container-lifecycle
+- **Context:** Presented v0.5.0 (breaking `Start` semantics; new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results. The owner confirmed "Yes, release v0.5.0": tag and push all five modules and publish the GitHub Release page.
+- **Evidence:** owner answer in session, 2026-11-23.
+- **Suggested action:** task 6.4.

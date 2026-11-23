@@ -6,7 +6,7 @@ once tagged.
 
 ## [Unreleased]
 
-## [v0.5.0] - YYYY-MM-DD
+## [v0.5.0] - 2026-11-23
 
 ### Changed
 
