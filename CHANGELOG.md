@@ -6,6 +6,8 @@ once tagged.
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-11-23
+
 ### Changed
 
 - **BREAKING** `Start(ctx)` on every engine (`srvr.Server`, `ginsrvr.Server`, `fibersrvr.Server`)

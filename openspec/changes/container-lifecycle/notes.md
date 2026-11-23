@@ -128,3 +128,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** 5.2 `serve` writes `server.started` and closes `Ready` before starting `serveOn`. 5.3 stale blocking-`Start` docs fixed (`Server` type, `WithListener`, `WithShutdownTimeout`, `Config.ShutdownTimeout`, `ErrShutdownHook`, `LOGGING.md`, `otelsetup` `ShutdownHook`, `HealthCheck`, gin `Start` wrap). 5.4 README `runManually` waits on its context and `Wait`; its test `TestReadme_RunManually_ServeFailure` was written together with the fix (no separate RED run; the old snippet blocked on its context only). 5.5 engine-neutral gin/fiber rows moved into `TestLifecycleParity` (plus `HealthCheck(nil)`); fiber hook row "Start fails because a route check returns an error" added (it was missing; passed at once, behaviour existed). `/simplify` applied: `bounded` instead of a nested goroutine, `messages()` reused, `errListener` beside `faultListener`, godoc rewrapped, README says to prefer `Run`. Skipped: describing the stop paths once instead of in three godocs, and tabling the fiber hook subtests (shapes differ).
 - **Evidence:** `go test -race -count=1000 -cpu=1,2,4,8 -run TestLifecycleRecords_ImmediateServeFailure .` PASS after the fix (FAIL 3/4000 before); `make check` exit 0; `make cover` internal 99.8%, `serve`/`serveOn`/`superviseRun`/`stop` 100%.
 - **Suggested action:** none.
+
+### Release preparation (tasks 6.1-6.2, 2026-11-23)
+- **Status:** closed: done
+- **Target:** container-lifecycle
+- **Context:** 6.1: PR #33 merged to `main` as `8b8c417`; `git diff v0.4.0..origin/main --stat -- security/` lists nothing (no `scrty-integration` code). The repository reports no CI checks, so `make check` is the gate. 6.2: on `release/prepare-v0.5.0` from `8b8c417`, `CHANGELOG.md` `[Unreleased]` moved under `## [v0.5.0] - YYYY-MM-DD`. Dry run of `RELEASING.md`: no `v0.5.0` or `<module>/v0.5.0` tag exists yet; `ginsrvr`, `fibersrvr`, `otelsrvr` require the core `v0.4.0` with one `replace`, `otelsetup` two, `internal/paritytest` builds through `replace`; `gh` is authenticated. Steps 3-6 (go get of the tagged core, dropping `replace`, tags, restore, release page) cannot run before the core tag exists.
+- **Evidence:** `make check` exit 0 (govulncheck clean in 6 modules); `make cover` internal 99.8%.
+- **Suggested action:** task 6.3, owner confirmation.
+
+### Owner release decision (task 6.3, 2026-11-23)
+- **Status:** closed: confirmed
+- **Target:** container-lifecycle
+- **Context:** Presented v0.5.0 (breaking `Start` semantics; new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results. The owner confirmed "Yes, release v0.5.0": tag and push all five modules and publish the GitHub Release page.
+- **Evidence:** owner answer in session, 2026-11-23.
+- **Suggested action:** task 6.4.
