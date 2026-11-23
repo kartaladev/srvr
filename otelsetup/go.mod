@@ -48,3 +48,7 @@ require (
 
 // Development builds use the modules in this repository; RELEASING.md drops
 // these lines in the commit that is tagged.
+
+replace github.com/kartaladev/srvr => ../
+
+replace github.com/kartaladev/srvr/otelsrvr => ../otelsrvr
