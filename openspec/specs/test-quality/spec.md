@@ -66,7 +66,7 @@ Every test package of every srvr module SHALL run the goroutine leak check of `g
 | a package without test files | accepted: nothing to check |
 
 ### Requirement: Goroutines srvr starts end when their owner stops
-Every goroutine srvr or a dependency starts for a server, a listener, a provider or an exporter SHALL have ended once its owner's stop (`Shutdown`, a failed `Start`, `Setup.Shutdown`, a failed `otelsetup.New`) has returned, apart from the goroutines listed as deliberate. An owner that is never stopped SHALL be reported as a leak.
+Every goroutine srvr or a dependency starts for a server, a listener, a provider or an exporter SHALL have ended once its owner's stop (`Shutdown`, a failed `Start`, a `Run` that returned, a serve failure after `Start` reported by `Wait`, `Setup.Shutdown`, a failed `otelsetup.New`) has returned, apart from the goroutines listed as deliberate. An owner that is never stopped SHALL be reported as a leak.
 
 #### Scenario: Lifecycle leaves no goroutine behind
 - **Given** `<owner>` configured with `<setup>`
@@ -80,20 +80,25 @@ Every goroutine srvr or a dependency starts for a server, a listener, a provider
 | a net/http server | a `BeforeDrain` and an `AfterDrain` hook returning `nil` | `Start`, `Shutdown` | no |
 | a net/http server | `WithListener` on `127.0.0.1:0` | `Start`, `Shutdown` | no |
 | a net/http server | one route `GET /ok` | `Shutdown` before `Start` | no |
-| a net/http server | one route `GET /ok` | `Start` with a context cancelled after it is running | no |
+| a net/http server | one route `GET /ok` | `Run` with a context cancelled after it is running | no |
+| a net/http server | one route `GET /ok` | `Start`, then its context cancelled, then `Shutdown` | no |
+| a net/http server | `WithListener` whose `Accept` returns a permanent error after `Start` | `Start`, the failure, `Wait` | no |
+| a net/http server | one route `GET /ok` | `Start`, `Wait` from `3` goroutines, `Shutdown` | no |
 | a net/http server | address already in use | `Start` fails | no |
 | a net/http server | a handler that panics | `Start`, `GET /ok`, `Shutdown` | no |
 | a net/http server | a handler blocking until its request context ends | `Start`, `GET /block`, `Shutdown` with a `50ms` drain deadline | no |
 | a net/http server | one route `GET /ok` | `Start` and never `Shutdown` | yes, naming srvr's serve goroutine |
+| a net/http server | one route `GET /ok` | `Run` in a goroutine, the leak check run while it serves, then the `Run` context cancelled | yes before the cancel, naming srvr's serve goroutine; no after `Run` returned |
 
 ##### Examples: gin and fiber
 | owner | setup | lifecycle | reported |
 |-------|-------|-----------|----------|
 | a gin server | one route `GET /ok` | `Start`, `GET /ok` with keep-alive, `Shutdown` | no |
+| a gin server | one route `GET /ok` | `Run` with a context cancelled after it is running | no |
 | a gin server | one route `GET /ok` | `Start` and never `Shutdown` | yes, naming srvr's serve goroutine |
 | a fiber server | one route `GET /ok` | `Start`, `GET /ok` with keep-alive, `Shutdown` | no |
+| a fiber server | one route `GET /ok` | `Run` with a context cancelled after it is running | no |
 | a fiber server | one route `GET /ok` | `Start` and never `Shutdown` | yes, naming srvr's serve goroutine |
-
 ##### Examples: otel
 | owner | setup | lifecycle | reported |
 |-------|-------|-----------|----------|
