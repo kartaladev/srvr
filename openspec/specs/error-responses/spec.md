@@ -115,7 +115,7 @@ When a handler returns an error or panics after the response status has been wri
 | `500` | returns `prblm.ErrConflict` | `ERROR` |
 
 ### Requirement: Consumers extend error rendering
-The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types, `prblm.OnError` and `prblm.AddErrorHook`) through `WithProblemOptions`, or replace prblm with `WithErrorRenderer` (never both), and set an error hook through `WithErrorHook` that receives the error and an `ErrorReport` of what was sent (status, type, title), never a `*prblm.Problem`. srvr's own recording hook SHALL NOT be replaceable. A panic in any consumer hook SHALL NOT affect the response or the access record.
+The consumer SHALL be able to pass prblm options (mappers, enrichers, namespace, types, `prblm.OnError` and `prblm.AddErrorHook`) through `WithProblemOptions`, or replace prblm with `WithErrorRenderer` (never both), and set an error hook (`WithErrorHook`) receiving the error and an `ErrorReport` of what was sent (status, type, title), never a `*prblm.Problem`. srvr's own recording hook SHALL NOT be replaceable. A panic in any consumer hook SHALL NOT affect the response or the access record.
 
 #### Scenario: Consumer mapper and hook
 - **Given** a server configured with `<option>`
