@@ -43,7 +43,7 @@ func Example() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	for _, path := range []string{"/hello", "/missing"} {
@@ -107,7 +107,7 @@ func ExampleGroup() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = srv.Start(ctx) }()
+	go func() { _ = srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/api/v1/users/42", nil)
@@ -145,7 +145,7 @@ func ExampleWithErrorHook() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = srv.Start(ctx) }()
+	go func() { _ = srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/missing", nil)
@@ -218,7 +218,7 @@ func ExampleWithRouteCheck() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 	cancel()
 	fmt.Println(<-done)
@@ -259,7 +259,7 @@ func ExampleWithDebugBuffer() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+srv.Addr()+"/registrations", nil)
@@ -333,7 +333,7 @@ func ExampleStatic() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	for _, path := range []string{"/assets/app.js", "/assets", "/assets/missing.js"} {
@@ -383,7 +383,7 @@ func ExampleWithSPAFallback() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	for _, r := range []struct{ path, accept string }{
@@ -439,7 +439,7 @@ func ExampleWithErrorRenderer() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() { _ = srv.Start(ctx) }()
+	go func() { _ = srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/missing", nil)

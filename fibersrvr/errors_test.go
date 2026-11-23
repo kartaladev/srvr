@@ -335,15 +335,15 @@ func TestFiberConsumerFaults(t *testing.T) {
 		}
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(t.Context()) }()
+		go func() { done <- srv.Run(t.Context()) }()
 
 		select {
 		case err := <-done:
 			if !errors.Is(err, srvr.ErrConfig) || !strings.Contains(err.Error(), "Listener") {
-				t.Fatalf("Start = %v", err)
+				t.Fatalf("Run = %v", err)
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatal("Start did not return")
+			t.Fatal("Run did not return")
 		}
 	})
 
@@ -442,7 +442,7 @@ func TestFiberShutdownHooks_Reentrant(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 	cancel()
 

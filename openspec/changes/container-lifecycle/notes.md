@@ -58,3 +58,24 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Found while triaging; no doger defect was proven, behaviour matches its docs.
 - **Evidence:** T1 (a starter that never returns hangs `RootScope.Start` with no diagnostic), P3 (a `100ms` start deadline took `1.5s` because the starter ignored its context).
 - **Suggested action:** (1) log a warning naming a starter still running after a configurable duration, so a blocking starter is diagnosable; (2) optionally, an `InjectorOpts` start-deadline that returns `ErrStartTimeout` naming the stuck service instead of waiting (the goroutine stays, documented as abandoned, as srvr does for hooks); (3) document in `Starter` godoc that servers must return once listening, citing HTTP servers as the common trap.
+
+### Baseline before slice 2 (task 1.6, 2026-11-23)
+- **Status:** closed: recorded
+- **Target:** container-lifecycle
+- **Context:** `make test` (every module, `GOWORK=off`, `go test -race ./...`) on `feat/container-lifecycle` after the consolidation commit, before any code change.
+- **Evidence:** exit 0; `ok` for core, `internal/benchgate`, `internal/engine`, `internal/errchain`, `internal/static`, `internal/tracectx`, `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`, `internal/paritytest`, `internal/paritytest/gincycle`.
+- **Suggested action:** none; compare against it in task 2.8.
+
+### Slice 2 apply notes (2026-11-23)
+- **Status:** closed: recorded
+- **Target:** container-lifecycle
+- **Context:** (1) Task 2.9's verify command `-run TestLeaks` matches no test; the leak rows live in `TestLifecycle_Goroutines` (core, `ginsrvr`, `fibersrvr`) and the new `TestLifecycle_GoroutinesWhileRunning` (core), run with `-run 'TestLifecycle_Goroutines|TestServeGoroutine|TestLeakCheck'`. (2) Task 2.5's fiber T3 test is the row "returns net.ErrClosed although the listener was not closed" of `fibersrvr`'s `TestServeFailure_AfterStart`, not a separate `TestServeEndsWithoutStop`; it passed on its first run because the shared supervisor was already in place, so its RED evidence is triage T3 on v0.4.0. (3) Rows of 2.4 (Wait misuse except "never started") and 2.6 (Run rows of hooks and Start twice) passed on first run: 2.3-2.5 had already wired them. The `Run` permanent-Accept-error row of "Wait after Start" is asserted in `TestServeFailure_AfterStart`. (4) `TestStart_Stop` became `TestRun_StopByContext`; `TestStart_ServeFails` was removed, superseded by `TestServeFailure_AfterStart`/`TestServeFailure_DuringRun`. (5) `/simplify` applied: dead `run.servedErr` and its test removed; `stop` and `stopFailed` merged into `stop(drainCtx, served)`; supervision runs at the end of `serveOn` instead of a second goroutine.
+- **Evidence:** `make check` exit 0 after `/simplify`.
+- **Suggested action:** none.
+
+### /simplify findings deferred from slice 2
+- **Status:** open
+- **Target:** unassigned
+- **Context:** Skipped as outside the slice or behaviour-changing: (a) `ginsrvr`/`fibersrvr` `container_test.go` are near copies and the three `faultListener`s overlap `panicListener`/`faultyListener`; a shared parity driver (task 4.3 territory) would remove them. (b) Engine tests add `within`/`containerWait` beside `receive`. (c) `ErrServingEnded` could live in `fibersrvr`'s runner instead of the shared lifecycle; kept shared per design D1, as the contract "Serve returned without a stop" is engine-agnostic. (d) the supervisor keeps `context.WithoutCancel(startCtx)` for the server's lifetime by design D2 (service values in records). (e) pre-existing `wait(ctx, first bool)` control flag.
+- **Evidence:** unverified: review findings, no behaviour defect.
+- **Suggested action:** fold (a) and (b) into task 4.3's parity work; reconsider (c) if another engine needs it.

@@ -44,7 +44,7 @@ func run() error {
 		return err
 	}
 
-	return srv.Start(ctx)
+	return srv.Run(ctx)
 }
 ```
 

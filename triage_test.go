@@ -610,7 +610,7 @@ func TestDefaultRedaction_Lifecycle(t *testing.T) {
 					return errors.New("secret=s")
 				}))
 				mustNil(t, srv.Register(okRoute("/x")))
-				done := startBackground(t, srv)
+				done := runBackground(t, srv)
 				_ = srv.Shutdown(t.Context())
 				if err := receive(t, done, "Start did not return"); !errors.Is(err, srvr.ErrShutdownHook) {
 					t.Fatalf("Start = %v, want an error wrapping ErrShutdownHook", err)

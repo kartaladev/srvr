@@ -363,9 +363,17 @@ var (
 	// ErrServerStarted is returned by Start and Register once the server
 	// has been started.
 	ErrServerStarted = errors.New("srvr: server already started")
+	// ErrServerNotStarted is returned by Wait and HealthCheck on a server
+	// that was never started.
+	ErrServerNotStarted = errors.New("srvr: server not started")
 	// ErrServerClosed is returned by Start and Register once the server
 	// has stopped, and by a Start that Shutdown interrupted.
 	ErrServerClosed = errors.New("srvr: server closed")
+	// ErrServingEnded is why a server stopped when its engine stopped
+	// serving without an error although nobody stopped the server (fiber's
+	// serve loop does when Accept reports net.ErrClosed). It wraps
+	// ErrServerClosed.
+	ErrServingEnded = fmt.Errorf("%w: serving ended without a stop", ErrServerClosed)
 	// ErrRouteConfig is wrapped by the error Start returns when a
 	// configurer panics or registers an invalid route, or a route check
 	// fails.

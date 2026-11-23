@@ -56,8 +56,8 @@ func run() error {
 		return err
 	}
 
-	// Start serves until SIGINT or SIGTERM, then drains in-flight requests.
-	return srv.Start(ctx)
+	// Run serves until SIGINT or SIGTERM, then drains in-flight requests.
+	return srv.Run(ctx)
 }
 ```
 

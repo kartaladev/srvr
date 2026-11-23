@@ -376,7 +376,7 @@ func TestSpanEnding(t *testing.T) {
 			}
 
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(t.Context()) }()
+			go func() { done <- srv.Run(t.Context()) }()
 			<-srv.Ready()
 
 			ctx, cancel := context.WithCancel(t.Context())

@@ -45,7 +45,7 @@ func Example() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	for _, url := range []string{"/registrations?email=a@example.com", "/registrations"} {
@@ -96,7 +96,7 @@ func ExampleStatic() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	for _, path := range []string{"/app.js", "/api/users", "/dashboard", "/missing.js"} {
@@ -147,7 +147,7 @@ func ExampleWithSendFileCache() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+srv.Addr()+"/assets/app.js", nil)

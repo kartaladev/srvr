@@ -310,7 +310,7 @@ func TestShutdownOrdering(t *testing.T) {
 
 			done := make(chan error, 1)
 
-			go func() { done <- srv.Start(ctx) }()
+			go func() { done <- srv.Run(ctx) }()
 			<-srv.Ready()
 
 			answered := make(chan struct{})

@@ -780,7 +780,7 @@ func TestRouteCheck_FaultyErrors(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/x")))
 
 			done := make(chan error, 1)
-			go func() { done <- recoverPanic(func() error { return srv.Start(t.Context()) }) }()
+			go func() { done <- recoverPanic(func() error { return srv.Run(t.Context()) }) }()
 
 			if err := receiveWithin(t, done, time.Second, "Start did not return"); !errors.Is(err, srvr.ErrRouteConfig) || errors.Is(err, errPanicked) {
 				t.Fatalf("Start = %s, want an error wrapping ErrRouteConfig without a panic", safeText(err))

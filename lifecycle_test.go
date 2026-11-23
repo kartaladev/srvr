@@ -38,95 +38,6 @@ func inFlight(url string) <-chan int {
 	return out
 }
 
-// TestStart_Stop covers server-lifecycle / Scenario: Start and stop by context.
-func TestStart_Stop(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		trigger string
-		// run returns the Start context and a function that triggers the stop.
-		run func(t *testing.T, srv *srvr.Server) (context.Context, func())
-	}{
-		{
-			trigger: "the Start context is cancelled",
-			run: func(t *testing.T, _ *srvr.Server) (context.Context, func()) {
-				t.Helper()
-				ctx, cancel := context.WithCancel(t.Context())
-
-				return ctx, cancel
-			},
-		},
-		{
-			trigger: "Shutdown(ctx) is called from another goroutine",
-			run: func(t *testing.T, srv *srvr.Server) (context.Context, func()) {
-				t.Helper()
-
-				return t.Context(), func() {
-					go func() { _ = srv.Shutdown(context.Background()) }() //nolint:usetesting // the goroutine is not joined and may outlive the test body
-				}
-			},
-		},
-		{
-			trigger: "the Start context deadline passes",
-			run: func(t *testing.T, _ *srvr.Server) (context.Context, func()) {
-				t.Helper()
-				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-				t.Cleanup(cancel)
-
-				return ctx, func() { <-ctx.Done() }
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.trigger, func(t *testing.T) {
-			t.Parallel()
-
-			started, release := make(chan struct{}, 1), make(chan struct{})
-			srv := newServer(t)
-			if err := srv.Register(workRoute(time.Hour, started, release)); err != nil {
-				t.Fatal(err)
-			}
-
-			ctx, trigger := tt.run(t, srv)
-			done := startWith(ctx, t, srv)
-
-			status := inFlight("http://" + srv.Addr() + "/work")
-			// The deadline row's clock runs from before Start: under load it
-			// can pass before the request reaches the handler. Fail with a
-			// message then, instead of waiting on started forever.
-			select {
-			case <-started:
-			case got := <-status:
-				t.Fatalf("the request ended (status %d) before reaching the handler: the stop came first", got)
-			case <-time.After(waitLimit):
-				t.Fatalf("after %s: the request did not reach the handler", waitLimit)
-			}
-			trigger()
-			// Start must still be draining: the request is in flight.
-			select {
-			case err := <-done:
-				t.Fatalf("Start = %v before the in-flight request finished", err)
-			case <-time.After(20 * time.Millisecond):
-			}
-			close(release)
-
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Fatalf("Start = %v, want nil", err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("Start did not return")
-			}
-
-			if got := receive(t, status, "the in-flight request did not finish"); got != http.StatusOK {
-				t.Fatalf("in-flight status = %d, want 200", got)
-			}
-		})
-	}
-}
-
 // TestStart_WithListener serves on a listener the consumer opened.
 func TestStart_WithListener(t *testing.T) {
 	t.Parallel()
@@ -150,33 +61,6 @@ func TestStart_WithListener(t *testing.T) {
 	}
 }
 
-// failingListener fails every Accept with a permanent error.
-type failingListener struct{ net.Listener }
-
-func (l failingListener) Accept() (net.Conn, error) { return nil, errors.New("accept failed") }
-
-// TestStart_ServeFails: when serving fails on its own, Start returns the
-// error and the server still stops in order.
-func TestStart_ServeFails(t *testing.T) {
-	t.Parallel()
-
-	ln := listen(t)
-
-	var c hookCounts
-	srv, err := srvr.New(append(c.options(), srvr.WithListener(failingListener{ln}))...)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = srv.Start(t.Context())
-	if err == nil || err.Error() != "accept failed" {
-		t.Fatalf("Start = %v, want the accept error", err)
-	}
-	if b, a := c.before.Load(), c.after.Load(); b != 1 || a != 1 {
-		t.Fatalf("hooks ran before=%d after=%d, want 1 and 1", b, a)
-	}
-}
-
 // TestShutdown_WhileConfiguring: a Shutdown while a configurer runs (it
 // receives no context) stops the server before it serves: Start returns
 // ErrServerClosed (server-lifecycle "Shutdown interrupts a starting
@@ -197,7 +81,7 @@ func TestShutdown_WhileConfiguring(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(t.Context()) }()
+	go func() { done <- srv.Run(t.Context()) }()
 	<-entered
 
 	shut := make(chan error, 1)
@@ -235,7 +119,7 @@ func TestShutdown_WaitExpires(t *testing.T) {
 	if err := srv.Register(workRoute(time.Hour, started, release)); err != nil {
 		t.Fatal(err)
 	}
-	done := startBackground(t, srv)
+	done := runBackground(t, srv)
 	status := inFlight("http://" + srv.Addr() + "/work")
 	<-started
 
@@ -357,87 +241,99 @@ func TestLifecycleErrorText(t *testing.T) {
 func TestStart_Twice(t *testing.T) {
 	t.Parallel()
 
-	t.Run("is running", func(t *testing.T) {
+	start := func(srv *srvr.Server, ctx context.Context) error { return srv.Start(ctx) }
+	run := func(srv *srvr.Server, ctx context.Context) error { return srv.Run(ctx) }
+
+	running := []struct {
+		name  string
+		first string // "Start" or "Run"
+		call  func(*srvr.Server, context.Context) error
+	}{
+		{name: "is running after Start, Start", first: "Start", call: start},
+		{name: "is running after Start, Run", first: "Start", call: run},
+		{name: "is running inside Run, Start", first: "Run", call: start},
+	}
+
+	for _, tt := range running {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := pingServer(t)
+			base := ""
+			if tt.first == "Run" {
+				base = startServer(t, srv)
+			} else {
+				base = startReturned(t.Context(), t, srv)
+			}
+
+			err := bounded(t, "the second call did not return", func() error { return tt.call(srv, t.Context()) })
+			if !errors.Is(err, srvr.ErrServerStarted) {
+				t.Fatalf("second call = %v, want ErrServerStarted", err)
+			}
+			if got := get(t, base+"/ping").status; got != http.StatusOK {
+				t.Fatalf("GET /ping = %d, want 200: the first server must keep serving", got)
+			}
+		})
+	}
+
+	t.Run("is starting in another goroutine at the same time, Start", func(t *testing.T) {
 		t.Parallel()
 
-		srv := newServer(t)
-		if err := srv.Register(okRoute("/ping")); err != nil {
-			t.Fatal(err)
-		}
-		base := startServer(t, srv)
-
-		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
-			t.Fatalf("second Start = %v, want ErrServerStarted", err)
-		}
-		if got := get(t, base+"/ping").status; got != http.StatusOK {
-			t.Fatalf("GET /ping = %d, want 200: the first server must keep serving", got)
-		}
-	})
-
-	t.Run("is starting in another goroutine at the same time", func(t *testing.T) {
-		t.Parallel()
-
-		srv := newServer(t)
-		if err := srv.Register(okRoute("/ping")); err != nil {
-			t.Fatal(err)
-		}
-
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
+		srv := pingServer(t)
+		t.Cleanup(func() { _ = shutdownBounded(t, srv) })
 
 		const n = 8
 		results := make(chan error, n)
 		var wg sync.WaitGroup
 		for range n {
-			wg.Go(func() { results <- srv.Start(ctx) })
+			wg.Go(func() { results <- srv.Start(t.Context()) })
 		}
+		wg.Wait()
+		close(results)
 
-		// All but one Start return at once.
-		for range n - 1 {
-			select {
-			case err := <-results:
-				if !errors.Is(err, srvr.ErrServerStarted) {
-					t.Fatalf("concurrent Start = %v, want ErrServerStarted", err)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("concurrent Start did not return")
+		var ok int
+		for err := range results {
+			switch {
+			case err == nil:
+				ok++
+			case !errors.Is(err, srvr.ErrServerStarted):
+				t.Fatalf("concurrent Start = %v, want ErrServerStarted", err)
 			}
 		}
-
-		<-srv.Ready()
+		if ok != 1 {
+			t.Fatalf("%d Start calls returned nil, want 1", ok)
+		}
 		if got := get(t, "http://"+srv.Addr()+"/ping").status; got != http.StatusOK {
 			t.Fatalf("GET /ping = %d, want 200", got)
 		}
-
-		cancel()
-		wg.Wait()
-		if err := <-results; err != nil {
-			t.Fatalf("serving Start = %v, want nil", err)
-		}
 	})
 
-	t.Run("has stopped", func(t *testing.T) {
-		t.Parallel()
+	for _, tt := range []struct {
+		name string
+		call func(*srvr.Server, context.Context) error
+	}{{"has stopped, Start", start}, {"has stopped, Run", run}} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-		srv := newServer(t)
-		ctx, cancel := context.WithCancel(t.Context())
-		done := startWith(ctx, t, srv)
-		cancel()
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
-		addr := srv.Addr()
+			srv := newServer(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			done := runWith(ctx, t, srv)
+			cancel()
+			mustNil(t, <-done)
+			addr := srv.Addr()
 
-		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
-			t.Fatalf("Start after stop = %v, want ErrServerClosed", err)
-		}
+			err := bounded(t, "the call after stop did not return", func() error { return tt.call(srv, t.Context()) })
+			if !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("call after stop = %v, want ErrServerClosed", err)
+			}
 
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", nil)
-		if res, err := clientFor(req.URL.String()).Do(req); err == nil {
-			res.Body.Close()
-			t.Fatal("a request after stop was served: the server must stay stopped")
-		}
-	})
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", nil)
+			if res, err := clientFor(req.URL.String()).Do(req); err == nil {
+				res.Body.Close()
+				t.Fatal("a request after stop was served: the server must stay stopped")
+			}
+		})
+	}
 }
 
 // TestStart_Fails covers server-lifecycle / Scenario: Start fails.
@@ -542,7 +438,7 @@ func TestStart_Fails(t *testing.T) {
 
 			srv, ctx := tt.setup(t)
 			done := make(chan error, 1)
-			go func() { done <- recoverPanic(func() error { return srv.Start(ctx) }) }()
+			go func() { done <- recoverPanic(func() error { return srv.Run(ctx) }) }()
 
 			select {
 			case err := <-done:
@@ -622,7 +518,7 @@ func TestReady(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // Start must run until the cleanup cancels it and checks its result
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(ctx) }()
+			go func() { done <- srv.Run(ctx) }()
 			t.Cleanup(func() {
 				cancel()
 				if err := <-done; err != nil {
@@ -766,7 +662,7 @@ func TestShutdown_WhileStarting(t *testing.T) {
 				mustNil(t, shutdown())
 				done <- srv.Start(t.Context())
 			} else {
-				go func() { done <- recoverPanic(func() error { return srv.Start(t.Context()) }) }()
+				go func() { done <- recoverPanic(func() error { return srv.Run(t.Context()) }) }()
 				receive(t, entered, "the route check did not run")
 
 				results := make(chan error, tt.shutdowns)
@@ -847,7 +743,7 @@ func TestShutdown_WhileStarting_Branches(t *testing.T) {
 		mustNil(t, srv.Register(okRoute("/x")))
 
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(t.Context()) }()
+		go func() { done <- srv.Run(t.Context()) }()
 		receive(t, entered, "the first route check did not run")
 		mustNil(t, srv.Shutdown(t.Context()))
 

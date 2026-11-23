@@ -49,7 +49,7 @@ func Example() {
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(runCtx) }()
+	go func() { done <- srv.Run(runCtx) }()
 	<-srv.Ready()
 
 	get := func(url string) string {

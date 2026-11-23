@@ -38,8 +38,8 @@ func runQuickStart() error {
 		return err
 	}
 
-	// Start serves until SIGINT or SIGTERM, then drains in-flight requests.
-	return srv.Start(ctx)
+	// Run serves until SIGINT or SIGTERM, then drains in-flight requests.
+	return srv.Run(ctx)
 }
 
 // errQuotaExceeded is the application error of the README's renderers.
@@ -113,7 +113,7 @@ func Example_customErrorRendering() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(ctx) }()
+		go func() { done <- srv.Run(ctx) }()
 		<-srv.Ready()
 
 		for _, path := range []string{"/quota", "/missing"} {

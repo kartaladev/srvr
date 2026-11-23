@@ -99,11 +99,15 @@ var (
 	// ErrConfig is wrapped by every error New returns for invalid
 	// configuration. The message names the offending field and value.
 	ErrConfig = errchain.ErrConfig
-	// ErrServerStarted is returned by Start and Register once the server
-	// has been started.
+	// ErrServerStarted is returned by Start, Run and Register once the
+	// server has been started.
 	ErrServerStarted = errchain.ErrServerStarted
-	// ErrServerClosed is returned by Start and Register once the server has
-	// stopped or was shut down before it started.
+	// ErrServerNotStarted is returned by Wait on a server that was never
+	// started.
+	ErrServerNotStarted = errchain.ErrServerNotStarted
+	// ErrServerClosed is returned by Start, Run and Register once the server
+	// has stopped or was shut down before it started; HealthCheck and Wait
+	// wrap it when serving ended without a stop.
 	ErrServerClosed = errchain.ErrServerClosed
 	// ErrRouteConfig is wrapped by the error Register or Start returns for
 	// a broken route configuration: a nil configurer, an invalid or

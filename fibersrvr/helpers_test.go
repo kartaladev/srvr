@@ -128,7 +128,7 @@ func start(t *testing.T, srv *fibersrvr.Server) string {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // Start's context must outlive the test body until its cleanup.
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	wait := sync.OnceValue(func() error {
 		select {

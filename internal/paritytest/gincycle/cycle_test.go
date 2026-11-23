@@ -63,7 +63,7 @@ func requestCyclic(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(context.Background()) }() //nolint:usetesting // Start's result is read in the cleanup; t.Context() would stop the server before the cleanup's Shutdown runs
+	go func() { done <- srv.Run(context.Background()) }() //nolint:usetesting // Start's result is read in the cleanup; t.Context() would stop the server before the cleanup's Shutdown runs
 
 	t.Cleanup(func() {
 		// The drain deadline passes, because the handler never returns, so

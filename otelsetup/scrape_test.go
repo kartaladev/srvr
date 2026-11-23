@@ -42,7 +42,7 @@ func app(t *testing.T, s *otelsetup.Setup, conf configFunc) string {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must serve until its cleanup cancels it; t.Context() is cancelled before cleanups run
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	t.Cleanup(func() {
 		cancel()

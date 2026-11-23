@@ -7,49 +7,49 @@
 - [x] 1.3 Refresh this change's proposal, specs, design and tasks against the main specs and merged code: recheck with gopls the facts in design Context (`Lifecycle.Start`, `serve`, `serveOn`, `stop`, `stopRun`, `Shutdown`, `joinServe`, `guardedListener`, the state constants, `types.go` sentinels, every `Start` caller); re-diff the MODIFIED blocks of `server-lifecycle`, `engine-support` and `test-quality` against `openspec/specs/`; verify `openspec validate container-lifecycle --strict` passes
 - [x] 1.4 Record the outcome of 1.1-1.3 at the top of this change's `notes.md` (replace the placeholder entry); verify the file lists what was refreshed and adopted, or states that nothing was needed
 - [x] 1.5 Commit the consolidation as `docs(openspec): consolidate container-lifecycle against main`, containing only `openspec/` files and the change-order lines of `AGENTS.md`/`openspec/config.yaml` if not yet committed; skip it when 1.1-1.4 changed nothing; verify with `git log -1 --stat`
-- [ ] 1.6 Precondition for slice 2: run every module's tests once on the working branch before any change and record the baseline (all pass); verify the result is in `notes.md`
+- [x] 1.6 Precondition for slice 2: run every module's tests once on the working branch before any change and record the baseline (all pass); verify the result is in `notes.md`
 
 ## 2. Slice: Start returns once serving on every engine, with Run and Wait
 
-- [ ] 2.1 Add `ErrServerNotStarted` (design D6) and `Wait` misuse on a never-started server (server-lifecycle / Scenario: Wait misuse, row "was never started"); verify `go test -race -run TestWait_Misuse .` passes
+- [x] 2.1 Add `ErrServerNotStarted` (design D6) and `Wait` misuse on a never-started server (server-lifecycle / Scenario: Wait misuse, row "was never started"); verify `go test -race -run TestWait_Misuse .` passes
   - RED: `TestWait_Misuse` with the row "was never started"; fails to compile because `Wait` and `ErrServerNotStarted` do not exist
   - GREEN: sentinel in `internal/errchain`, alias in `types.go`; `Lifecycle.Wait` returning it in `stateNew`; `Server.Wait` delegating
   - REFACTOR: keep the sentinels' godoc grouped (Move Statement); then /simplify
-- [ ] 2.2 `Start` returns once serving and its context bounds startup only (server-lifecycle / Scenario: Start returns while serving, net/http rows; Scenario: Start bounded by its context); verify `go test -race -run 'TestStart_ReturnsWhileServing|TestStart_BoundedByContext' .` passes
+- [x] 2.2 `Start` returns once serving and its context bounds startup only (server-lifecycle / Scenario: Start returns while serving, net/http rows; Scenario: Start bounded by its context); verify `go test -race -run 'TestStart_ReturnsWhileServing|TestStart_BoundedByContext' .` passes
   - RED: both tests with every net/http row, including cancelled and expired `Start` contexts and `Start(nil)`; fail because `Start` blocks
   - GREEN: `Lifecycle.Start` returns after `serve` closes `ready` (design D1, D2); `superviseRun` started from `serve` handles `r.stopping` only for now
   - REFACTOR: Extract Function for the old waiting `select` (kept for `Run`); then /simplify
-- [ ] 2.3 `Run` serves until its context ends and reports start failures (server-lifecycle / Scenario: Run and stop by context, net/http rows; Scenario: Run fails to start); verify `go test -race -run 'TestRun_' .` passes
+- [x] 2.3 `Run` serves until its context ends and reports start failures (server-lifecycle / Scenario: Run and stop by context, net/http rows; Scenario: Run fails to start); verify `go test -race -run 'TestRun_' .` passes
   - RED: `TestRun_StopByContext` (cancel, `Shutdown`, deadline rows) and `TestRun_FailsToStart` (address in use, configurer panic, cancelled context, `Run(nil)`, `Shutdown` before `Run`)
   - GREEN: `Lifecycle.Run` = `Start` + waiting `select` + stop + `Wait` (design D3); `Server.Run` delegating
   - REFACTOR: remove duplication between `Run`'s stop and `Shutdown`'s drain-context construction (Extract Function); then /simplify
-- [ ] 2.4 `Wait` reports how serving ended (server-lifecycle / Scenario: Wait after Start, net/http rows; Scenario: Wait misuse, remaining rows); verify `go test -race -run 'TestWait_' .` passes
+- [x] 2.4 `Wait` reports how serving ended (server-lifecycle / Scenario: Wait after Start, net/http rows; Scenario: Wait misuse, remaining rows); verify `go test -race -run 'TestWait_' .` passes
   - RED: rows for `Shutdown` returning `nil`, `3` concurrent waiters, repeated calls, a failing `AfterDrain` hook, a permanent `Accept` error; misuse rows for failed bind, `Shutdown` before `Start`, `Run` cancelled
   - GREEN: `l.servedErr`, a served-run flag written before `l.stopped` closes; `Wait` per design D4
   - REFACTOR: name the result composition (Extract Function `runResult`); then /simplify
-- [ ] 2.5 A serve failure after `Start` stops the server in order and is reported (server-lifecycle / Scenario: Listener fails while serving, net/http rows; MODIFIED Scenario: Lifecycle records, new row); verify `go test -race -run 'TestServeFailure_AfterStart|TestLifecycleRecords' .` passes
+- [x] 2.5 A serve failure after `Start` stops the server in order and is reported (server-lifecycle / Scenario: Listener fails while serving, net/http rows; MODIFIED Scenario: Lifecycle records, new row); verify `go test -race -run 'TestServeFailure_AfterStart|TestLifecycleRecords' .` passes
   - RED: listener whose `Accept` returns a permanent error, and one that panics, after `Start` returned; assert `Wait`, one `server.failed`, `AfterDrain` ran once, later `Shutdown` `nil`, later `Start` `ErrServerClosed`; add triage test T3 (notes.md) to `fibersrvr` as `TestServeEndsWithoutStop`: a listener whose `Accept` returns `net.ErrClosed` unclosed must yield an error matching `srvr.ErrServerClosed` and one `server.failed` (it fails on main today: `Start` returns `nil`); add the "Shutdown during the stop a serve failure began" and `Run` serve-failure rows
   - GREEN: `superviseRun` handles `r.done` with a served error, and a clean return with no stop requested as "serving ended without a stop": log, record, `stop` with a detached `ShutdownTimeout` context (design D1)
   - REFACTOR: Consolidate Conditional Expression between `Run`'s and the supervisor's served-error handling; then /simplify
-- [ ] 2.6 Stop paths, hooks and single use under the new methods (server-lifecycle MODIFIED / Scenario: Hook phases and order; Scenario: Hooks on every stop path; Scenario: Start twice); verify `go test -race -run 'TestShutdownHooks|TestStart_Twice' .` passes
+- [x] 2.6 Stop paths, hooks and single use under the new methods (server-lifecycle MODIFIED / Scenario: Hook phases and order; Scenario: Hooks on every stop path; Scenario: Start twice); verify `go test -race -run 'TestShutdownHooks|TestStart_Twice' .` passes
   - RED: before touching 2.2-2.5's code paths further, add the MODIFIED rows not yet covered by 2.2-2.5 (`Run` misuse rows of "Start twice", the `Run`-context rows of "Hooks on every stop path", "Hook phases and order" under `Run`); run them and confirm each fails because `Run` misuse or the `Run` stop path is not yet wired to the shared single-use and hook checks; rows already made green by 2.2-2.5 are written in those tasks, not here
   - GREEN: wire the remaining paths; move every remaining core test that expects a blocking `Start` to `Run`
   - REFACTOR: shared test helper `startServer(t)` returning a stopper (Extract Function); then /simplify
-- [ ] 2.7 gin and fiber get `Run` and `Wait`, and their tests move to the new contract (engine-support MODIFIED / Scenario: Lifecycle misuse on every engine, non-`HealthCheck` rows; Scenario: Hooks per engine and stop path; server-lifecycle gin and fiber rows of "Start returns while serving", "Run and stop by context", "Wait after Start", "Listener fails while serving"); verify `make test MODULES=ginsrvr` and `make test MODULES=fibersrvr` pass
+- [x] 2.7 gin and fiber get `Run` and `Wait`, and their tests move to the new contract (engine-support MODIFIED / Scenario: Lifecycle misuse on every engine, non-`HealthCheck` rows; Scenario: Hooks per engine and stop path; server-lifecycle gin and fiber rows of "Start returns while serving", "Run and stop by context", "Wait after Start", "Listener fails while serving"); verify `make test MODULES=ginsrvr` and `make test MODULES=fibersrvr` pass
   - RED: add the gin and fiber rows to each module's lifecycle tests; fail to compile without `Run`/`Wait`
   - GREEN: delegate `Run` and `Wait` to the shared `Lifecycle`; move each module's blocking `Start` callers to `Run`
   - REFACTOR: Pull Up any duplicated delegation comments into the shared godoc reference; then /simplify
-- [ ] 2.8 Move `otelsrvr`, `otelsetup`, `internal/paritytest`, `example_test.go`, `readme_example_test.go` and the README snippets of core, `ginsrvr`, `fibersrvr` from blocking `Start` to `Run`; verify `make test` passes for every module
+- [x] 2.8 Move `otelsrvr`, `otelsetup`, `internal/paritytest`, `example_test.go`, `readme_example_test.go` and the README snippets of core, `ginsrvr`, `fibersrvr` from blocking `Start` to `Run`; verify `make test` passes for every module
   - RED: run each module's tests and list the ones that now fail or hang because `Start` returns, compared with the 1.6 baseline; this list is the RED evidence
   - GREEN: replace those calls with `Run` (or `Start` + `Shutdown` where the test drives the stop)
   - REFACTOR: none beyond renames; /simplify
-- [ ] 2.9 Goroutine leaks (test-quality MODIFIED / Scenario: Lifecycle leaves no goroutine behind, `Start`, `Run`, `Wait` and serve-failure rows on all engines); verify `go test -race -run TestLeaks ./...` passes in core, `ginsrvr`, `fibersrvr`
+- [x] 2.9 Goroutine leaks (test-quality MODIFIED / Scenario: Lifecycle leaves no goroutine behind, `Start`, `Run`, `Wait` and serve-failure rows on all engines); verify `go test -race -run TestLeaks ./...` passes in core, `ginsrvr`, `fibersrvr`
   - RED: add the rows; the never-stopped rows must report srvr's serve goroutine
   - GREEN: fix any supervisor leak found (it must end with `stop`)
   - REFACTOR: name the supervisor goroutine function so reports name it; /simplify
-- [ ] 2.10 Godoc for `Start` (returns once serving, context bounds startup), `Run` (blocks; not for a container's run-once hook), `Wait` (never call from a shutdown hook), `ErrServerNotStarted`; `CHANGELOG.md` `[Unreleased]` **BREAKING** entry with a `Start` to `Run` snippet; verify `go vet ./...` passes in every module
-- [ ] 2.11 Verify the slice end to end: `make check`; gopls diagnostics clean on changed files; `go tool cover -func` shows `Lifecycle.Start`, `superviseRun`, `Run`, `Wait` and every error branch of design Hot Paths covered
-- [ ] 2.12 Run `/simplify` on the slice's changes, apply what holds up, re-run the tests, then commit `feat(core)!: return from Start once serving, add Run and Wait`; verify with `git log -1 --stat`
+- [x] 2.10 Godoc for `Start` (returns once serving, context bounds startup), `Run` (blocks; not for a container's run-once hook), `Wait` (never call from a shutdown hook), `ErrServerNotStarted`; `CHANGELOG.md` `[Unreleased]` **BREAKING** entry with a `Start` to `Run` snippet; verify `go vet ./...` passes in every module
+- [x] 2.11 Verify the slice end to end: `make check`; gopls diagnostics clean on changed files; `go tool cover -func` shows `Lifecycle.Start`, `superviseRun`, `Run`, `Wait` and every error branch of design Hot Paths covered
+- [x] 2.12 Run `/simplify` on the slice's changes, apply what holds up, re-run the tests, then commit `feat(core)!: return from Start once serving, add Run and Wait`; verify with `git log -1 --stat`
 
 ## 3. Slice: health check on every engine and container conformance
 

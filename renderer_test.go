@@ -698,7 +698,7 @@ func TestErrorRenderer_Lifecycle(t *testing.T) {
 
 			srv := newServer(t, srvr.WithErrorRenderer(r))
 			mustNil(t, srv.Register(configFunc(func(g *srvr.Group) { g.GET("/x", returning(errQuota)) })))
-			done := startBackground(t, srv)
+			done := runBackground(t, srv)
 
 			status := inFlight("http://" + srv.Addr() + "/x")
 			receive(t, entered, "the renderer did not start")

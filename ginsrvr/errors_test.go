@@ -497,7 +497,7 @@ func TestGinShutdownHooks_Reentrant(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 	cancel()
 
