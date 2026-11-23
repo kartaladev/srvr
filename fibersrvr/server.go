@@ -198,6 +198,10 @@ func (s *Server) Run(ctx context.Context) error { return s.lc.Run(ctx, s.prepare
 // ended, as srvr.Server.Wait does. Never call it from a shutdown hook.
 func (s *Server) Wait() error { return s.lc.Wait() }
 
+// HealthCheck returns nil while the server is serving and an error
+// otherwise, as srvr.Server.HealthCheck does.
+func (s *Server) HealthCheck(ctx context.Context) error { return s.lc.HealthCheck(ctx) }
+
 // prepare is the configure phase of the fiber engine.
 func (s *Server) prepare(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Runner, engine.Routes, error) {
 	routes, err := s.configure(configurers)

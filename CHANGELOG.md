@@ -34,6 +34,12 @@ once tagged.
 - `Wait()` on every engine: blocks until a started server has stopped and returns the serve
   failure joined with shutdown-hook errors, or `nil`. Never call it from a shutdown hook.
 - `srvr.ErrServerNotStarted`, returned by `Wait` on a server that was never started.
+- `HealthCheck(ctx)` on every engine: `nil` while the server is serving; an error matching
+  `srvr.ErrServerNotStarted` before `Start` returned, or `srvr.ErrServerClosed` once the stop
+  began (also wrapping the serve failure). It reads the state only, never blocks or calls `ctx`,
+  and is a Go method, not an HTTP endpoint, so nothing reaches clients. Every engine's server now
+  has the `Start`/`Shutdown`/`HealthCheck` method shapes lifecycle containers detect; srvr imports
+  no container.
 
 ## [v0.4.0] - 2026-11-22
 

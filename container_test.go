@@ -83,6 +83,9 @@ func TestStart_ReturnsWhileServing(t *testing.T) {
 			default:
 				t.Fatal("Ready is not closed")
 			}
+			if err := srv.HealthCheck(t.Context()); err != nil {
+				t.Fatalf("HealthCheck = %v, want nil", err)
+			}
 		})
 	}
 }

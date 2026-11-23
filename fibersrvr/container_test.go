@@ -98,6 +98,9 @@ func TestStart_ReturnsWhileServing(t *testing.T) {
 			default:
 				t.Fatal("Ready is not closed")
 			}
+			if err := srv.HealthCheck(t.Context()); err != nil {
+				t.Fatalf("HealthCheck = %v, want nil", err)
+			}
 		})
 	}
 }
@@ -246,11 +249,57 @@ func TestServeFailure_AfterStart(t *testing.T) {
 			if got := h.recorded(); len(got) != 2 || got[0] != "BeforeDrain" || got[1] != "AfterDrain" {
 				t.Fatalf("hooks = %v, want [BeforeDrain AfterDrain]", got)
 			}
+			if err := srv.HealthCheck(t.Context()); !errors.Is(err, tt.want) || !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("HealthCheck = %v, want an error matching %v and ErrServerClosed", err, tt.want)
+			}
 			if err := srv.Shutdown(t.Context()); err != nil {
 				t.Fatalf("later Shutdown = %v, want nil", err)
 			}
 			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("later Start = %v, want ErrServerClosed", err)
+			}
+		})
+	}
+}
+
+// TestHealthCheck covers server-lifecycle / Scenario: Health across the
+// lifecycle, fiber rows, and the HealthCheck rows of engine-support /
+// Scenario: Lifecycle misuse on every engine.
+func TestHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		state string
+		ctx   func(t *testing.T) context.Context
+		want  error // nil: HealthCheck returns nil
+	}{
+		{state: "was never started", want: srvr.ErrServerNotStarted},
+		{state: "is serving after Start"},
+		{state: "has stopped", want: srvr.ErrServerClosed},
+		{state: "is running, HealthCheck(nil)", ctx: func(*testing.T) context.Context { return nil }, want: srvr.ErrConfig},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.state, func(t *testing.T) {
+			t.Parallel()
+
+			srv := pingServer(t)
+			switch tt.state {
+			case "is serving after Start", "is running, HealthCheck(nil)":
+				startReturned(t.Context(), t, srv)
+			case "has stopped":
+				mustNil(t, srv.Start(t.Context()))
+				mustNil(t, srv.Shutdown(t.Context()))
+			}
+
+			ctx := t.Context()
+			if tt.ctx != nil {
+				ctx = tt.ctx(t)
+			}
+
+			err := within(t, 10*time.Millisecond, "HealthCheck did not return within 10ms", func() error { return srv.HealthCheck(ctx) })
+			if tt.want == nil && err != nil || tt.want != nil && !errors.Is(err, tt.want) {
+				t.Fatalf("HealthCheck = %v, want %v", err, tt.want)
 			}
 		})
 	}

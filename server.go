@@ -146,6 +146,17 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx)
 // runs before the server stops, so Wait would never return.
 func (s *Server) Wait() error { return s.lc.Wait() }
 
+// HealthCheck returns nil while the server is serving and an error
+// otherwise: one matching [ErrServerNotStarted] before Start returned
+// (never started, or still starting), or [ErrServerClosed] once the stop
+// began, also wrapping the serve failure when serving failed on its own. A
+// nil ctx returns an error wrapping [ErrConfig]. It reads the server's
+// state only: it never blocks beyond a lock, never calls ctx's methods, and
+// sends nothing to clients (it is a Go method, not an HTTP endpoint), so
+// lifecycle containers can call it safely; its error text goes only to the
+// caller.
+func (s *Server) HealthCheck(ctx context.Context) error { return s.lc.HealthCheck(ctx) }
+
 // router runs the configurers and returns the ServeMux holding their
 // routes and the listing of the routes they declared.
 func (s *Server) router(configurers []RouteConfigurer[*Group]) (*http.ServeMux, engine.Routes, error) {

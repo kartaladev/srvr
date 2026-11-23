@@ -79,3 +79,10 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** Skipped as outside the slice or behaviour-changing: (a) `ginsrvr`/`fibersrvr` `container_test.go` are near copies and the three `faultListener`s overlap `panicListener`/`faultyListener`; a shared parity driver (task 4.3 territory) would remove them. (b) Engine tests add `within`/`containerWait` beside `receive`. (c) `ErrServingEnded` could live in `fibersrvr`'s runner instead of the shared lifecycle; kept shared per design D1, as the contract "Serve returned without a stop" is engine-agnostic. (d) the supervisor keeps `context.WithoutCancel(startCtx)` for the server's lifetime by design D2 (service values in records). (e) pre-existing `wait(ctx, first bool)` control flag.
 - **Evidence:** unverified: review findings, no behaviour defect.
 - **Suggested action:** fold (a) and (b) into task 4.3's parity work; reconsider (c) if another engine needs it.
+
+### Slice 3 apply notes (2026-11-23)
+- **Status:** closed: recorded
+- **Target:** container-lifecycle
+- **Context:** (1) Task 3.3's RED could not fail to compile as planned: 3.1 had already added `HealthCheck` everywhere. The container deny check was proven instead by temporarily adding `gin-gonic/gin` to `containerModules` (FAIL `module ginsrvr depends on container module gin-gonic/gin`), then reverted. (2) The dependency rows live in `TestContainerDependencies` (gin, fiber); the net/http row is `TestCoreDependencies`' allowlist, so it is not checked twice. (3) `/simplify` applied: `health` returns bare `ErrServerClosed` with no serve failure; conformance driver bounded by its context only; `healthWithin` uses one goroutine. Deferred, added to "/simplify findings deferred from slice 2" (a): gin/fiber `TestHealthCheck` copies with a `switch` on row names, and sharing one `go list -deps` result across `internal/paritytest` tests.
+- **Evidence:** `make check` exit 0.
+- **Suggested action:** none.

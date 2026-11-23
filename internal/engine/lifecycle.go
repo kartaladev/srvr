@@ -58,6 +58,24 @@ func (st state) startable() error {
 	}
 }
 
+// health returns what HealthCheck reports in this state: nil only while
+// running. servedErr, the serve failure (nil when none), joins the closed
+// error.
+func (st state) health(servedErr error) error {
+	switch st {
+	case stateNew, stateStarting:
+		return errchain.ErrServerNotStarted
+	case stateRunning:
+		return nil
+	default:
+		if servedErr == nil {
+			return errchain.ErrServerClosed
+		}
+
+		return errors.Join(errchain.ErrServerClosed, servedErr)
+	}
+}
+
 // Lifecycle is the single-use state machine every engine's server runs
 // on: Start configures, binds and serves through a [Runner], then returns
 // while a supervisor goroutine watches serving; Shutdown, the end of Run's
@@ -536,6 +554,20 @@ func (l *Lifecycle[C]) Wait() error {
 	<-l.stopped
 
 	return l.runResult()
+}
+
+// HealthCheck reports whether the server is serving; see
+// srvr.Server.HealthCheck for the contract every engine shares. It reads
+// the state only: ctx is checked for nil and never called.
+func (l *Lifecycle[C]) HealthCheck(ctx context.Context) error {
+	if ctx == nil {
+		return errchain.NewConfigError("HealthCheck context", "<nil>", "is nil")
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.st.health(l.servedErr)
 }
 
 // runResult is what Wait returns once the server is closed: the serve

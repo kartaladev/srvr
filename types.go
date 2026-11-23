@@ -103,7 +103,7 @@ var (
 	// server has been started.
 	ErrServerStarted = errchain.ErrServerStarted
 	// ErrServerNotStarted is returned by Wait on a server that was never
-	// started.
+	// started, and matched by HealthCheck's error before Start returned.
 	ErrServerNotStarted = errchain.ErrServerNotStarted
 	// ErrServerClosed is returned by Start, Run and Register once the server
 	// has stopped or was shut down before it started; HealthCheck and Wait

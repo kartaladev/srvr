@@ -53,21 +53,21 @@
 
 ## 3. Slice: health check on every engine and container conformance
 
-- [ ] 3.1 `HealthCheck` across the lifecycle (server-lifecycle / Scenario: Health across the lifecycle, every row; engine-support `HealthCheck` rows); verify `go test -race -run TestHealthCheck ./...` passes in core, `ginsrvr`, `fibersrvr`
+- [x] 3.1 `HealthCheck` across the lifecycle (server-lifecycle / Scenario: Health across the lifecycle, every row; engine-support `HealthCheck` rows); verify `go test -race -run TestHealthCheck ./...` passes in core, `ginsrvr`, `fibersrvr`
   - RED: every row, including starting with a waiting route check, draining after `Shutdown` began, failed bind, and the serve-failure join; fails to compile without `HealthCheck`
   - GREEN: `Lifecycle.HealthCheck` per design D5; delegations on the three servers
   - REFACTOR: Replace Conditional with a state-to-error switch kept next to the state constants (Move Function); then /simplify
-- [ ] 3.2 `HealthCheck` with hostile contexts (server-lifecycle / Scenario: Health with a hostile context); verify `go test -race -run TestHealthCheck_HostileContext .` passes
+- [x] 3.2 `HealthCheck` with hostile contexts (server-lifecycle / Scenario: Health with a hostile context); verify `go test -race -run TestHealthCheck_HostileContext .` passes
   - RED: rows `nil`, already cancelled, `Err()` panics
   - GREEN: nil check returning `ErrConfig`; no `ctx.Err()` call
   - REFACTOR: none expected; /simplify
-- [ ] 3.3 Container conformance (server-lifecycle / Scenario: Container-shaped lifecycle) in `internal/paritytest` per design D7; verify `go test -race -run TestContainerConformance ./internal/paritytest/...` passes
+- [x] 3.3 Container conformance (server-lifecycle / Scenario: Container-shaped lifecycle) in `internal/paritytest` per design D7; verify `go test -race -run TestContainerConformance ./internal/paritytest/...` passes
   - RED: compile-time interface assertions and the driver for each engine (fails to compile before 3.1 adds `HealthCheck` on gin and fiber, so write it first); extend `TestCoreDependencies`' module coverage with a container deny check for `ginsrvr` and `fibersrvr` (design D7), proven by temporarily requiring `github.com/kartaladev/doger` in a scratch copy, not committed
   - GREEN: nothing beyond 3.1 should be needed; fix any engine that fails
   - REFACTOR: share the driver across engines (Parameterize Function); /simplify
-- [ ] 3.4 Godoc for `HealthCheck` (states, no client exposure, safe for containers); `CHANGELOG.md` Added; verify `go test -run Example ./...` passes
-- [ ] 3.5 Verify the slice end to end: `make check`; gopls diagnostics clean; `go tool cover -func` shows every branch of `HealthCheck` covered
-- [ ] 3.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): add HealthCheck and pin container conformance`; verify with `git log -1 --stat`
+- [x] 3.4 Godoc for `HealthCheck` (states, no client exposure, safe for containers); `CHANGELOG.md` Added; verify `go test -run Example ./...` passes
+- [x] 3.5 Verify the slice end to end: `make check`; gopls diagnostics clean; `go tool cover -func` shows every branch of `HealthCheck` covered
+- [x] 3.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `feat(core): add HealthCheck and pin container conformance`; verify with `git log -1 --stat`
 
 ## 4. Slice: documentation and end-to-end verification
 
