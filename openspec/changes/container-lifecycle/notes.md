@@ -2,12 +2,19 @@
 
 Carry-over entries. Consolidation (task group 1) decides each open entry; entries are never deleted.
 
-### Consolidation outcome (placeholder)
-- **Status:** open
+### Consolidation outcome (2026-11-23)
+- **Status:** closed: task group 1 done
 - **Target:** container-lifecycle
-- **Context:** Replaced by task 1.4 with what was refreshed and adopted.
-- **Evidence:** (none yet)
-- **Suggested action:** Run task group 1.
+- **Context:** 1.1: `origin/main` at `efe3573` (merge of PR #32, this change's plan); nothing merged or archived since planning besides this plan itself: `pluggable-error-renderer` archived (`2026-11-22`), v0.4.0 released, `scrty-integration` active (0/45, PR #31). Working branch `feat/container-lifecycle` from `efe3573`. 1.2: archived and `scrty-integration` notes read; no open entry is addressed to `container-lifecycle`. Unassigned entries touching the lifecycle were decided: core-server "Health endpoints" deferred (this change adds a Go `HealthCheck` method only, an HTTP endpoint stays out of scope, proposal "Left out"); core-server "Start's 'Serve returned because the stop closed the listener' branch is covered only by timing" and "A Start or Shutdown context whose methods panic leaves the server unable to stop" deferred, unchanged by this change (only `HealthCheck` is specified against a panicking context); every other unassigned entry is unrelated to the lifecycle and stays unassigned. Entry for `scrty-integration` added below. 1.3: design Context rechecked against the code: `Lifecycle.Start` (`internal/engine/lifecycle.go:139`), the waiting `select` and stop (`:185-203`), `serve`/`serveOn` (`:332`, `:363`), `stop`/`stopRun` (`:395`, `:412`), `Shutdown` (`:429`), `joinServe` (`:377`), `guardedListener` (`:509`), the five state constants, sentinels in `internal/errchain/errchain.go:362-375` aliased in `types.go`; all match. MODIFIED blocks re-diffed against `openspec/specs/`: unchanged since planning. "Proposed defaults to confirm at review" kept as planned. `openspec validate container-lifecycle --strict` passes. Nothing in proposal, specs, design or tasks needed refreshing.
+- **Evidence:** `git log origin/main --oneline -1`: `efe3573`; `openspec validate container-lifecycle --strict`: `Change 'container-lifecycle' is valid`.
+- **Suggested action:** none.
+
+### scrty-integration must move off the blocking Start
+- **Status:** open
+- **Target:** scrty-integration
+- **Context:** `scrty-integration`'s specs, design and tasks were written against v0.4.0's blocking `Start` (shutdown-hook stop paths "the Start context is cancelled", examples `return srv.Start(ctx)`). After this change `Start` returns once serving and the blocking contract is `Run`.
+- **Evidence:** unverified: planning documents, not code.
+- **Suggested action:** In its consolidation (task group 1), replace the blocking-`Start` stop paths and examples with `Run` or `Start`+`Wait`, and add a `Run`-context row to its hook scenarios.
 
 ### Planning decisions (2026-11-23, owner)
 - **Status:** adopted
@@ -17,7 +24,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none; recorded for consolidation.
 
 ### Proposed defaults to confirm at review
-- **Status:** open
+- **Status:** closed: confirmed unchanged at consolidation (task 1.3, 2026-11-23)
 - **Target:** container-lifecycle
 - **Context:** Chosen by default during planning, revisitable before slice 2: `Ready()` stays; `HealthCheck` returns `ErrServerNotStarted` while starting; `Wait` after a failed `Start` returns `nil` (design D4); no `RegisterAll` helper.
 - **Evidence:** unverified: planning-time defaults
