@@ -2,36 +2,12 @@
 
 ## Purpose
 
-Defines how a consumer wires a scrty security chain into a srvr server on net/http, gin or fiber v3: where the chain runs in the request pipeline, how it logs, which concerns it owns, and how it is shut down with the server.
+Defines how a consumer wires scrty security into a srvr server on net/http, gin or fiber v3 with one engine option that takes scrty's `httpsec` options: how srvr builds the chain, where it runs in the request pipeline, how it logs, which concerns it owns, and how it is shut down with the server.
 
 ## ADDED Requirements
 
-### Requirement: A bridge is built from a chain
-`security.New(chain, opts...)` SHALL return a bridge for a non-nil chain and SHALL return an error wrapping `security.ErrConfig` for a nil chain or an invalid option. Building a bridge SHALL NOT change the chain's behaviour.
-
-#### Scenario: Building the bridge
-- **Given** `<chain>` and options `<options>`
-- **When** the consumer calls `security.New`
-- **Then** it returns `<result>`
-
-##### Examples: accepted
-| chain | options | result |
-|-------|---------|--------|
-| a chain from `httpsec.New()` | (none) | a bridge |
-| a chain from `httpsec.New(httpsec.WithBasePath("/auth"))` | `WithPrincipalInLogs()` | a bridge |
-| a chain from `httpsec.New()` | `WithChallengeToken()` | a bridge |
-| a chain from `httpsec.New()` | `WithOwnChainHandlers()` | a bridge |
-| the same chain used for a second bridge | (none) | a second bridge |
-
-##### Examples: rejected
-| chain | options | result |
-|-------|---------|--------|
-| `nil` | (none) | an error wrapping `security.ErrConfig` naming `chain` |
-| a chain from `httpsec.New()` | `WithCollisionCheck(99)` | an error wrapping `security.ErrConfig` naming `CollisionCheck` |
-| a chain from `httpsec.New()` | `WithConfig(Config{CollisionCheck: "loud"})` | an error wrapping `security.ErrConfig` naming `CollisionCheck` and `loud` |
-
-### Requirement: Each engine takes its own scrty middleware
-Each engine SHALL accept the bridge only together with that engine's scrty middleware type: `func(http.Handler) http.Handler` for net/http, `gin.HandlerFunc` for gin, `fiber.Handler` for fiber v3. Middleware for another engine SHALL fail to compile. A nil bridge or middleware, or the core `srvr.WithSecurity` given to the gin or fiber constructor, SHALL fail construction.
+### Requirement: One engine option builds and wires the chain
+Each engine's security option (`security.WithSecurity`, `ginsecurity.WithSecurity`, `fibersecurity.WithSecurity`) SHALL build the chain from `chainOpts` plus srvr's logger (and on net/http srvr's error handler), and mount middleware built from that chain. It SHALL require a `ProblemNamespace`; a scrty build error, an invalid option, another engine's option or a second use SHALL fail construction.
 
 #### Scenario: Engine options
 - **Given** an engine `<engine>` constructed with `<option>`
@@ -41,20 +17,42 @@ Each engine SHALL accept the bridge only together with that engine's scrty middl
 ##### Examples: accepted
 | engine | option | result |
 |--------|--------|--------|
-| net/http | `srvr.WithSecurity(bridge, chain.Middleware())` | a server |
-| gin | `ginsrvr.WithSecurity(bridge, ginsec.Middleware(chain))` | a server |
-| fiber v3 | `fibersrvr.WithSecurity(bridge, fibersec.Middleware(chain))` | a server |
+| net/http | `srvr.WithProblemNamespace("https://errors.example/p")`, `security.WithSecurity(nil)` | a server with a chain from `httpsec.New()` |
+| net/http | `srvr.WithConfig(Config{ProblemNamespace: "https://errors.example/p"})`, `security.WithSecurity([]httpsec.Option{httpsec.WithBasePath("/auth")}, security.WithPrincipalInLogs())`, `srvr.WithErrorRenderer(R)` | a server |
+| net/http | `srvr.WithProblemNamespace("/p")`, `security.WithSecurity(nil, security.WithChallengeToken())` | a server |
+| gin | `srvr.WithProblemNamespace("/p")`, `ginsecurity.WithSecurity(nil)` | a server mounting `ginsec.Middleware(chain, ginsec.WithRefusalsRendered())` |
+| fiber v3 | `srvr.WithProblemNamespace("/p")`, `fibersecurity.WithSecurity(nil)` | a server mounting `fibersec.Middleware(chain)` |
 
 ##### Examples: rejected
 | engine | option | result |
 |--------|--------|--------|
-| net/http | `srvr.WithSecurity(nil, chain.Middleware())` | an error wrapping `srvr.ErrConfig` |
-| net/http | `srvr.WithSecurity(bridge, nil)` | an error wrapping `srvr.ErrConfig` |
-| gin | `ginsrvr.WithSecurity(bridge, nil)` | an error wrapping `srvr.ErrConfig` |
-| net/http | `srvr.WithSecurity` given twice | an error wrapping `srvr.ErrConfig` naming `WithSecurity` |
-| gin | `ginsrvr.WithSecurity(bridge, fibersec.Middleware(chain))` | a compile error |
-| gin | `srvr.WithSecurity(bridge, chain.Middleware())` | an error wrapping `srvr.ErrConfig` naming `WithSecurity` and `ginsrvr.WithSecurity` |
-| fiber v3 | `srvr.WithSecurity(bridge, chain.Middleware())` | an error wrapping `srvr.ErrConfig` naming `WithSecurity` and `fibersrvr.WithSecurity` |
+| net/http | `security.WithSecurity(nil)` with no `ProblemNamespace` | an error wrapping `srvr.ErrConfig` naming `ProblemNamespace` |
+| net/http | `srvr.WithProblemNamespace("not a uri")` | an error wrapping `srvr.ErrConfig` naming `ProblemNamespace` and `not a uri` |
+| net/http | `security.WithSecurity([]httpsec.Option{httpsec.WithErrorHandler(fn)})` | an error wrapping `security.ErrConfig` naming `WithErrorHandler`, and `httpsec.ErrConfig` in its chain |
+| gin | `ginsecurity.WithSecurity([]httpsec.Option{httpsec.WithLogger(l)})` | an error wrapping `security.ErrConfig` naming `WithLogger`, and `httpsec.ErrConfig` in its chain |
+| net/http | `security.WithSecurity([]httpsec.Option{nil})` | an error wrapping `security.ErrConfig` |
+| net/http | `security.WithSecurity(nil, security.WithCollisionCheck(99))` | an error wrapping `security.ErrConfig` naming `CollisionCheck` |
+| net/http | `security.WithSecurity(nil, security.WithConfig(Config{CollisionCheck: "loud"}))` | an error wrapping `security.ErrConfig` naming `CollisionCheck` and `loud` |
+| net/http | `security.WithSecurity` given twice | an error wrapping `srvr.ErrConfig` naming `WithSecurity` |
+| gin | `security.WithSecurity(nil)` | an error wrapping `srvr.ErrConfig` naming `security.WithSecurity` and `ginsecurity.WithSecurity` |
+| fiber v3 | `ginsecurity.WithSecurity(nil)` | an error wrapping `srvr.ErrConfig` naming `ginsecurity.WithSecurity` and `fibersecurity.WithSecurity` |
+| net/http | `fibersecurity.WithSecurity(nil)` | an error wrapping `srvr.ErrConfig` naming `fibersecurity.WithSecurity` and `security.WithSecurity` |
+
+### Requirement: The built chain is handed to the consumer
+`security.WithChainReady(fn)` SHALL call `fn` once with the built chain during server construction, before the constructor returns, so the consumer can call `PublishSignal`, `ReportCredentialChange` or `ExpiryTasks`. `fn` SHALL NOT be called when construction fails before the chain is built. A nil `fn` SHALL fail construction; a panic in `fn` SHALL fail construction with an error wrapping `security.ErrConfig` naming `WithChainReady`.
+
+#### Scenario: Chain ready callback
+- **Given** a net/http server constructed with `security.WithSecurity(<chain_opts>, security.WithChainReady(<fn>))`
+- **When** the server is constructed
+- **Then** construction returns `<result>` and `fn` is called `<calls>`
+
+##### Examples:
+| chain_opts | fn | result | calls |
+|------------|----|--------|-------|
+| `nil` | records the chain | a server | once, with a non-nil chain |
+| `[]httpsec.Option{httpsec.WithErrorHandler(fn)}` | records the chain | an error wrapping `security.ErrConfig` | never |
+| `nil` | `nil` | an error wrapping `security.ErrConfig` naming `WithChainReady` | never |
+| `nil` | panics with `"boom"` | an error wrapping `security.ErrConfig` naming `WithChainReady` | once |
 
 ### Requirement: The chain runs after recovery and before routing
 The chain SHALL run for every request, matched or not. It SHALL run inside the trace-context, access-log, observer and recovery layers and outside the router. A request the chain refuses or answers SHALL still produce exactly one access record with the request's `trace_id`.
@@ -81,7 +79,7 @@ The chain SHALL run for every request, matched or not. It SHALL run inside the t
 | net/http | allows authenticated requests | `GET /orders` with valid credentials | `200` | `http.request.completed` |
 
 #### Scenario: Chain mounted twice
-- **Given** a net/http server with `srvr.WithSecurity(bridge, chain.Middleware())` and a group that also uses `chain.Middleware()`
+- **Given** a net/http server with `security.WithSecurity(nil, security.WithChainReady(fn))` and a group that also uses the handed chain's `chain.Middleware()`
 - **When** an authenticated client sends `GET /orders`
 - **Then** the response status is `<status>`
 - **And** the chain counts `<attempts>` authentication attempts for the request
@@ -107,41 +105,23 @@ A panic raised inside the chain, including a consumer interceptor registered on 
 | gin |
 | fiber v3 |
 
-### Requirement: scrty logs through srvr's logger by default
-`bridge.ChainOptions()` SHALL return the `httpsec` options that make the chain log through srvr's logger and render refusals through the server handling the request. scrty's records SHALL then carry `trace_id`. A consumer's own `httpsec.WithLogger` or `httpsec.WithErrorHandler` SHALL take precedence when used in place of these options.
+### Requirement: scrty logs and renders through srvr
+The chain srvr builds SHALL log through srvr's logger, so scrty's records carry the request's `trace_id`. On net/http its error handler SHALL render refusals through `srvr.WriteError`, and, where `WriteError` reports false (the chain used outside a srvr request), answer `httpsec.StatusForError(err)` with an empty body. On gin and fiber srvr SHALL add no error handler: refusals reach srvr through `c.Errors` and `*fibersec.RefusalError`.
 
 #### Scenario: Chain logging and rendering
-- **Given** a net/http chain built with `<chain_options>` and wired into a server
+- **Given** a server on `<engine>` wired with security
 - **When** a request is refused and the chain writes a refusal log
-- **Then** `<outcome>`
+- **Then** the refusal record carries the request's `trace_id` and the response is a problem with status `401`
 
 ##### Examples:
-| chain_options | outcome |
-|---------------|---------|
-| `bridge.ChainOptions()...` | the refusal record is written through srvr's handler with the request's `trace_id` and the response is a problem |
-| `httpsec.WithLogger(consumerLogger)` and `httpsec.WithErrorHandler(consumerFn)` | the consumer's logger and handler are used and srvr still writes the access record |
-| `bridge.ChainOptions()...` and `httpsec.WithErrorHandler(consumerFn)` | `httpsec.New` returns an error wrapping `httpsec.ErrConfig` because the error handler is given twice |
-| (none) | the response is a bare `401` with an empty body |
-
-### Requirement: Unused chain options are reported at start
-When `bridge.ChainOptions()` was never called and `WithOwnChainHandlers()` is not set, `Start` SHALL write one `WARN` record with `msg` `server.config.warning`, `srvr.warning.code` `security_chain_options_unused` and a `srvr.warning.message` naming `ChainOptions`, then serve normally. srvr SHALL NOT guess at unrendered refusals at request time.
-
-#### Scenario: Chain options check
-- **Given** a net/http server wired with a bridge where `<setup>`
-- **When** the server starts and serves `<requests>` refused requests
-- **Then** `<count>` records with `srvr.warning.code` `security_chain_options_unused` are written
-
-##### Examples:
-| setup | requests | count |
-|-------|----------|-------|
-| `bridge.ChainOptions()` was passed to `httpsec.New` | `3` | `0` |
-| `bridge.ChainOptions()` was never called | `0` | `1` |
-| `bridge.ChainOptions()` was never called | `3` | `1` |
-| `bridge.ChainOptions()` was never called and the bridge has `WithOwnChainHandlers()` | `3` | `0` |
-| `bridge.ChainOptions()` was passed and the chain's OpenID Provider answers a bare `405` | `1` | `0` |
+| engine |
+|--------|
+| net/http |
+| gin |
+| fiber v3 |
 
 #### Scenario: Rendering outside a srvr server
-- **Given** a chain built with `bridge.ChainOptions()` used in a plain `http.Server` without srvr
+- **Given** the chain handed to `WithChainReady` mounted with `chain.Middleware()` in a plain `http.Server` without srvr
 - **When** a request is refused with `<refusal>`
 - **Then** the response is a bare `<status>` with an empty body
 
@@ -182,12 +162,12 @@ When security is wired, srvr SHALL NOT set CORS, CSRF or security headers, or re
 |--------|---------|
 | `204` | `Access-Control-Allow-Origin`, `X-Content-Type-Options` |
 
-### Requirement: The bridge is configurable by options and by config struct
-Every bridge setting SHALL be settable by its own option and through `security.WithConfig(security.Config)`. `WithConfig` SHALL set every field, a zero field meaning the default (`ChallengeMembers` nil means on; `CollisionCheck` empty means `error`, matched case-insensitively). Options SHALL apply in argument order, the later one winning.
+### Requirement: Security settings are configurable by options and by config struct
+Every srvr security setting except `WithChainReady` SHALL be settable by its own option and through `security.WithConfig(security.Config)`. `WithConfig` SHALL set every field, a zero field meaning the default (`CollisionCheck` empty means `error`, matched case-insensitively). Options SHALL apply in argument order, the later one winning.
 
 #### Scenario: Configuration sources
-- **Given** a bridge built with `<options>`
-- **When** the bridge is used by a server
+- **Given** a server wired with `security.WithSecurity(nil, <options>)`
+- **When** the server is constructed
 - **Then** the effective `<setting>` is `<effective>`
 
 ##### Examples:
@@ -198,17 +178,17 @@ Every bridge setting SHALL be settable by its own option and through `security.W
 | `WithConfig(Config{LogPrincipal: true})` | `LogPrincipal` | `true` |
 | `WithPrincipalInLogs()`, then `WithConfig(Config{})` | `LogPrincipal` | `false` |
 | `WithConfig(Config{})`, then `WithPrincipalInLogs()` | `LogPrincipal` | `true` |
-| `WithConfig(Config{})` | `ChallengeMembers` | `true` |
-| `WithConfig(Config{ChallengeMembers: ptr(false)})`, then `WithChallengeMembers(true)` | `ChallengeMembers` | `true` |
+| (none) | `ChallengeToken` | `false` |
+| `WithConfig(Config{ChallengeToken: true})`, then `WithConfig(Config{})` | `ChallengeToken` | `false` |
 | `WithConfig(Config{CollisionCheck: "WARN"})` | `CollisionCheck` | `CollisionWarn` |
 | `WithConfig(Config{CollisionCheck: "warn"})`, then `WithCollisionCheck(security.CollisionError)` | `CollisionCheck` | `CollisionError` |
-| `WithConfig(Config{OwnChainHandlers: true, ChallengeToken: true})` | `OwnChainHandlers` and `ChallengeToken` | `true` and `true` |
+| `WithConfig(Config{LogPrincipal: true, ChallengeToken: true})` | `LogPrincipal` and `ChallengeToken` | `true` and `true` |
 
 ### Requirement: Principal id is logged only by opt-in
 Access and error records SHALL NOT contain the authenticated principal's id by default. With `WithPrincipalInLogs()` they SHALL contain `enduser.id` from `identity.PrincipalFromContext`, and SHALL contain no `enduser.id` when no principal is present.
 
 #### Scenario: Principal in records
-- **Given** a bridge configured with `<config>`
+- **Given** a server wired with security configured with `<config>`
 - **When** `<caller>` sends `GET /orders`
 - **Then** the access record's `enduser.id` is `<enduser>`
 
@@ -222,7 +202,7 @@ Access and error records SHALL NOT contain the authenticated principal's id by d
 | `WithPrincipalInLogs()` | a refused client | (none) |
 
 ### Requirement: Shutdown closes the chain's background work
-The bridge SHALL register core shutdown hooks: `CloseSessionSignals` as a `srvr.BeforeDrain` hook, so long-lived signal streams end and drain can finish, and `FlushRefusalLogs` as a `srvr.AfterDrain` hook. Each runs once per server on every stop path; a never-started server, or a `Start` that fails after construction, still closes signals through the `AfterDrain` hook. `httpsec.ErrSessionSignalsDisabled` SHALL count as success; other errors SHALL be returned joined by the stop call.
+The security option SHALL register core shutdown hooks: `CloseSessionSignals` as a `srvr.BeforeDrain` hook, so long-lived signal streams end and drain can finish, and `FlushRefusalLogs` as a `srvr.AfterDrain` hook. Each runs once per server on every stop path; a never-started server, or a `Start` that fails after construction, still closes signals through the `AfterDrain` hook. `httpsec.ErrSessionSignalsDisabled` SHALL count as success; other errors SHALL be returned joined by the stop call.
 
 #### Scenario: Shutdown hooks
 - **Given** a running server wired with a chain where `<hooks>`
@@ -282,4 +262,3 @@ The server's `MaxRequestBodyBytes` SHALL apply before the chain reads a login bo
 | net/http | `2048` | `413` |
 | gin | `2048` | `413` |
 | fiber v3 | `2048` | `413` |
-| fiber v3 | `512` | `401` |

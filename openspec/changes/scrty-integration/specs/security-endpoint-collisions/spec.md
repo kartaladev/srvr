@@ -7,7 +7,7 @@ Defines how a srvr server wired with scrty detects, at start, application routes
 ## ADDED Requirements
 
 ### Requirement: Colliding routes fail start
-Through a route check registered with `srvr.WithRouteCheck`, a server wired with security SHALL compare every route from `engine.Routes` with every endpoint from `chain.Endpoints()` before binding. A route whose every match an endpoint answers first is a collision: `Start` SHALL return an error wrapping `srvr.ErrRouteConfig` naming the route, its configurer, the endpoint's `OperationID` and its `PlacedBy`.
+Through a route check registered with `srvr.WithRouteCheck`, a server wired with security SHALL compare every route from `srvr.Routes` with every endpoint from `chain.Endpoints()` before binding. A route whose every match an endpoint answers first is a collision: `Start` SHALL return an error wrapping `srvr.ErrRouteConfig` naming the route, its configurer, the endpoint's `OperationID` and its `PlacedBy`.
 
 #### Scenario: Collision outcome
 - **Given** a chain with base path `<base>` exposing `<endpoint>`
@@ -68,10 +68,10 @@ When several routes collide, `Start` SHALL report all of them in one joined erro
 | `POST /sign-in/password`, `POST /sign-out` | `2` | `POST /sign-in/password`, `POST /sign-out` |
 
 ### Requirement: Collision checking can be relaxed explicitly
-With `WithCollisionCheck(security.CollisionWarn)` the server SHALL start despite collisions and SHALL write one `server.config.warning` record with `srvr.warning.code` `security_endpoint_collision` listing every collision. With `CollisionOff` the bridge SHALL register no route check. The default SHALL be `CollisionError`, under which a collision fails `Start` and no shadowing warning is written.
+With `WithCollisionCheck(security.CollisionWarn)` the server SHALL start despite collisions and SHALL write one `server.config.warning` record with `srvr.warning.code` `security_endpoint_collision` listing every collision. With `CollisionOff` srvr SHALL register no route check. The default SHALL be `CollisionError`, under which a collision fails `Start` and no shadowing warning is written.
 
 #### Scenario: Collision modes
-- **Given** a bridge configured with `<mode>`, a route colliding with `scrty.sign-in.password` and a route `POST /sign-in/{method}` shadowed by it
+- **Given** security configured with `<mode>`, a route colliding with `scrty.sign-in.password` and a route `POST /sign-in/{method}` shadowed by it
 - **When** the server starts
 - **Then** `Start` `<start>`
 - **And** `<collision_records>` `security_endpoint_collision` and `<shadow_records>` `security_endpoint_shadowed` records are written
@@ -83,10 +83,10 @@ With `WithCollisionCheck(security.CollisionWarn)` the server SHALL start despite
 | `WithCollisionCheck(security.CollisionWarn)` | becomes ready | `1` | `1` |
 | `WithConfig(Config{CollisionCheck: "warn"})` | becomes ready | `1` | `1` |
 | `WithCollisionCheck(security.CollisionOff)` | becomes ready | `0` | `0` |
-| `WithConfig(Config{CollisionCheck: "loud"})` | does not run because `security.New` returns an error wrapping `security.ErrConfig` | `0` | `0` |
+| `WithConfig(Config{CollisionCheck: "loud"})` | does not run because server construction returns an error wrapping `security.ErrConfig` | `0` | `0` |
 
 ### Requirement: Collisions are checked on every engine
-The collision check SHALL use each engine's declared routes from `engine.Routes` (net/http patterns, gin full paths, fiber route paths, each with its configurer; no `Use` entries or fiber implicit `HEAD`) and SHALL give the same result on every engine for equivalent routes.
+The collision check SHALL use each engine's declared routes from `srvr.Routes` (net/http patterns, gin full paths, fiber route paths, each with its configurer; no `Use` entries or fiber implicit `HEAD`) and SHALL give the same result on every engine for equivalent routes.
 
 #### Scenario: Engine equivalence
 - **Given** a server on `<engine>` with route `<route>` and a chain exposing `POST /sign-in/password`
