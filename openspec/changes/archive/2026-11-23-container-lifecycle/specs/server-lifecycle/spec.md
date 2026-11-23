@@ -197,7 +197,7 @@ Every engine's server SHALL have the methods lifecycle containers detect by shap
 ## MODIFIED Requirements
 
 ### Requirement: Shutdown hooks run once on every stop path
-`WithShutdownHook(phase, fn)` SHALL run `fn` once when the server stops: `Run`'s context ending, `Shutdown`, serving failing after `Start`, or a `Start` failure after the server left its initial state (configure, route or bind failure, context already done). Only `AfterDrain` hooks run when nothing was served. `Start(nil)`, `ErrServerStarted` and `ErrServerClosed` run no hooks. `BeforeDrain` hooks run after the listener closes, in the drain budget; `AfterDrain` after draining, in `ShutdownHookTimeout`.
+`WithShutdownHook(phase, fn)` SHALL run `fn` once when the server stops: `Run`'s context ending, `Shutdown`, serving failing after `Start`, or a `Start` failure after leaving the initial state (configure, route or bind failure, context already done). Only `AfterDrain` hooks run when nothing was served. `Start(nil)`, `ErrServerStarted` and `ErrServerClosed` run no hooks. `BeforeDrain` hooks run after the listener closes, in the drain budget; `AfterDrain` after draining, in `ShutdownHookTimeout`.
 
 #### Scenario: Hook phases and order
 - **Given** a server running `Run(ctx)` with hooks `A` and `B` at `srvr.BeforeDrain`, hook `C` at `srvr.AfterDrain`, and a request in flight that needs `100ms`

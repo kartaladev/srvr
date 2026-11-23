@@ -75,7 +75,7 @@ Engine-specific options (`ginsrvr.WithGinEngine`, `fibersrvr.WithFiberConfig`) S
 | `fiber` | an option that belongs to another engine (for example `ginsrvr.WithGinEngine(hook)`) | an error wrapping `srvr.ErrConfig` naming that option |
 
 ### Requirement: Engines share one lifecycle state machine
-Every engine SHALL implement `Start(ctx)`, `Shutdown(ctx)`, `Ready()` and `Addr()` with the core's states and errors: single-use `Start`, idempotent `Shutdown`, `srvr.ErrServerStarted` and `srvr.ErrServerClosed` on misuse, readiness only after the listener is bound.
+Every engine SHALL implement `Start(ctx)`, `Run(ctx)`, `Wait()`, `HealthCheck(ctx)`, `Shutdown(ctx)`, `Ready()` and `Addr()` with the core's states and errors: `Start` returns once serving, single-use `Start` and `Run`, idempotent `Shutdown`, `srvr.ErrServerStarted`, `srvr.ErrServerClosed` and `srvr.ErrServerNotStarted` on misuse, readiness only after the listener is bound.
 
 #### Scenario: Lifecycle misuse on every engine
 - **Given** a `<engine>` server that `<state>`
@@ -87,13 +87,19 @@ Every engine SHALL implement `Start(ctx)`, `Shutdown(ctx)`, `Ready()` and `Addr(
 |--------|-------|------|--------|
 | `gin` | is running | `Start(ctx)` | an error matching `srvr.ErrServerStarted` |
 | `fiber` | is running | `Start(ctx)` | an error matching `srvr.ErrServerStarted` |
+| `gin` | is running | `Run(ctx)` | an error matching `srvr.ErrServerStarted` |
+| `fiber` | is running | `Run(ctx)` | an error matching `srvr.ErrServerStarted` |
 | `gin` | was never started | `Shutdown(ctx)` | `nil` |
 | `fiber` | was never started | `Shutdown(ctx)` | `nil` |
+| `gin` | was never started | `Wait()` | an error matching `srvr.ErrServerNotStarted` |
+| `fiber` | was never started | `HealthCheck(ctx)` | an error matching `srvr.ErrServerNotStarted` |
 | `gin` | has stopped | `Start(ctx)` | an error matching `srvr.ErrServerClosed` |
 | `fiber` | has stopped | `Start(ctx)` | an error matching `srvr.ErrServerClosed` |
+| `gin` | has stopped | `HealthCheck(ctx)` | an error matching `srvr.ErrServerClosed` |
 | `gin` | is running | `Register(c)` | an error matching `srvr.ErrServerStarted` |
 | `fiber` | has stopped | `Register(c)` | an error matching `srvr.ErrServerClosed` |
 | `fiber` | is running | `Shutdown(nil)` | an error wrapping `srvr.ErrConfig` and the server keeps serving |
+| `gin` | is running | `HealthCheck(nil)` | an error wrapping `srvr.ErrConfig` |
 
 ### Requirement: Shutdown hooks run on every engine's stop paths
 Every engine SHALL run the core's `srvr.WithShutdownHook` hooks exactly as net/http does: `BeforeDrain` hooks after accepting stops and before draining, `AfterDrain` hooks after draining, once per server on every stop path. A `Start` failure after the server left its initial state SHALL run only `AfterDrain` hooks; `Start(nil)`, `srvr.ErrServerStarted` and `srvr.ErrServerClosed` SHALL run none.
@@ -106,8 +112,10 @@ Every engine SHALL run the core's `srvr.WithShutdownHook` hooks exactly as net/h
 ##### Examples:
 | engine | stop | calls |
 |--------|------|-------|
-| `gin` | the `Start` context is cancelled while serving | `BeforeDrain`, `AfterDrain` |
-| `fiber` | the `Start` context is cancelled while serving | `BeforeDrain`, `AfterDrain` |
+| `gin` | the `Run` context is cancelled while serving | `BeforeDrain`, `AfterDrain` |
+| `fiber` | the `Run` context is cancelled while serving | `BeforeDrain`, `AfterDrain` |
+| `gin` | the `Start` context is cancelled after `Start` returned, then `Shutdown(ctx)` | `BeforeDrain`, `AfterDrain` (from `Shutdown` only) |
+| `fiber` | the passed listener's `Accept` returns a permanent error after `Start` returned | `BeforeDrain`, `AfterDrain` |
 | `gin` | `Shutdown(ctx)` is called while serving, then again | `BeforeDrain`, `AfterDrain` |
 | `fiber` | `Shutdown(ctx)` is called while serving, then again | `BeforeDrain`, `AfterDrain` |
 | `fiber` | `Shutdown(ctx)` with a `50ms` deadline while a request needs `5s` | `BeforeDrain`, `AfterDrain` |
@@ -118,8 +126,6 @@ Every engine SHALL run the core's `srvr.WithShutdownHook` hooks exactly as net/h
 | `fiber` | `Start` fails because a route check returns an error | `AfterDrain` |
 | `gin` | `Start(nil)` is called, then `Shutdown(ctx)` | `AfterDrain` (from `Shutdown` only) |
 | `fiber` | a second `Start` returns `srvr.ErrServerStarted`, then the first is stopped by `Shutdown(ctx)` | `BeforeDrain`, `AfterDrain` |
-| `gin` | the `Start` context is cancelled while serving and the `AfterDrain` hook calls `srv.Shutdown(context.Background())` | `BeforeDrain`, `AfterDrain`; the hook's `Shutdown` returns `nil` after the stop finished, with no deadlock |
-| `fiber` | the `Start` context is cancelled while serving and the `AfterDrain` hook calls `srv.Shutdown(context.Background())` | `BeforeDrain`, `AfterDrain`; the hook's `Shutdown` returns `nil` after the stop finished, with no deadlock |
 
 ### Requirement: Consumer faults are contained on every engine
 Every engine SHALL contain faulty consumer code exactly as the net/http engine does, reusing the core's guards: consumer values are formatted without panicking, cyclic error chains reaching srvr get the safe `500` problem, failing log handlers and listeners never affect responses or the lifecycle, and no srvr lock is held while consumer code runs, so it may call the server's own methods.
