@@ -38,7 +38,7 @@ func newServer(t *testing.T, opts ...srvr.Option) *srvr.Server {
 	return srv
 }
 
-// waitReady waits until srv is ready, failing the test when Start
+// waitReady waits until srv is ready, failing the test when Run
 // returns first or readiness takes too long.
 func waitReady(t *testing.T, srv *srvr.Server, done <-chan error) {
 	t.Helper()
@@ -46,13 +46,13 @@ func waitReady(t *testing.T, srv *srvr.Server, done <-chan error) {
 	select {
 	case <-srv.Ready():
 	case err := <-done:
-		t.Fatalf("Start returned before readiness: %v", err)
+		t.Fatalf("Run returned before readiness: %v", err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not become ready")
 	}
 }
 
-// startServer starts srv in the background, waits until it is ready, stops
+// startServer runs srv in the background, waits until it is ready, stops
 // it when the test ends and returns its base URL.
 func startServer(t *testing.T, srv *srvr.Server) string {
 	t.Helper()
@@ -63,17 +63,17 @@ func startServer(t *testing.T, srv *srvr.Server) string {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must outlive the test body; the cleanup cancels it
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	t.Cleanup(func() {
 		cancel()
 		select {
 		case err := <-done:
 			if err != nil {
-				t.Errorf("Start = %v at cleanup", err)
+				t.Errorf("Run = %v at cleanup", err)
 			}
 		case <-time.After(10 * time.Second):
-			t.Error("Start did not return at cleanup")
+			t.Error("Run did not return at cleanup")
 		}
 	})
 
@@ -194,24 +194,12 @@ func workRoute(d time.Duration, started chan<- struct{}, release <-chan struct{}
 	}
 }
 
-// startBackground starts srv with a background context and returns the
-// channel Start's result arrives on.
-func startBackground(t *testing.T, srv *srvr.Server) <-chan error {
+// runBackground runs srv with a background context, waits until it is
+// ready and returns the channel Run's result arrives on.
+func runBackground(t *testing.T, srv *srvr.Server) <-chan error {
 	t.Helper()
 
-	return startWith(context.Background(), t, srv) //nolint:usetesting // the server may outlive the test body; callers stop it themselves
-}
-
-// startWith starts srv with ctx, waits until it is ready and returns the
-// channel Start's result arrives on.
-func startWith(ctx context.Context, t *testing.T, srv *srvr.Server) <-chan error {
-	t.Helper()
-
-	done := make(chan error, 1)
-	go func() { done <- recoverPanic(func() error { return srv.Start(ctx) }) }()
-	waitReady(t, srv, done)
-
-	return done
+	return runWith(context.Background(), t, srv) //nolint:usetesting // the server may outlive the test body; callers stop it themselves
 }
 
 func mustNil(t *testing.T, err error) {
@@ -320,6 +308,18 @@ func recoverPanic(fn func() error) (err error) {
 	}()
 
 	return fn()
+}
+
+// runWith runs srv with ctx in the background, waits until it is ready and
+// returns the channel Run's result arrives on.
+func runWith(ctx context.Context, t *testing.T, srv *srvr.Server) <-chan error {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() { done <- recoverPanic(func() error { return srv.Run(ctx) }) }()
+	waitReady(t, srv, done)
+
+	return done
 }
 
 // shutdownBounded calls srv.Shutdown, a panic returned as an error

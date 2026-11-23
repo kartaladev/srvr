@@ -67,7 +67,7 @@ func startLifecycle(t *testing.T, l *engine.Lifecycle[int], runner engine.Runner
 	done := make(chan error, 1)
 
 	go func() {
-		done <- l.Start(ctx, func([]int) (engine.Runner, engine.Routes, error) { return runner, nil, nil })
+		done <- l.Run(ctx, func([]int) (engine.Runner, engine.Routes, error) { return runner, nil, nil })
 	}()
 
 	select {
@@ -277,7 +277,7 @@ func TestConfigWarning(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(ctx) }()
+		go func() { done <- srv.Run(ctx) }()
 		<-srv.Ready()
 		cancel()
 		if err := <-done; err != nil {

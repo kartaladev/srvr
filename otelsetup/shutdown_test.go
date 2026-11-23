@@ -198,7 +198,7 @@ func TestShutdownHook_NeverServed(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 
-		go func() { done <- srv.Start(ctx) }()
+		go func() { done <- srv.Run(ctx) }()
 		<-srv.Ready()
 
 		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {

@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"testing"
+	"time"
 
 	"github.com/kartaladev/srvr"
 )
@@ -38,8 +40,70 @@ func runQuickStart() error {
 		return err
 	}
 
-	// Start serves until SIGINT or SIGTERM, then drains in-flight requests.
-	return srv.Start(ctx)
+	// Run serves until SIGINT or SIGTERM, then drains in-flight requests.
+	return srv.Run(ctx)
+}
+
+// runManually is the Start, Wait and Shutdown snippet of "Running under a
+// lifecycle container" in README.md.
+func runManually(ctx context.Context, srv *srvr.Server) error {
+	if err := srv.Start(ctx); err != nil { // returns once serving; ctx bounds startup only
+		return err
+	}
+
+	served := make(chan error, 1)
+	go func() { served <- srv.Wait() }() // ends when the server stops on its own too
+
+	select {
+	case err := <-served: // serving failed: the server already stopped in order
+		return err
+	case <-ctx.Done():
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(stopCtx); err != nil {
+		return err
+	}
+
+	return <-served // the serve failure joined with failing shutdown hooks, or nil
+}
+
+// TestReadme_RunManually_ServeFailure: runManually returns the serve
+// failure without waiting for its context.
+func TestReadme_RunManually_ServeFailure(t *testing.T) {
+	t.Parallel()
+
+	srv, err := srvr.New(srvr.WithListener(errListener{listen(t)}), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = bounded(t, "runManually did not return on the serve failure", func() error { return runManually(t.Context(), srv) })
+	if !errors.Is(err, errAccept) {
+		t.Fatalf("runManually = %v, want the accept error", err)
+	}
+}
+
+// TestReadme_RunManually runs runManually until its context is cancelled.
+func TestReadme_RunManually(t *testing.T) {
+	t.Parallel()
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- runManually(ctx, srv) }()
+	<-srv.Ready()
+	cancel()
+
+	if err := receive(t, done, "runManually did not return"); err != nil {
+		t.Fatalf("runManually = %v, want nil", err)
+	}
 }
 
 // errQuotaExceeded is the application error of the README's renderers.
@@ -113,7 +177,7 @@ func Example_customErrorRendering() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
-		go func() { done <- srv.Start(ctx) }()
+		go func() { done <- srv.Run(ctx) }()
 		<-srv.Ready()
 
 		for _, path := range []string{"/quota", "/missing"} {

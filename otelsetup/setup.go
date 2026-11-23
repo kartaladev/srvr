@@ -304,13 +304,14 @@ func (s *Setup) stopListener(ctx context.Context) error {
 }
 
 // ShutdownHook returns a srvr option registering [Setup.Shutdown] as a
-// srvr.AfterDrain shutdown hook: it runs once after the drain on every
-// stop path of the server (Start's context ending, Shutdown, Shutdown of a
-// server that never started, and every Start failure after the server
-// left its initial state), within srvr's ShutdownHookTimeout (default 5s)
-// and FlushTimeout. A hook registered before it that blocks past that
-// budget leaves it a spent context, so register it first when other
-// AfterDrain hooks may be slow. Calling Shutdown again yourself is safe.
+// srvr.AfterDrain shutdown hook: it runs once after the drain on every stop
+// path of the server (Run's context ending, Shutdown, a serve failure after
+// Start, Shutdown of a server that never started, and every Start failure
+// after the server left its initial state), within srvr's
+// ShutdownHookTimeout (default 5s) and FlushTimeout. A hook registered
+// before it that blocks past that budget leaves it a spent context, so
+// register it first when other AfterDrain hooks may be slow. Calling
+// Shutdown again yourself is safe.
 func (s *Setup) ShutdownHook() srvr.Option {
 	return srvr.WithShutdownHook(srvr.AfterDrain, s.Shutdown)
 }

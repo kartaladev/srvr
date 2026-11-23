@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -404,8 +405,22 @@ func TestLifecycleRecords(t *testing.T) {
 			t.Helper()
 			srv, err := srvr.New(append(opts, srvr.WithListener(&panicListener{Listener: listen(t), acceptPanic: "accept"}))...)
 			mustNil(t, err)
-			if err := startBounded(t.Context(), t, srv); err == nil {
-				t.Fatal("Start = nil")
+			if err := startBounded(t.Context(), t, srv); err != nil {
+				t.Fatalf("Start = %v", err)
+			}
+			if err := receive(t, waitAsync(srv), "Wait did not return"); err == nil {
+				t.Fatal("Wait = nil")
+			}
+		}},
+		{"serving fails after Start returned because the passed listener's Accept returns a permanent error", "server.failed", "ERROR", "exception.message", func(t *testing.T, opts []srvr.Option) {
+			t.Helper()
+			ln := newFaultListener(t, func() (net.Conn, error) { return nil, errAccept })
+			srv, err := srvr.New(append(opts, srvr.WithListener(ln))...)
+			mustNil(t, err)
+			mustNil(t, startBounded(t.Context(), t, srv))
+			ln.fail(t)
+			if err := receive(t, waitAsync(srv), "Wait did not return"); !errors.Is(err, errAccept) {
+				t.Fatalf("Wait = %v", err)
 			}
 		}},
 		{"the drain deadline passes", "server.stopped", "WARN", "srvr.drain.forced", func(t *testing.T, opts []srvr.Option) {
@@ -414,7 +429,7 @@ func TestLifecycleRecords(t *testing.T) {
 			t.Cleanup(func() { close(release) })
 			srv := newServer(t, opts...)
 			mustNil(t, srv.Register(workRoute(time.Hour, started, release)))
-			done := startBackground(t, srv)
+			done := runBackground(t, srv)
 			status := inFlight("http://" + srv.Addr() + "/work")
 			<-started
 			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
@@ -457,17 +472,17 @@ func TestLifecycleRecords(t *testing.T) {
 	}
 }
 
-// stopByContext starts a server with opts and stops it by cancelling Start.
+// stopByContext runs a server with opts and stops it by cancelling Run.
 func stopByContext(t *testing.T, opts []srvr.Option) {
 	t.Helper()
 
 	srv, err := srvr.New(append(opts, srvr.WithAddr("127.0.0.1:0"))...)
 	mustNil(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
-	done := startWith(ctx, t, srv)
+	done := runWith(ctx, t, srv)
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, srvr.ErrShutdownHook) {
-		t.Fatalf("Start = %v", err)
+		t.Fatalf("Run = %v", err)
 	}
 }
 

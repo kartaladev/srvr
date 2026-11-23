@@ -50,8 +50,8 @@ type Config struct {
 	// exhaust memory. Raise it for uploads; negative disables it, which
 	// loosens a safety default.
 	MaxRequestBodyBytes int64 `json:"max_request_body_bytes" yaml:"max_request_body_bytes" env:"MAX_REQUEST_BODY_BYTES"`
-	// ShutdownTimeout bounds draining in-flight requests when Start's
-	// context ends. Default 15s, inside Kubernetes' 30s termination grace
+	// ShutdownTimeout bounds draining in-flight requests on every stop
+	// path: Run's context ending, Shutdown and a serve failure. Default 15s, inside Kubernetes' 30s termination grace
 	// period with room for the shutdown hooks. It cannot be disabled, so a
 	// stuck request never blocks a stop forever.
 	ShutdownTimeout time.Duration `json:"shutdown_timeout" yaml:"shutdown_timeout" env:"SHUTDOWN_TIMEOUT"`

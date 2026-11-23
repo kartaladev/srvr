@@ -127,7 +127,7 @@ func (l *panicListener) Close() error {
 func shutdownWhileRunning(t *testing.T, srv *srvr.Server) error {
 	t.Helper()
 
-	done := startBackground(t, srv)
+	done := runBackground(t, srv)
 	err := shutdownBounded(t, srv)
 	if startErr := receive(t, done, "Start did not return"); startErr != nil {
 		t.Errorf("Start = %s, want nil", safeText(startErr))
@@ -142,7 +142,7 @@ func cancelWhileRunning(t *testing.T, srv *srvr.Server) error {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(t.Context())
-	done := startWith(ctx, t, srv)
+	done := runWith(ctx, t, srv)
 	cancel()
 
 	return receive(t, done, "Start did not return")
@@ -177,7 +177,7 @@ func TestListener_AcceptPanics(t *testing.T) {
 			mustNil(t, err)
 			mustNil(t, srv.Register(okRoute("/x")))
 
-			done := startBackground(t, srv)
+			done := runBackground(t, srv)
 			if tt.accepted > 0 {
 				if got := get(t, "http://"+addr+"/x").status; got != http.StatusOK {
 					t.Fatalf("GET /x = %d, want 200", got)
@@ -368,7 +368,7 @@ func TestListenerOwnership(t *testing.T) {
 			call: func(t *testing.T, srv *srvr.Server) error {
 				t.Helper()
 				ctx, stop := context.WithCancel(t.Context())
-				done := startWith(ctx, t, srv)
+				done := runWith(ctx, t, srv)
 				stop()
 
 				return receive(t, done, "Start did not return after its context was cancelled")

@@ -250,7 +250,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- srv.Start(t.Context()) }()
+	go func() { done <- srv.Run(t.Context()) }()
 	waitReady(t, srv, done)
 
 	res := do(t, http.MethodPost, "http://"+srv.Addr()+"/orders", nil, nil)

@@ -44,7 +44,7 @@ func Example() {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	res, err := http.Get("http://" + srv.Addr() + "/users/42")
@@ -112,7 +112,7 @@ func Example_tracing() {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 	<-srv.Ready()
 
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+srv.Addr()+"/users/42", http.NoBody)

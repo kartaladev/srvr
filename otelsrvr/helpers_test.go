@@ -66,7 +66,7 @@ func startServing(ctx context.Context, t *testing.T, conf configFunc, opts ...sr
 
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	select {
 	case <-srv.Ready():

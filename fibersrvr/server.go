@@ -183,22 +183,36 @@ func (s *Server) Ready() <-chan struct{} { return s.lc.Ready() }
 // string before.
 func (s *Server) Addr() string { return s.lc.Addr() }
 
-// Start configures the routes, binds the listener, closes [Server.Ready]
-// and serves until ctx is done or [Server.Shutdown] is called, then drains
-// in-flight requests for at most ShutdownTimeout. It follows
-// srvr.Server.Start in every other respect.
-func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Runner, engine.Routes, error) {
-		routes, err := s.configure(configurers)
-		if err != nil {
-			return nil, nil, err
-		}
+// Start configures the routes, runs the route checks, binds the listener,
+// closes [Server.Ready] and returns nil while the server keeps serving; ctx
+// bounds startup only. It follows srvr.Server.Start in every other respect.
+func (s *Server) Start(ctx context.Context) error { return s.lc.Start(ctx, s.prepare) }
 
-		r := &runner{app: s.app, cancelBase: s.cancelBase, conns: &tracker{open: map[net.Conn]struct{}{}}}
-		s.serving.Store(r)
+// Run starts the server as [Server.Start] does and serves until ctx is
+// done, [Server.Shutdown] is called or serving fails, then stops it, as
+// srvr.Server.Run does. It blocks until the server stops: use Start, not
+// Run, as a lifecycle container's starter.
+func (s *Server) Run(ctx context.Context) error { return s.lc.Run(ctx, s.prepare) }
 
-		return r, routes, nil
-	})
+// Wait blocks until a started server has stopped and returns how serving
+// ended, as srvr.Server.Wait does. Never call it from a shutdown hook.
+func (s *Server) Wait() error { return s.lc.Wait() }
+
+// HealthCheck returns nil while the server is serving and an error
+// otherwise, as srvr.Server.HealthCheck does.
+func (s *Server) HealthCheck(ctx context.Context) error { return s.lc.HealthCheck(ctx) }
+
+// prepare is the configure phase of the fiber engine.
+func (s *Server) prepare(configurers []srvr.RouteConfigurer[fiber.Router]) (engine.Runner, engine.Routes, error) {
+	routes, err := s.configure(configurers)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	r := &runner{app: s.app, cancelBase: s.cancelBase, conns: &tracker{open: map[net.Conn]struct{}{}}}
+	s.serving.Store(r)
+
+	return r, routes, nil
 }
 
 // Shutdown stops the server gracefully, as srvr.Server.Shutdown does. When

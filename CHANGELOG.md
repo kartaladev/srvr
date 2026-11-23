@@ -6,6 +6,44 @@ once tagged.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** `Start(ctx)` on every engine (`srvr.Server`, `ginsrvr.Server`, `fibersrvr.Server`)
+  returns once the server is serving instead of blocking until it stops, so lifecycle containers
+  can run a server as a starter. `ctx` bounds startup only: cancelling it after `Start` returned no
+  longer stops the server. Code that relied on `Start` blocking moves to the new `Run`, which keeps
+  the old contract (same results, hooks and records):
+
+  ```go
+  // before (v0.4.0)
+  return srv.Start(ctx)
+  // after
+  return srv.Run(ctx)
+  ```
+
+- A serve failure after `Start` returned (for example a `WithListener` listener whose `Accept`
+  fails) stops the server in order, writes `server.failed` and is returned by `Wait`. On fiber, a
+  serve loop that ends without an error although nobody stopped the server is now reported as an
+  error wrapping `srvr.ErrServerClosed` instead of a silent normal stop. `srvr.log.schema` stays
+  `1`.
+
+### Added
+
+- `Run(ctx)` on every engine: `Start`, then serve until `ctx` is done, `Shutdown` is called or
+  serving fails, then stop gracefully. It blocks; use `Start` for a container's starter.
+- `Wait()` on every engine: blocks until a started server has stopped and returns the serve
+  failure joined with shutdown-hook errors, or `nil`. Never call it from a shutdown hook.
+- `srvr.ErrServerNotStarted`, returned by `Wait` on a server that was never started.
+- `HealthCheck(ctx)` on every engine: `nil` while the server is serving; an error matching
+  `srvr.ErrServerNotStarted` before `Start` returned, or `srvr.ErrServerClosed` once the stop
+  began (also wrapping the serve failure). It reads the state only, never blocks or calls `ctx`,
+  and is a Go method, not an HTTP endpoint, so nothing reaches clients. Every engine's server now
+  has the `Start`/`Shutdown`/`HealthCheck` method shapes lifecycle containers detect; srvr imports
+  no container.
+- README section "Running under a lifecycle container" (manual `Start`/`Shutdown`/`Wait`, and
+  registering a server and its route configurers in doger as a starter), and `ExampleServer_Start`
+  and `ExampleServer_Run` on every engine.
+
 ## [v0.4.0] - 2026-11-22
 
 ### Added

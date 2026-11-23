@@ -46,7 +46,7 @@ func TestShutdown_Drain(t *testing.T) {
 			if err := srv.Register(workRoute(tt.work, started, release)); err != nil {
 				t.Fatal(err)
 			}
-			done := startBackground(t, srv)
+			done := runBackground(t, srv)
 
 			var status <-chan int
 			if tt.work > 0 {
@@ -95,7 +95,7 @@ func TestShutdown_Misuse(t *testing.T) {
 			state: "was already shut down",
 			shutdown: func(t *testing.T, srv *srvr.Server) error {
 				t.Helper()
-				done := startBackground(t, srv)
+				done := runBackground(t, srv)
 				if err := srv.Shutdown(t.Context()); err != nil {
 					t.Fatal(err)
 				}
@@ -112,7 +112,7 @@ func TestShutdown_Misuse(t *testing.T) {
 				if err := srv.Register(workRoute(time.Hour, started, release)); err != nil {
 					t.Fatal(err)
 				}
-				done := startBackground(t, srv)
+				done := runBackground(t, srv)
 				status := inFlight("http://" + srv.Addr() + "/work")
 				<-started
 
@@ -194,7 +194,7 @@ func TestShutdown_DuringContextStop(t *testing.T) {
 		return nil
 	}))
 	ctx, stop := context.WithCancel(t.Context())
-	done := startWith(ctx, t, srv)
+	done := runWith(ctx, t, srv)
 
 	stop()
 	receive(t, inHook, "the BeforeDrain hook did not run")
@@ -290,7 +290,7 @@ func TestShutdownHooks_Order(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
-	done := startWith(ctx, t, srv)
+	done := runWith(ctx, t, srv)
 	addr.Store(srv.Addr())
 
 	status := inFlight("http://" + srv.Addr() + "/work")
@@ -298,15 +298,15 @@ func TestShutdownHooks_Order(t *testing.T) {
 	cancel()
 
 	if err := <-done; err != nil {
-		t.Fatalf("Start = %v", err)
+		t.Fatalf("Run = %v", err)
 	}
-	rec.add("Start returned nil")
+	rec.add("Run returned nil")
 
 	if got := <-status; got != http.StatusOK {
 		t.Fatalf("in-flight = %d", got)
 	}
 
-	want := []string{"new connections refused", "A", "B", "in-flight 200", "C", "Start returned nil"}
+	want := []string{"new connections refused", "A", "B", "in-flight 200", "C", "Run returned nil"}
 	if got := rec.list(); !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
@@ -333,43 +333,68 @@ func TestShutdownHooks(t *testing.T) {
 		before, after int32
 	}{
 		{
-			name: "running, Start context cancelled",
+			name: "is running inside Run, the Run context is cancelled",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				ctx, cancel := context.WithCancel(t.Context())
-				done := startWith(ctx, t, srv)
+				done := runWith(ctx, t, srv)
 				cancel()
 				mustNil(t, <-done)
 			},
 			before: 1, after: 1,
 		},
 		{
-			name: "running, Start context deadline passes",
+			name: "is running inside Run, the Run context deadline passes",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 				defer cancel()
-				done := startWith(ctx, t, srv)
+				done := runWith(ctx, t, srv)
 				mustNil(t, <-done)
 			},
 			before: 1, after: 1,
 		},
 		{
-			name: "running, Shutdown",
+			name: "is running after Start, Shutdown",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
-				done := startBackground(t, srv)
+				mustNil(t, startBounded(t.Context(), t, srv))
 				mustNil(t, srv.Shutdown(t.Context()))
-				mustNil(t, <-done)
 			},
 			before: 1, after: 1,
 		},
 		{
-			name: "running, Shutdown twice then Start context cancelled",
+			name: "is running after Start, the Start context is cancelled, counted 100ms later",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				ctx, cancel := context.WithCancel(t.Context())
-				done := startWith(ctx, t, srv)
+				startReturned(ctx, t, srv) // its cleanup shuts down after the counts are read
+				cancel()
+				time.Sleep(100 * time.Millisecond)
+			},
+			before: 0, after: 0,
+		},
+		{
+			name: "is running after Start, the passed listener's Accept returns a permanent error",
+			trigger: func(t *testing.T, _ *srvr.Server, opts []srvr.Option) {
+				t.Helper()
+				ln := newFaultListener(t, func() (net.Conn, error) { return nil, errAccept })
+				srv, err := srvr.New(append(opts, srvr.WithListener(ln))...)
+				mustNil(t, err)
+				mustNil(t, startBounded(t.Context(), t, srv))
+				ln.fail(t)
+				if err := receive(t, waitAsync(srv), "Wait did not return"); !errors.Is(err, errAccept) {
+					t.Fatalf("Wait = %v, want the accept error", err)
+				}
+			},
+			before: 1, after: 1,
+		},
+		{
+			name: "is running inside Run, Shutdown twice then the Run context is cancelled",
+			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
+				t.Helper()
+				ctx, cancel := context.WithCancel(t.Context())
+				done := runWith(ctx, t, srv)
 				mustNil(t, srv.Shutdown(t.Context()))
 				mustNil(t, srv.Shutdown(t.Context()))
 				cancel()
@@ -378,11 +403,11 @@ func TestShutdownHooks(t *testing.T) {
 			before: 1, after: 1,
 		},
 		{
-			name: "running, Shutdown and cancellation concurrently",
+			name: "is running inside Run, Shutdown and Run context cancellation concurrently",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				ctx, cancel := context.WithCancel(t.Context())
-				done := startWith(ctx, t, srv)
+				done := runWith(ctx, t, srv)
 				var wg sync.WaitGroup
 				wg.Go(func() { _ = srv.Shutdown(t.Context()) })
 				wg.Go(cancel)
@@ -461,7 +486,7 @@ func TestShutdownHooks(t *testing.T) {
 			before: 0, after: 0,
 		},
 		{
-			name: "running, Start again returns ErrServerStarted",
+			name: "is running after Start, Start again returns ErrServerStarted",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				startServer(t, srv)
@@ -472,11 +497,11 @@ func TestShutdownHooks(t *testing.T) {
 			before: 0, after: 0,
 		},
 		{
-			name: "stopped by its Start context, Start again returns ErrServerClosed",
+			name: "was stopped by cancelling its Run context, Start again returns ErrServerClosed",
 			trigger: func(t *testing.T, srv *srvr.Server, _ []srvr.Option) {
 				t.Helper()
 				ctx, cancel := context.WithCancel(t.Context())
-				done := startWith(ctx, t, srv)
+				done := runWith(ctx, t, srv)
 				cancel()
 				mustNil(t, <-done)
 				if err := srv.Start(t.Context()); err == nil {
@@ -574,7 +599,7 @@ func TestShutdownHooks_Faulty(t *testing.T) {
 			srv := newServer(t, opts...)
 
 			ctx, cancel := context.WithCancel(t.Context())
-			done := startWith(ctx, t, srv)
+			done := runWith(ctx, t, srv)
 
 			cancel()
 
@@ -651,7 +676,7 @@ func TestShutdownHooks_FaultyDuringShutdown(t *testing.T) {
 			if err := srv.Register(workRoute(tt.work, started, release)); err != nil {
 				t.Fatal(err)
 			}
-			done := startBackground(t, srv)
+			done := runBackground(t, srv)
 			status := inFlight("http://" + srv.Addr() + "/work")
 			<-started
 
@@ -688,7 +713,7 @@ func TestShutdownHooks_Blocking(t *testing.T) {
 		)
 
 		ctx, cancel := context.WithCancel(t.Context())
-		done := startWith(ctx, t, srv)
+		done := runWith(ctx, t, srv)
 
 		begin := time.Now()
 		cancel()
@@ -719,7 +744,7 @@ func TestShutdownHooks_Blocking(t *testing.T) {
 		)
 
 		ctx, cancel := context.WithCancel(t.Context())
-		done := startWith(ctx, t, srv)
+		done := runWith(ctx, t, srv)
 
 		begin := time.Now()
 		cancel()
@@ -786,7 +811,7 @@ func TestShutdown_HostileContext(t *testing.T) {
 			t.Cleanup(func() { close(block) })
 
 			srv := newServer(t, srvr.WithShutdownHook(srvr.BeforeDrain, func(context.Context) error { <-block; return nil }))
-			startWith(context.Background(), t, srv) //nolint:usetesting // Start is never awaited: it may run past the test body until the cleanup releases the hook
+			runWith(context.Background(), t, srv) //nolint:usetesting // Start is never awaited: it may run past the test body until the cleanup releases the hook
 
 			ctx := newHostileContext(t, 50*time.Millisecond, tt.err)
 			err := bounded(t, "Shutdown did not return", func() error { return recoverPanic(func() error { return srv.Shutdown(ctx) }) })
@@ -866,7 +891,7 @@ func TestGoexit(t *testing.T) {
 // never touches a *testing.T: it runs on a goroutine of its own.
 func startThenShutdown(srv *srvr.Server) error {
 	started := make(chan error, 1)
-	go func() { started <- srv.Start(context.Background()) }()
+	go func() { started <- srv.Run(context.Background()) }()
 
 	select {
 	case <-srv.Ready():
@@ -910,7 +935,7 @@ func TestShutdown_StuckListener(t *testing.T) {
 			mustNil(t, srv.Register(okRoute("/ok")))
 
 			started := make(chan error, 1)
-			go func() { started <- recoverPanic(func() error { return srv.Start(context.Background()) }) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
+			go func() { started <- recoverPanic(func() error { return srv.Run(context.Background()) }) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
 			receive(t, stuck.accepting, "Serve never called Accept")
 
 			shutdown := func() <-chan error {

@@ -1,6 +1,7 @@
 package ginsrvr_test
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,7 +56,7 @@ func startOK(t *testing.T, srv *ginsrvr.Server) {
 		t.Fatal(err)
 	}
 
-	if got := do(t, http.MethodGet, start(t, srv)+"/ok", nil, nil).status; got != http.StatusOK {
+	if got := do(t, http.MethodGet, startReturned(context.Background(), t, srv)+"/ok", nil, nil).status; got != http.StatusOK { //nolint:usetesting // the server outlives the context; the cleanup shuts it down
 		t.Fatalf("GET /ok = %d", got)
 	}
 }
@@ -120,9 +121,31 @@ func TestLifecycle_Goroutines(t *testing.T) {
 	tests := []struct {
 		name string
 		leak string // the function a "yes" row's report names; "" for "no"
+		run  func(t *testing.T, srv *ginsrvr.Server)
 	}{
-		{"one route, Start, GET /ok with keep-alive, Shutdown", ""},
-		{"one route, Start and never Shutdown", serveGoroutine},
+		{"one route, Start, GET /ok with keep-alive, Shutdown", "", func(t *testing.T, srv *ginsrvr.Server) {
+			t.Helper()
+			startOK(t, srv)
+			if err := srv.Shutdown(t.Context()); err != nil {
+				t.Fatalf("Shutdown = %v", err)
+			}
+		}},
+		{"one route, Run with a context cancelled after it is running", "", func(t *testing.T, srv *ginsrvr.Server) {
+			t.Helper()
+			mustNil(t, srv.Register(routes(func(r *gin.RouterGroup) { r.GET("/ok", ok) })))
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- srv.Run(ctx) }()
+			<-srv.Ready()
+			cancel()
+			if err := within(t, containerWait, "Run did not return", func() error { return <-done }); err != nil {
+				t.Fatalf("Run = %v", err)
+			}
+		}},
+		{"one route, Start and never Shutdown", serveGoroutine, func(t *testing.T, srv *ginsrvr.Server) {
+			t.Helper()
+			startOK(t, srv) // its cleanup stops srv after the check
+		}},
 	}
 
 	for _, tt := range tests {
@@ -131,17 +154,14 @@ func TestLifecycle_Goroutines(t *testing.T) {
 				checkGoroutines(t)
 
 				srv, _ := newServer(t)
-				startOK(t, srv)
-				if err := srv.Shutdown(t.Context()); err != nil {
-					t.Fatalf("Shutdown = %v", err)
-				}
+				tt.run(t, srv)
 
 				return
 			}
 
 			before := goleak.IgnoreCurrent()
 			srv, _ := newServer(t)
-			startOK(t, srv) // its cleanup stops srv after the check
+			tt.run(t, srv)
 
 			if err := findLeaks(before); err == nil || !strings.Contains(err.Error(), tt.leak) {
 				t.Fatalf("leak report = %v, want one naming %s", err, tt.leak)

@@ -44,7 +44,7 @@ func run() error {
 		return err
 	}
 
-	return srv.Start(ctx)
+	return srv.Run(ctx)
 }
 ```
 
@@ -54,6 +54,12 @@ configuration; srvr keeps its error handler, and prefork is not supported. Fiber
 normalises the request path before routing (`%2e%2e` decoded, dot segments removed), so keep
 path-based access rules in the app rather than in a proxy that filters the raw path; see the
 package documentation.
+
+## Lifecycle
+
+Same lifecycle as the core (`Run`, `Start`, `Wait`, `HealthCheck`); see
+[Running under a lifecycle container](../README.md#running-under-a-lifecycle-container), using
+`*fibersrvr.Server` and `RouteConfigurer[fiber.Router]`.
 
 ## Static files and single-page apps
 

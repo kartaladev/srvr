@@ -104,6 +104,10 @@ func (f fiberConfig) Configure(r fiber.Router) { f(r) }
 // server is the lifecycle every engine shares.
 type server interface {
 	Start(ctx context.Context) error
+	Run(ctx context.Context) error
+	Wait() error
+	HealthCheck(ctx context.Context) error
+	Shutdown(ctx context.Context) error
 	Ready() <-chan struct{}
 	Addr() string
 }
@@ -266,7 +270,7 @@ func start(t *testing.T, srv server) (string, func()) {
 	ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must serve until its cleanup cancels it; t.Context() is cancelled before cleanups run
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	stop := sync.OnceFunc(func() {
 		cancel()
@@ -303,7 +307,7 @@ func startFailure(t *testing.T, srv server) error {
 
 	done := make(chan error, 1)
 
-	go func() { done <- srv.Start(ctx) }()
+	go func() { done <- srv.Run(ctx) }()
 
 	select {
 	case err := <-done:

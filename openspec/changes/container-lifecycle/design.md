@@ -17,7 +17,7 @@ See proposal.md - Why. Current code (main at `a833539`, v0.4.0):
 **Goals:**
 - One shared implementation in `internal/engine` so the three engines cannot drift.
 - `Run` reproduces today's `Start` exactly, so existing behaviour specs keep holding under the new name.
-- No goroutine srvr starts outlives the server's stop, including the new supervisor.
+- No goroutine srvr starts outlives the server's stop, including the serving goroutine that now also supervises the end of serving.
 
 **Non-Goals:**
 - Any import of doger or another container; a container adapter module.
@@ -26,27 +26,26 @@ See proposal.md - Why. Current code (main at `a833539`, v0.4.0):
 
 ## Slices
 
-1. **Start returns once serving on every engine, with Run and Wait**: `Lifecycle` splits starting from waiting; a supervisor goroutine owns the stop on a serve failure; `Run` and `Wait` exist on all three engines; `ErrServerNotStarted` exists for `Wait`; every caller and README snippet that needs blocking moves to `Run`. A doger `AsStarter` registration starts and stops cleanly. Scenarios: server-lifecycle "Start returns while serving", "Start bounded by its context", "Run and stop by context", "Run fails to start", "Wait after Start", "Wait misuse", "Listener fails while serving", MODIFIED "Hook phases and order", "Hooks on every stop path", "Start twice", "Lifecycle records"; engine-support MODIFIED both scenarios except the `HealthCheck` rows; test-quality "Lifecycle leaves no goroutine behind" rows for `Start`, `Run`, `Wait` and serve failure. Hot paths: `Lifecycle.Start`, the supervisor, `Run`, `Wait`, `stop`. It must be one slice because the shared `Lifecycle` changes every engine's `Start` at once: a slice that changed it for net/http only would leave gin and fiber red.
+1. **Start returns once serving on every engine, with Run and Wait**: `Lifecycle` splits starting from waiting; supervision at the end of `serveOn` owns the stop on a serve failure; `Run` and `Wait` exist on all three engines; `ErrServerNotStarted` exists for `Wait`; every caller and README snippet that needs blocking moves to `Run`. A doger `AsStarter` registration starts and stops cleanly. Scenarios: server-lifecycle "Start returns while serving", "Start bounded by its context", "Run and stop by context", "Run fails to start", "Wait after Start", "Wait misuse", "Listener fails while serving", MODIFIED "Hook phases and order", "Hooks on every stop path", "Start twice", "Lifecycle records"; engine-support MODIFIED both scenarios except the `HealthCheck` rows; test-quality "Lifecycle leaves no goroutine behind" rows for `Start`, `Run`, `Wait` and serve failure. Hot paths: `Lifecycle.Start`, `superviseRun`, `Run`, `Wait`, `stop`. It must be one slice because the shared `Lifecycle` changes every engine's `Start` at once: a slice that changed it for net/http only would leave gin and fiber red.
 2. **Health check on every engine and container conformance**: `HealthCheck(ctx)` on all engines; a conformance test drives every engine through a test-local container-shaped interface and checks the dependency lists. Scenarios: "Health across the lifecycle", "Health with a hostile context", "Container-shaped lifecycle", engine-support `HealthCheck` rows. Hot path: `HealthCheck`.
 3. **Documentation and end-to-end verification**: README section on running under a lifecycle container (doger snippets: `Provide`, `InvokeAll` of route configurers, `AsStarter`), migration note and `CHANGELOG.md` **BREAKING** entry, godoc examples for `Start`+`Wait` and `Run`; parity harness runs the lifecycle rows on all engines; `make check`, `make cover`.
 4. **Release v0.5.0**: after review and merge, owner confirmation, then tags for every module in `RELEASING.md` order.
 
 ## Decisions
 
-### D1. Split `Lifecycle.Start` into a starting phase and a supervisor
+### D1. Split `Lifecycle.Start` into a starting phase and supervision at the end of `serveOn`
 
-`Lifecycle.Start(ctx, prepare)` keeps everything up to `serve` and returns `nil` right after `serve` closes `ready`. `serve` also starts `superviseRun(r)`, a named method (so goleak reports name it) that waits on `r.stopping` or `r.done`:
-- `r.stopping` (Shutdown or Run began the stop): return; the stopper runs the sequence.
-- `r.done` with a served error: log `server.failed`, record the error in `l.servedErr`, run `stop` with a drain context of `ShutdownTimeout` from `context.WithoutCancel(startCtx)`, return.
-- `r.done` without an error and no stop requested (fiber, proven by T3): treated as a failure: the supervisor records `errchain`'s "serving ended without a stop" error wrapping `ErrServerClosed`, logs `server.failed` and stops, so the server never stays `stateRunning` while not serving. This mirrors today's code, which runs the stop whenever `r.done` closes (`lifecycle.go:189-200`), and adds the report today's fiber path lacks.
+`Lifecycle.Start(ctx, prepare)` keeps everything up to `serve` and returns `nil` right after `serve`. `serve` moves the state to running, writes `server.started` and closes `ready`, and only then starts `serveOn`, so no record of a stop can precede `server.started` and `Ready` never closes after the server closed. `serveOn` (a named method, so goleak reports name it) runs `Serve`, keeps its result in `r.err`, closes `r.done`, then calls `superviseRun` on the same goroutine:
+- `r.stopping` closed (Shutdown or Run began the stop, which closed the listener): return; the stopper runs the sequence.
+- otherwise serving ended on its own: with a served error, or with none (fiber, proven by T3), recorded as `errchain.ErrServingEnded` wrapping `ErrServerClosed`; `stop(drainCtx, served)` with a drain context of `ShutdownTimeout` from `context.WithoutCancel(startCtx)` claims the stop, records `l.servedErr`, logs `server.failed` and runs the sequence, so the server never stays `stateRunning` while not serving. This mirrors v0.4.0, which ran the stop whenever `r.done` closed, and adds the report the fiber path lacked.
 
-Alternatives: (a) no supervisor, `Wait` runs the stop on a serve failure: rejected, hooks and draining would depend on someone calling `Wait`, and health would stay wrong; (b) run the old blocking body in a goroutine from `Start`: rejected, two goroutines where one does, and `Start`'s context would keep stopping the server.
+Alternatives: (a) no supervision, `Wait` runs the stop on a serve failure: rejected, hooks and draining would depend on someone calling `Wait`, and health would stay wrong; (b) a separate supervisor goroutine started from `serve` (the planned form): replaced during `/simplify`, one goroutine per server does the job; (c) run the old blocking body in a goroutine from `Start`: rejected, `Start`'s context would keep stopping the server.
 
-**Failure modes:** supervisor and `Shutdown` race on a serve failure: `stop` already guards with the state check (`stateRunning` only), the loser waits on `l.stopped`; Accept panics: `guardedListener` already turns them into an error, the supervisor sees `r.done`; a consumer listener whose `Close` never unblocks `Accept`: `joinServe`'s bounded grace still applies, the supervisor returns after `stop`; the supervisor leaking on a never-stopped server is reported by goleak with its name (test-quality row "Start and never Shutdown" now names serve and supervisor goroutines).
+**Failure modes:** supervision and `Shutdown` race on a serve failure: `stop` claims under the lock (`stateRunning` only), the loser waits on `l.stopped`; Accept panics: `guardedListener` turns them into an error; a consumer listener whose `Close` never unblocks `Accept`: `joinServe`'s bounded grace still applies; serving that fails at once: the started record and `Ready` already happened in `serve`, so records stay ordered (server-lifecycle "Records order when serving fails at once"); a never-stopped server is reported by goleak naming `serveOn`.
 
 ### D2. `Start`'s context bounds startup only
 
-The context passes to route checks, `listen` and records during startup. After `Start` returned it is not watched. Evidence that this is required, not optional: doger cancels that context when `RootScope.Start` returns (T2), so a server tied to it stops right after the container started. Records written later by the supervisor use `context.WithoutCancel(startCtx)` so values (service attributes) survive. Override: none; a consumer who wants the context to stop the server calls `Run`.
+The context passes to route checks, `listen` and records during startup. After `Start` returned it is not watched. Evidence that this is required, not optional: doger cancels that context when `RootScope.Start` returns (T2), so a server tied to it stops right after the container started. Records written later by supervision use `context.WithoutCancel(startCtx)` so values (service attributes) survive. Override: none; a consumer who wants the context to stop the server calls `Run`.
 
 **Failure modes:** a consumer relying on the old behaviour exits immediately: the migration note and README changes say so, and the release is a minor bump under v0.x signalling the break (D6); a `nil` context still fails with `ErrConfig`.
 
@@ -54,7 +53,7 @@ The context passes to route checks, `listen` and records during startup. After `
 
 `Run(ctx)`: `err := Start(ctx)`; on error return it. Then `select` on `ctx.Done()` or `l.stopped`; on `ctx.Done()` run `stop` with a drain context of `ShutdownTimeout` from `context.WithoutCancel(ctx)`; finally return `Wait()`. Every existing scenario of the removed "Start serves until its context ends" holds for `Run` unchanged.
 
-**Failure modes:** `Run` and `Shutdown` concurrently: one `stop` wins, `Run` waits on `l.stopped`; a serve failure inside `Run`: the supervisor stops, `l.stopped` closes, `Run` returns the served error through `Wait`; `Run` registered as a doger `AsRunnable`: blocks the container by design; the godoc warns.
+**Failure modes:** `Run` and `Shutdown` concurrently: one `stop` wins, `Run` waits on `l.stopped`; a serve failure inside `Run`: supervision stops the server, `l.stopped` closes, `Run` returns the served error through `Wait`; `Run` registered as a doger `AsRunnable`: blocks the container by design; the godoc warns.
 
 ### D4. `Wait` returns the result of the serving run only
 
@@ -66,7 +65,7 @@ Alternatives: return the `Start` failure again from `Wait`: rejected, the caller
 
 ### D5. `HealthCheck` reads the state, never the context
 
-`HealthCheck(ctx)`: `nil` context returns `ErrConfig`; otherwise, under the mutex: `stateNew`/`stateStarting` → `ErrServerNotStarted`; `stateRunning` → `nil`; `stateStopping`/`stateClosed` → `ErrServerClosed`, joined with `l.servedErr` when set. It never calls `ctx.Err()`, so a hostile context cannot break it, and never blocks beyond the mutex.
+`HealthCheck(ctx)`: `nil` context returns `ErrConfig`; otherwise, under the mutex: `stateNew`/`stateStarting` → `ErrServerNotStarted` (until serving begins: the listener is bound and `serve` moved the state, slightly before `Start` returns); `stateRunning` → `nil`; `stateStopping`/`stateClosed` → `ErrServerClosed`, joined with `l.servedErr` when set. It never calls `ctx.Err()`, so a hostile context cannot break it, and never blocks beyond the mutex.
 
 Alternatives: probe the listener with a dial: rejected, costs a connection per check and can hang; report `nil` while stopping: rejected, a container should see the server leaving.
 
@@ -85,7 +84,7 @@ In `internal/paritytest` (it already imports all engines), a test declares `type
 ## Defaults
 
 - No new option or config field. Blocking versus non-blocking is the method the consumer calls (`Run` or `Start`+`Wait`); neither loosens a safety default.
-- `ShutdownTimeout` and `ShutdownHookTimeout` keep their defaults and apply to every stop path, including the supervisor's stop after a serve failure.
+- `ShutdownTimeout` and `ShutdownHookTimeout` keep their defaults and apply to every stop path, including the stop supervision runs after a serve failure.
 
 ## Hot Paths
 

@@ -46,7 +46,7 @@ func run() error {
 		return err
 	}
 
-	return srv.Start(ctx)
+	return srv.Run(ctx)
 }
 ```
 
@@ -55,6 +55,12 @@ srvr trusts no proxy unless the hook calls `SetTrustedProxies`, and afterwards r
 `ContextWithFallback`, `HandleMethodNotAllowed`, `RedirectTrailingSlash` off and its recovery; a hook
 that registers routes or middleware fails construction. Do not
 pass an error whose chain cycles to `c.Error`: gin walks it before srvr sees it.
+
+## Lifecycle
+
+Same lifecycle as the core (`Run`, `Start`, `Wait`, `HealthCheck`); see
+[Running under a lifecycle container](../README.md#running-under-a-lifecycle-container), using
+`*ginsrvr.Server` and `RouteConfigurer[*gin.RouterGroup]`.
 
 ## Static files and single-page apps
 

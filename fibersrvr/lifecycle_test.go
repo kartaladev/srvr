@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/fibersrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestFiberLifecycle covers engine-support / Scenario: Lifecycle misuse on
@@ -32,6 +33,7 @@ func TestFiberLifecycle(t *testing.T) {
 		{"Shutdown never started", "new", func(ctx context.Context, s *fibersrvr.Server) error { return s.Shutdown(ctx) }, nil},
 		{"Start after stop", "stopped", func(ctx context.Context, s *fibersrvr.Server) error { return s.Start(ctx) }, srvr.ErrServerClosed},
 		{"Register while running", "running", func(_ context.Context, s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerStarted},
+		{"Run while running", "running", func(ctx context.Context, s *fibersrvr.Server) error { return s.Run(ctx) }, srvr.ErrServerStarted},
 		{"Register after stop", "stopped", func(_ context.Context, s *fibersrvr.Server) error { return s.Register(routes(func(fiber.Router) {})) }, srvr.ErrServerClosed},
 		{"Shutdown(nil) while running", "running", func(_ context.Context, s *fibersrvr.Server) error {
 			err := s.Shutdown(nil) //nolint:contextcheck,staticcheck // a nil context is the row under test.
@@ -113,12 +115,12 @@ func TestFiberShutdownHooks(t *testing.T) {
 		stop func(t *testing.T, srv *fibersrvr.Server)
 		want []string
 	}{
-		{"Start context cancelled while serving", func(t *testing.T, srv *fibersrvr.Server) {
+		{"the Run context is cancelled while serving", func(t *testing.T, srv *fibersrvr.Server) {
 			t.Helper()
 
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan error, 1)
-			go func() { done <- srv.Start(ctx) }()
+			go func() { done <- srv.Run(ctx) }()
 			<-srv.Ready()
 			cancel()
 			if err := <-done; err != nil {
@@ -266,6 +268,23 @@ func TestFiberShutdownHooks(t *testing.T) {
 
 		if err := srv.Start(ctx); err == nil {
 			t.Fatal("Start succeeded on a used address")
+		}
+
+		if got := rec.recorded(); !slices.Equal(got, after) {
+			t.Fatalf("hooks = %v, want %v", got, after)
+		}
+	})
+
+	t.Run("Start fails because a route check returns an error", func(t *testing.T) {
+		t.Parallel()
+
+		rec := &hookRecorder{}
+		srv, _ := newServer(t, append(rec.options(), srvr.WithRouteCheck(func(context.Context, engine.Routes) error {
+			return errors.New("route check failed")
+		}))...)
+
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrRouteConfig) {
+			t.Fatalf("Start = %v, want ErrRouteConfig", err)
 		}
 
 		if got := rec.recorded(); !slices.Equal(got, after) {
@@ -453,12 +472,12 @@ func TestShutdown_StuckListener(t *testing.T) {
 			}
 
 			started := make(chan error, 1)
-			go func() { started <- srv.Start(context.Background()) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
+			go func() { started <- srv.Run(context.Background()) }() //nolint:usetesting // Start must outlive the Shutdown calls under test
 
 			select {
 			case <-stuck.accepting:
 			case err := <-started:
-				t.Fatalf("Start returned before Accept: %v", err)
+				t.Fatalf("Run returned before Accept: %v", err)
 			case <-time.After(10 * time.Second):
 				t.Fatal("Serve never called Accept")
 			}
@@ -492,10 +511,10 @@ func TestShutdown_StuckListener(t *testing.T) {
 			select {
 			case err := <-started:
 				if err != nil {
-					t.Fatalf("Start = %v after the stop, want nil", err)
+					t.Fatalf("Run = %v after the stop, want nil", err)
 				}
 			case <-time.After(10 * time.Second):
-				t.Fatal("Start did not return after Accept was released")
+				t.Fatal("Run did not return after Accept was released")
 			}
 		})
 	}

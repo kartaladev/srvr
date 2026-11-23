@@ -58,9 +58,28 @@ func (st state) startable() error {
 	}
 }
 
+// health returns what HealthCheck reports in this state: nil only while
+// running. servedErr, the serve failure (nil when none), joins the closed
+// error.
+func (st state) health(servedErr error) error {
+	switch st {
+	case stateNew, stateStarting:
+		return errchain.ErrServerNotStarted
+	case stateRunning:
+		return nil
+	default:
+		if servedErr == nil {
+			return errchain.ErrServerClosed
+		}
+
+		return errors.Join(errchain.ErrServerClosed, servedErr)
+	}
+}
+
 // Lifecycle is the single-use state machine every engine's server runs
-// on: Start configures, binds and serves through a [Runner]; Shutdown and
-// the end of Start's context stop it in order (BeforeDrain hooks, drain,
+// on: Start configures, binds and serves through a [Runner], then returns
+// while a supervisor goroutine watches serving; Shutdown, the end of Run's
+// context and a serve failure stop it in order (BeforeDrain hooks, drain,
 // AfterDrain hooks). It holds its lock only to read and move state, so
 // consumer code it calls may call the server's own methods. Its methods
 // are safe for concurrent use.
@@ -84,11 +103,15 @@ type Lifecycle[C any] struct {
 	// run is the serving part of a running server, nil before.
 	run *run
 	// stopped is closed when the server reaches stateClosed. hookErr and
-	// drainErr are the results of its stop sequence: Start returns hookErr,
-	// the Shutdown call that stopped the server returns both.
+	// drainErr are the results of its stop sequence: a failed Start and
+	// Wait return hookErr, the Shutdown call that stopped the server
+	// returns both.
 	stopped  chan struct{}
 	hookErr  error
 	drainErr error
+	// servedErr is why serving ended on its own, nil when a stop ended it;
+	// set when the stop sequence is claimed, read after stopped closed.
+	servedErr error
 }
 
 // NewLifecycle returns the lifecycle of a new server configured by c.
@@ -131,10 +154,9 @@ func (l *Lifecycle[C]) Addr() string {
 
 // Start runs prepare with the registered configurers (the configure
 // phase, which no later Register can change), runs the route checks on the
-// listing it returns, binds the listener, closes Ready and serves through the
-// returned Runner until ctx is done or Shutdown is called; then it stops
-// the server in order. See srvr.Server.Start for the contract every
-// engine shares.
+// listing it returns, binds the listener, closes Ready, starts serving
+// through the returned Runner and returns nil; ctx bounds these steps only.
+// See srvr.Server.Start for the contract every engine shares.
 func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) (Runner, Routes, error)) error {
 	if ctx == nil {
 		return errchain.NewConfigError("Start context", "<nil>", "is nil")
@@ -175,31 +197,38 @@ func (l *Lifecycle[C]) Start(ctx context.Context, prepare func(configurers []C) 
 		return l.fail(ctx, errchain.NewConfigError("Listener", errchain.TypeName(ln), err.Error()))
 	}
 
-	r := l.serve(ctx, ln, addr, runner)
-	if r == nil {
+	if r := l.serve(ctx, ln, addr, runner); r == nil {
 		// Shutdown was called after the last interruption check.
 		return l.closeInterrupted(ctx, ln)
 	}
 
-	var served error
+	return nil
+}
+
+// Run starts the server as Start does, serves until ctx is done, Shutdown
+// is called or serving fails, then stops it in order and returns what Wait
+// returns; see srvr.Server.Run for the contract every engine shares.
+func (l *Lifecycle[C]) Run(ctx context.Context, prepare func(configurers []C) (Runner, Routes, error)) error {
+	if err := l.Start(ctx, prepare); err != nil {
+		return err
+	}
 
 	select {
 	case <-ctx.Done():
-	case <-r.stopping:
-	case <-r.done:
-		if served = r.servedErr(r.err); served != nil {
-			// Serving failed on its own; the server still stops in order.
-			l.logFailed(ctx, served)
-		}
+		drainCtx, cancel := l.drainContext(context.WithoutCancel(ctx))
+		defer cancel()
+
+		l.stop(drainCtx, nil)
+	case <-l.stopped:
 	}
 
-	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), l.core.cfg.ShutdownTimeout)
-	defer cancel()
+	return l.Wait()
+}
 
-	l.stop(drainCtx)
-	<-l.stopped
-
-	return errors.Join(served, l.hookErr)
+// drainContext returns the context a stop sequence started from parent
+// drains within: parent bounded by ShutdownTimeout.
+func (l *Lifecycle[C]) drainContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, l.core.cfg.ShutdownTimeout)
 }
 
 // begin moves a new server to starting, keeping interrupt for Shutdown.
@@ -314,17 +343,6 @@ type run struct {
 	stopping chan struct{}
 }
 
-// servedErr returns err, the result of Serve, or nil when Serve returned
-// because the stop sequence closed the listener.
-func (r *run) servedErr(err error) error {
-	select {
-	case <-r.stopping:
-		return nil
-	default:
-		return err
-	}
-}
-
 // serve moves the server to running and serves on ln, whose address is
 // addr. It returns nil, leaving ln and the server to Start, when Shutdown
 // was called while starting. It calls no consumer code under l.mu.
@@ -348,21 +366,51 @@ func (l *Lifecycle[C]) serve(ctx context.Context, ln net.Listener, addr string, 
 	l.addr = addr
 	l.mu.Unlock()
 
-	go l.serveOn(r)
-
+	// Started and ready before serving begins: serveOn may stop the server
+	// at once when serving fails, and no record of that stop may precede
+	// server.started, nor Ready close after the server closed.
 	l.core.logEvent(ctx, slog.LevelInfo, eventStarted, slog.String(keyServerAddress, addr))
 	close(l.ready)
+
+	go l.serveOn(context.WithoutCancel(ctx), r)
 
 	return r
 }
 
 // serveOn serves r on its listener until the runner's Serve returns,
-// keeping its result in r.err and then closing r.done. It is a named
+// keeping its result in r.err and closing r.done, then supervises the
+// end of serving with ctx, the values of Start's context. It is a named
 // method so a goroutine leak report names it.
-func (l *Lifecycle[C]) serveOn(r *run) {
-	defer close(r.done)
-
+func (l *Lifecycle[C]) serveOn(ctx context.Context, r *run) {
 	r.err = r.runner.Serve(r.ln)
+	close(r.done)
+
+	l.superviseRun(ctx, r)
+}
+
+// superviseRun handles the end of serving once Serve returned: when the
+// stop sequence began, that stop closed the listener and there is nothing
+// to do; otherwise serving ended on its own and the server stops in order,
+// keeping why for Wait. An engine that stopped serving without an error
+// although nobody stopped the server is reported as
+// errchain.ErrServingEnded, so a server never stays running while not
+// serving.
+func (l *Lifecycle[C]) superviseRun(ctx context.Context, r *run) {
+	select {
+	case <-r.stopping:
+		return
+	default:
+	}
+
+	served := r.err
+	if served == nil {
+		served = errchain.ErrServingEnded
+	}
+
+	drainCtx, cancel := l.drainContext(ctx)
+	defer cancel()
+
+	l.stop(drainCtx, served)
 }
 
 // serveGrace bounds how long the stop sequence waits for serveOn to return
@@ -390,8 +438,11 @@ func joinServe(drainCtx context.Context, r *run) {
 }
 
 // stop runs the stop sequence of a running server, unless it has already
-// begun; a caller that finds it begun can wait on l.stopped.
-func (l *Lifecycle[C]) stop(drainCtx context.Context) {
+// begun; a caller that finds it begun can wait on l.stopped. served is why
+// serving ended on its own, nil when nothing failed: it is kept for Wait
+// and logged as server.failed. A failure that loses to another stop is the
+// result of that stop, not of serving, and is dropped.
+func (l *Lifecycle[C]) stop(drainCtx context.Context, served error) {
 	l.mu.Lock()
 	if l.st != stateRunning {
 		l.mu.Unlock()
@@ -400,8 +451,13 @@ func (l *Lifecycle[C]) stop(drainCtx context.Context) {
 	}
 
 	l.st = stateStopping
+	l.servedErr = served
 	r := l.run
 	l.mu.Unlock()
+
+	if served != nil {
+		l.logFailed(drainCtx, served)
+	}
 
 	l.stopRun(drainCtx, r)
 }
@@ -459,7 +515,7 @@ func (l *Lifecycle[C]) Shutdown(ctx context.Context) error {
 		r := l.run
 		l.mu.Unlock()
 
-		drainCtx, cancel := context.WithTimeout(ctx, l.core.cfg.ShutdownTimeout)
+		drainCtx, cancel := l.drainContext(ctx)
 		defer cancel()
 
 		l.stopRun(drainCtx, r)
@@ -485,6 +541,48 @@ func (l *Lifecycle[C]) wait(ctx context.Context, first bool) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// Wait waits until a started server has stopped; see srvr.Server.Wait for
+// the contract every engine shares.
+func (l *Lifecycle[C]) Wait() error {
+	l.mu.Lock()
+	st := l.st
+	l.mu.Unlock()
+
+	if st == stateNew {
+		return errchain.ErrServerNotStarted
+	}
+
+	<-l.stopped
+
+	return l.runResult()
+}
+
+// HealthCheck reports whether the server is serving; see
+// srvr.Server.HealthCheck for the contract every engine shares. It reads
+// the state only: ctx is checked for nil and never called.
+func (l *Lifecycle[C]) HealthCheck(ctx context.Context) error {
+	if ctx == nil {
+		return errchain.NewConfigError("HealthCheck context", "<nil>", "is nil")
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.st.health(l.servedErr)
+}
+
+// runResult is what Wait returns once the server is closed: the serve
+// failure joined with the hook failures when a run was served, nil when the
+// server closed without serving, as Start already returned that failure.
+// l.run is set before l.stopped closes, so it is read without the lock.
+func (l *Lifecycle[C]) runResult() error {
+	if l.run == nil {
+		return nil
+	}
+
+	return errors.Join(l.servedErr, l.hookErr)
 }
 
 // result is what the Shutdown call that stopped the server returns: the

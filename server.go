@@ -19,10 +19,12 @@ const engineName = "net/http"
 // Server is an HTTP server on the net/http engine.
 //
 // Create it with [New], add routes with [Server.Register] and run it with
-// [Server.Start], which blocks until its context ends or [Server.Shutdown]
-// is called. Every error a handler returns is rendered as an RFC 9457
-// problem by github.com/kartaladev/prblm; an unrecognised error becomes a
-// 500 problem that carries none of the error's text.
+// [Server.Run], which blocks until its context ends or [Server.Shutdown] is
+// called, or start it with [Server.Start], which returns once serving (for
+// lifecycle containers and manual control). Every error a handler returns
+// is rendered as an RFC 9457 problem by github.com/kartaladev/prblm; an
+// unrecognised error becomes a 500 problem that carries none of the error's
+// text.
 //
 // A Server is single-use: it starts at most once and, once stopped, stays
 // stopped. Its methods are safe for concurrent use.
@@ -74,36 +76,53 @@ func (s *Server) Ready() <-chan struct{} { return s.lc.Ready() }
 // port chosen for "127.0.0.1:0", and the empty string before.
 func (s *Server) Addr() string { return s.lc.Addr() }
 
-// Start configures the routes, binds the listener, closes [Server.Ready]
-// and serves until ctx is done or [Server.Shutdown] is called. Then it stops
-// accepting connections, drains in-flight requests for at most
-// ShutdownTimeout and returns nil.
+// Start configures the routes, runs the route checks, binds the listener,
+// closes [Server.Ready] and returns nil while the server keeps serving, so a
+// lifecycle container can run it as a starter. ctx bounds startup only:
+// cancelling it after Start returned does not stop the server; that is
+// [Server.Shutdown]'s job, or call [Server.Run] to serve until a context
+// ends. [Server.Wait] reports how serving ended.
 //
 // Start returns an error, without closing Ready, when ctx is nil (wrapping
-// [ErrConfig]) or already done, or when binding fails. A second Start
-// returns [ErrServerStarted], or [ErrServerClosed] once the server stopped,
-// without affecting it. When serving fails on its own, for example because
-// a [WithListener] listener's Accept fails, Start stops the server in order
-// and returns that error. When [Server.Shutdown] is called while Start is
-// still starting (configuring routes, running route checks or binding), the
+// [ErrConfig]) or already done, when a route check fails or ctx ends while
+// one runs, or when binding fails. A second Start returns
+// [ErrServerStarted], or [ErrServerClosed] once the server stopped, without
+// affecting it. When [Server.Shutdown] is called while Start is still
+// starting (configuring routes, running route checks or binding), the
 // context route checks receive is cancelled and Start returns an error
 // wrapping [ErrServerClosed] without binding; a check that ignores its
 // context keeps Start waiting until it returns or ctx is done.
+//
+// When serving fails on its own after Start returned, for example because a
+// [WithListener] listener's Accept fails, the server stops in order
+// (shutdown hooks run, connections drain within ShutdownTimeout), writes a
+// server.failed record, and Wait returns the failure.
 //
 // Start writes a server.failed record for a failure to start or serve and
 // a server.shutdown_hook.failed record for each failing hook, so a caller
 // that also logs the returned error logs it twice. It writes none for a
 // nil ctx, [ErrServerStarted], [ErrServerClosed] or a start Shutdown
 // interrupted.
-func (s *Server) Start(ctx context.Context) error {
-	return s.lc.Start(ctx, func(configurers []RouteConfigurer[*Group]) (engine.Runner, engine.Routes, error) {
-		mux, routes, err := s.router(configurers)
-		if err != nil {
-			return nil, nil, err
-		}
+func (s *Server) Start(ctx context.Context) error { return s.lc.Start(ctx, s.prepare) }
 
-		return engine.HTTPRunner(s.core.Config(), s.pipeline(mux)), routes, nil
-	})
+// Run starts the server as [Server.Start] does, then serves until ctx is
+// done, [Server.Shutdown] is called or serving fails; it then stops
+// accepting connections, drains in-flight requests for at most
+// ShutdownTimeout and returns what [Server.Wait] returns: nil, or the serve
+// failure joined with failing shutdown hooks. A startup failure is returned
+// as Start returns it. Run is the one call for a plain main; do not register
+// it as a lifecycle container's run-once hook, because it blocks until the
+// server stops. Use Start there.
+func (s *Server) Run(ctx context.Context) error { return s.lc.Run(ctx, s.prepare) }
+
+// prepare is the configure phase of the net/http engine.
+func (s *Server) prepare(configurers []RouteConfigurer[*Group]) (engine.Runner, engine.Routes, error) {
+	mux, routes, err := s.router(configurers)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return engine.HTTPRunner(s.core.Config(), s.pipeline(mux)), routes, nil
 }
 
 // Shutdown stops the server gracefully: it stops accepting connections and
@@ -119,6 +138,27 @@ func (s *Server) Start(ctx context.Context) error {
 // leaves the server running. A failing shutdown hook is logged as
 // server.shutdown_hook.failed as well as returned.
 func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx) }
+
+// Wait blocks until a started server has stopped and returns how serving
+// ended: the serve failure joined with failing shutdown hooks, or nil. Every
+// caller, concurrent or later, gets the same result. On a server that was
+// never started it returns [ErrServerNotStarted] at once; after a failed
+// Start or a Shutdown before Start it returns nil, as Start already
+// returned that failure. Never call Wait from a shutdown hook: the hook
+// runs before the server stops, so Wait would never return.
+func (s *Server) Wait() error { return s.lc.Wait() }
+
+// HealthCheck returns nil while the server is serving and an error
+// otherwise: one matching [ErrServerNotStarted] until serving begins (never
+// started, or still configuring, checking routes or binding; serving begins
+// just before Start returns), or [ErrServerClosed] once the stop began,
+// also wrapping the serve failure when serving failed on its own. A nil ctx
+// returns an error wrapping [ErrConfig]. It reads the server's state only:
+// it never blocks beyond a lock, never calls ctx's methods, and sends
+// nothing to clients (it is a Go method, not an HTTP endpoint), so
+// lifecycle containers can call it safely; its error text goes only to the
+// caller.
+func (s *Server) HealthCheck(ctx context.Context) error { return s.lc.HealthCheck(ctx) }
 
 // router runs the configurers and returns the ServeMux holding their
 // routes and the listing of the routes they declared.

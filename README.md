@@ -56,14 +56,92 @@ func run() error {
 		return err
 	}
 
-	// Start serves until SIGINT or SIGTERM, then drains in-flight requests.
-	return srv.Start(ctx)
+	// Run serves until SIGINT or SIGTERM, then drains in-flight requests.
+	return srv.Run(ctx)
 }
 ```
 
 Every option has a functional form (`srvr.WithAddr`, `srvr.WithLogLevel`, ...) and a plain config
 struct with `json`, `yaml` and `env` tags (`srvr.Config`, `srvr.LogConfig`, ...) that any
 configuration loader can fill. srvr never reads environment variables or files itself.
+
+## Running under a lifecycle container
+
+`Run(ctx)` is the one call for a plain `main`: it serves until `ctx` is done, `Shutdown` is called or
+serving fails, then drains and returns; prefer it. For manual control (what `Run` does inside), `Start(ctx)` returns once the server is
+serving, `Wait()` reports how serving ended and `HealthCheck(ctx)` says whether it still serves:
+
+```go
+func runManually(ctx context.Context, srv *srvr.Server) error {
+	if err := srv.Start(ctx); err != nil { // returns once serving; ctx bounds startup only
+		return err
+	}
+
+	served := make(chan error, 1)
+	go func() { served <- srv.Wait() }() // ends when the server stops on its own too
+
+	select {
+	case err := <-served: // serving failed: the server already stopped in order
+		return err
+	case <-ctx.Done():
+	}
+
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(stopCtx); err != nil {
+		return err
+	}
+
+	return <-served // the serve failure joined with failing shutdown hooks, or nil
+}
+```
+
+Because `Start`, `Shutdown` and `HealthCheck` have the shapes lifecycle containers detect, a server
+registers in one as a starter without an adapter; srvr imports no container. With
+[doger](https://github.com/kartaladev/doger) v0.3.0 or later, provide each route configurer, then the
+server, which collects every configurer with `InvokeAll`:
+
+```go
+root := do.New()
+do.Provide(root, NewUsersAPI)  // func(do.Injector) (*UsersAPI, error); *UsersAPI is a RouteConfigurer[*srvr.Group]
+do.Provide(root, NewOrdersAPI)
+do.Provide(root, func(i do.Injector) (*srvr.Server, error) {
+	srv, err := srvr.New()
+	if err != nil {
+		return nil, err
+	}
+
+	confs, err := do.InvokeAll[srvr.RouteConfigurer[*srvr.Group]](i)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, c := range confs {
+		if err := srv.Register(c); err != nil {
+			return nil, err
+		}
+	}
+
+	return srv, nil
+}, do.AsStarter())
+
+// doger has no start timeout of its own: bound startup with a deadline.
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+
+if err := root.StartWithContext(ctx); err != nil {
+	log.Fatal(err)
+}
+
+root.ShutdownOnSignals(syscall.SIGINT, syscall.SIGTERM) // calls srv.Shutdown with the shutdown deadline
+```
+
+(`do` is `github.com/kartaladev/doger`.) doger cancels the context it passed to `Start` as soon as
+`StartWithContext` returns; srvr ignores that cancellation by design, since the context bounds startup
+only. `root.HealthCheck()` reports the server through its `HealthCheck`. Do not register `Run` as a
+run-once hook: it blocks until the server stops. For gin and fiber, swap the types: `*ginsrvr.Server`
+with `RouteConfigurer[*gin.RouterGroup]`, `*fibersrvr.Server` with `RouteConfigurer[fiber.Router]`.
 
 ## Engines
 
