@@ -71,12 +71,12 @@
 
 ## 4. Slice: documentation and end-to-end verification
 
-- [ ] 4.1 README section "Running under a lifecycle container": registering route configurers and the server in doger v0.3.0 or later (`Provide`, `InvokeAll[srvr.RouteConfigurer[*srvr.Group]]`, `AsStarter`), bounding startup with `RootScope.StartWithContext` and a deadline (doger has no start timeout of its own) and the note that doger cancels that context when it returns, which srvr's `Start` ignores by design, the gin and fiber type swaps, `Run` for a plain `main`, `Start`+`Wait` for manual control; snippets compile in `readme_example_test.go` without importing doger (doger calls shown in prose or a non-compiled block); module READMEs updated; verify `go test -run 'Example|Readme' ./...` passes
-- [ ] 4.2 `ExampleServer_Start` (with `Wait`) and `ExampleServer_Run` on each engine; verify `go test -run Example ./...` passes in core, `ginsrvr`, `fibersrvr`
-- [ ] 4.3 Parity: `internal/paritytest` runs the lifecycle rows of this change on all three engines; verify `go test -race ./...` passes in `internal/paritytest`
-- [ ] 4.4 Scratch check outside the repository (not committed): rerun the triage module (notes.md "Triage with doger v0.3.0"; T1 and T2 must now pass) and a throwaway module using the latest doger release with a srvr server registered `AsStarter` and two route configurers; `RootScope.Start` returns, a request is served, `RootScope.HealthCheck` reports the server healthy, `ShutdownOnSignals` stops it; record the result in `notes.md`
-- [ ] 4.5 End-to-end verification locally: `make check`, `make cover`, `govulncheck`, `openspec validate container-lifecycle --strict`, gopls diagnostics clean; `CHANGELOG.md` `[Unreleased]` complete
-- [ ] 4.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `docs: document running srvr under lifecycle containers`; verify with `git log -1 --stat`
+- [x] 4.1 README section "Running under a lifecycle container": registering route configurers and the server in doger v0.3.0 or later (`Provide`, `InvokeAll[srvr.RouteConfigurer[*srvr.Group]]`, `AsStarter`), bounding startup with `RootScope.StartWithContext` and a deadline (doger has no start timeout of its own) and the note that doger cancels that context when it returns, which srvr's `Start` ignores by design, the gin and fiber type swaps, `Run` for a plain `main`, `Start`+`Wait` for manual control; snippets compile in `readme_example_test.go` without importing doger (doger calls shown in prose or a non-compiled block); module READMEs updated; verify `go test -run 'Example|Readme' ./...` passes
+- [x] 4.2 `ExampleServer_Start` (with `Wait`) and `ExampleServer_Run` on each engine; verify `go test -run Example ./...` passes in core, `ginsrvr`, `fibersrvr`
+- [x] 4.3 Parity: `internal/paritytest` runs the lifecycle rows of this change on all three engines; verify `go test -race ./...` passes in `internal/paritytest`
+- [x] 4.4 Scratch check outside the repository (not committed): rerun the triage module (notes.md "Triage with doger v0.3.0"; T1 and T2 must now pass) and a throwaway module using the latest doger release with a srvr server registered `AsStarter` and two route configurers; `RootScope.Start` returns, a request is served, `RootScope.HealthCheck` reports the server healthy, `ShutdownOnSignals` stops it; record the result in `notes.md`
+- [x] 4.5 End-to-end verification locally: `make check`, `make cover`, `govulncheck`, `openspec validate container-lifecycle --strict`, gopls diagnostics clean; `CHANGELOG.md` `[Unreleased]` complete
+- [x] 4.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `docs: document running srvr under lifecycle containers`; verify with `git log -1 --stat`
 
 ## 5. Slice: release v0.5.0
 

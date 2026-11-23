@@ -86,3 +86,17 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Context:** (1) Task 3.3's RED could not fail to compile as planned: 3.1 had already added `HealthCheck` everywhere. The container deny check was proven instead by temporarily adding `gin-gonic/gin` to `containerModules` (FAIL `module ginsrvr depends on container module gin-gonic/gin`), then reverted. (2) The dependency rows live in `TestContainerDependencies` (gin, fiber); the net/http row is `TestCoreDependencies`' allowlist, so it is not checked twice. (3) `/simplify` applied: `health` returns bare `ErrServerClosed` with no serve failure; conformance driver bounded by its context only; `healthWithin` uses one goroutine. Deferred, added to "/simplify findings deferred from slice 2" (a): gin/fiber `TestHealthCheck` copies with a `switch` on row names, and sharing one `go list -deps` result across `internal/paritytest` tests.
 - **Evidence:** `make check` exit 0.
 - **Suggested action:** none.
+
+### doger end-to-end check (task 4.4, 2026-11-23)
+- **Status:** closed: passed
+- **Target:** container-lifecycle
+- **Context:** The original triage module was not kept, so T1 and T2 were rewritten in a scratch module outside the repository (`GOWORK=off`, `GOPROXY=off`, doger v0.3.0 from the module cache, `replace` to this checkout at slice 3). It wires the README section verbatim: `Provide` of two route configurers, a server provider collecting them with `InvokeAll[srvr.RouteConfigurer[*srvr.Group]]` and registered `AsStarter()`, `StartWithContext` with a 30s deadline. Not committed.
+- **Evidence:** `TestDogerLifecycle` PASS (0.15s): T1 `StartWithContext` returned within 2s; T2 `GET /users` and `GET /orders` answered 200 after doger cancelled the `Start` context; `RootScope.HealthCheck` reported the server with a nil error; `ShutdownOnSignals(SIGUSR1)` stopped it; `srv.Wait()` returned nil and `srv.HealthCheck` an error afterwards.
+- **Suggested action:** none.
+
+### Slice 4 /simplify outcome (2026-11-23)
+- **Status:** closed: recorded
+- **Target:** container-lifecycle
+- **Context:** Applied: `TestContainerConformance` reuses `lifecycleEngines`; duplicate comment dropped; module README "Lifecycle" sections reduced to a pointer to the root section. Skipped: reusing the harness `start()` in `TestLifecycleParity` (it only logs a non-nil `Run` error, the row asserts it); merging the per-package `lifecycle_example_test.go` files (Go examples are per package and stay self-contained for godoc).
+- **Evidence:** `make check` exit 0.
+- **Suggested action:** none.

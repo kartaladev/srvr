@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"testing"
+	"time"
 
 	"github.com/kartaladev/srvr"
 )
@@ -40,6 +42,45 @@ func runQuickStart() error {
 
 	// Run serves until SIGINT or SIGTERM, then drains in-flight requests.
 	return srv.Run(ctx)
+}
+
+// runManually is the Start, Wait and Shutdown snippet of "Running under a
+// lifecycle container" in README.md.
+func runManually(ctx context.Context, srv *srvr.Server) error {
+	if err := srv.Start(ctx); err != nil { // returns once serving; ctx bounds startup only
+		return err
+	}
+
+	<-ctx.Done()
+
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(stopCtx); err != nil {
+		return err
+	}
+
+	return srv.Wait() // the serve failure joined with failing shutdown hooks, or nil
+}
+
+// TestReadme_RunManually runs runManually until its context is cancelled.
+func TestReadme_RunManually(t *testing.T) {
+	t.Parallel()
+
+	srv, err := srvr.New(srvr.WithAddr("127.0.0.1:0"), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- runManually(ctx, srv) }()
+	<-srv.Ready()
+	cancel()
+
+	if err := receive(t, done, "runManually did not return"); err != nil {
+		t.Fatalf("runManually = %v, want nil", err)
+	}
 }
 
 // errQuotaExceeded is the application error of the README's renderers.

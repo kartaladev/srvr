@@ -40,6 +40,9 @@ once tagged.
   and is a Go method, not an HTTP endpoint, so nothing reaches clients. Every engine's server now
   has the `Start`/`Shutdown`/`HealthCheck` method shapes lifecycle containers detect; srvr imports
   no container.
+- README section "Running under a lifecycle container" (manual `Start`/`Shutdown`/`Wait`, and
+  registering a server and its route configurers in doger as a starter), and `ExampleServer_Start`
+  and `ExampleServer_Run` on every engine.
 
 ## [v0.4.0] - 2026-11-22
 

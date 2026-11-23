@@ -2,6 +2,7 @@ package paritytest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -39,33 +40,11 @@ var containerModules = []string{"kartaladev/doger", "samber/do", "go.uber.org/fx
 func TestContainerConformance(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		engine string
-		build  func(t *testing.T) containerService
-	}{
-		{"net/http", func(t *testing.T) containerService {
-			t.Helper()
-			return newNetServer(t, &logBuffer{}, func(g *srvr.Group) {
-				g.GET("/ok", func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(http.StatusOK); return nil })
-			})
-		}},
-		{"gin", func(t *testing.T) containerService {
-			t.Helper()
-
-			return newGinServer(t, &logBuffer{}, func(g *gin.RouterGroup) { g.GET("/ok", func(c *gin.Context) { c.Status(http.StatusOK) }) })
-		}},
-		{"fiber", func(t *testing.T) containerService {
-			t.Helper()
-
-			return newFiberServer(t, &logBuffer{}, idleWorkerDuration, func(r fiber.Router) { r.Get("/ok", func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }) })
-		}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.engine, func(t *testing.T) {
+	for _, e := range lifecycleEngines() {
+		t.Run(e.engine, func(t *testing.T) {
 			t.Parallel()
 
-			svc := tt.build(t)
+			var svc containerService = e.build(t)
 			call := func(name string, fn func(context.Context) error) error {
 				t.Helper()
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -118,6 +97,102 @@ func TestContainerDependencies(t *testing.T) {
 					t.Fatalf("module %s depends on container module %s", dir, m)
 				}
 			}
+		})
+	}
+}
+
+// lifecycleEngines builds one unstarted server per engine, each answering
+// GET /ok.
+func lifecycleEngines() []struct {
+	engine string
+	build  func(t *testing.T) server
+} {
+	return []struct {
+		engine string
+		build  func(t *testing.T) server
+	}{
+		{"net/http", func(t *testing.T) server {
+			t.Helper()
+
+			return newNetServer(t, &logBuffer{}, func(g *srvr.Group) {
+				g.GET("/ok", func(w http.ResponseWriter, _ *http.Request) error { w.WriteHeader(http.StatusOK); return nil })
+			})
+		}},
+		{"gin", func(t *testing.T) server {
+			t.Helper()
+
+			return newGinServer(t, &logBuffer{}, func(g *gin.RouterGroup) { g.GET("/ok", func(c *gin.Context) { c.Status(http.StatusOK) }) })
+		}},
+		{"fiber", func(t *testing.T) server {
+			t.Helper()
+
+			return newFiberServer(t, &logBuffer{}, idleWorkerDuration, func(r fiber.Router) { r.Get("/ok", func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) }) })
+		}},
+	}
+}
+
+// TestLifecycleParity runs the container-lifecycle rows shared by every
+// engine (server-lifecycle "Start returns while serving", "Wait after
+// Start", "Wait misuse", "Start twice", "Health across the lifecycle";
+// engine-support "Lifecycle misuse on every engine") on all three engines,
+// so they cannot drift.
+func TestLifecycleParity(t *testing.T) {
+	t.Parallel()
+
+	for _, e := range lifecycleEngines() {
+		t.Run(e.engine+"/Start, serve, Shutdown, Wait", func(t *testing.T) {
+			t.Parallel()
+
+			srv := e.build(t)
+			if err := srv.Wait(); !errors.Is(err, srvr.ErrServerNotStarted) {
+				t.Fatalf("Wait before Start = %v, want ErrServerNotStarted", err)
+			}
+			if err := srv.HealthCheck(t.Context()); !errors.Is(err, srvr.ErrServerNotStarted) {
+				t.Fatalf("HealthCheck before Start = %v, want ErrServerNotStarted", err)
+			}
+
+			startCtx, cancelStart := context.WithCancel(t.Context())
+			must(t, srv.Start(startCtx))
+			cancelStart() // bounds startup only
+
+			registerClient(t, srv.Addr())
+			getOK(t, "http://"+srv.Addr())
+			must(t, srv.HealthCheck(t.Context()))
+			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
+				t.Fatalf("second Start = %v, want ErrServerStarted", err)
+			}
+			if err := srv.Run(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
+				t.Fatalf("Run while running = %v, want ErrServerStarted", err)
+			}
+
+			must(t, srv.Shutdown(t.Context()))
+			must(t, srv.Wait())
+			if err := srv.HealthCheck(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("HealthCheck after stop = %v, want ErrServerClosed", err)
+			}
+			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
+				t.Fatalf("Start after stop = %v, want ErrServerClosed", err)
+			}
+		})
+
+		t.Run(e.engine+"/Run until its context ends", func(t *testing.T) {
+			t.Parallel()
+
+			srv := e.build(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- srv.Run(ctx) }()
+			<-srv.Ready()
+			must(t, srv.HealthCheck(t.Context()))
+
+			cancel()
+			select {
+			case err := <-done:
+				must(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("Run did not return")
+			}
+			must(t, srv.Wait())
 		})
 	}
 }

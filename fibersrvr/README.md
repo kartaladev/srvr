@@ -55,6 +55,12 @@ normalises the request path before routing (`%2e%2e` decoded, dot segments remov
 path-based access rules in the app rather than in a proxy that filters the raw path; see the
 package documentation.
 
+## Lifecycle
+
+Same lifecycle as the core (`Run`, `Start`, `Wait`, `HealthCheck`); see
+[Running under a lifecycle container](../README.md#running-under-a-lifecycle-container), using
+`*fibersrvr.Server` and `RouteConfigurer[fiber.Router]`.
+
 ## Static files and single-page apps
 
 `fibersrvr.Static(prefix, fsys, opts...)` serves the files of an `fs.FS` exactly as `srvr.Static`

@@ -106,6 +106,7 @@ type server interface {
 	Start(ctx context.Context) error
 	Run(ctx context.Context) error
 	Wait() error
+	HealthCheck(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 	Ready() <-chan struct{}
 	Addr() string
