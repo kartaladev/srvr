@@ -192,7 +192,7 @@ checkpoint, then returned an error):
 | `server.started` | INFO | `server.address` |
 | `server.stopping` | INFO | (common keys) |
 | `server.stopped` | INFO, or WARN when the drain deadline passed | `srvr.drain.duration_ms`, `srvr.drain.forced`, `srvr.unmatched.suppressed` (unmatched records suppressed and not yet reported, with an unmatched-record limit) |
-| `server.failed` | ERROR, when `Start` fails: before serving (binding, configuration, a done context) or because serving failed on its own (for example a `WithListener` listener whose `Accept` panics) | `exception.message` |
+| `server.failed` | ERROR, when `Start` fails before serving (binding, configuration, a done context), or when serving fails on its own after `Start` returned (for example a `WithListener` listener whose `Accept` panics); always after `server.started` in the second case | `exception.message` |
 | `server.shutdown_hook.failed` | WARN | `srvr.shutdown_hook.phase`, `srvr.shutdown_hook.index`, `code.function.name`, `exception.message` |
 | `server.config.warning` | WARN, once per server, for a configuration that works but is likely unintended: at construction for engine settings, at `Start` for route-dependent ones; it never fails either | `srvr.warning.code` (stable snake_case: `gin_debug_mode`, `fiber_header_limit_capped`), `srvr.warning.message` |
 

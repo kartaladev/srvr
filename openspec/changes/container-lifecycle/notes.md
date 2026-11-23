@@ -74,7 +74,7 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Suggested action:** none.
 
 ### /simplify findings deferred from slice 2
-- **Status:** open
+- **Status:** open; item (a) adopted by container-lifecycle task 5.5
 - **Target:** unassigned
 - **Context:** Skipped as outside the slice or behaviour-changing: (a) `ginsrvr`/`fibersrvr` `container_test.go` are near copies and the three `faultListener`s overlap `panicListener`/`faultyListener`; a shared parity driver (task 4.3 territory) would remove them. (b) Engine tests add `within`/`containerWait` beside `receive`. (c) `ErrServingEnded` could live in `fibersrvr`'s runner instead of the shared lifecycle; kept shared per design D1, as the contract "Serve returned without a stop" is engine-agnostic. (d) the supervisor keeps `context.WithoutCancel(startCtx)` for the server's lifetime by design D2 (service values in records). (e) pre-existing `wait(ctx, first bool)` control flag.
 - **Evidence:** unverified: review findings, no behaviour defect.
@@ -99,4 +99,32 @@ Carry-over entries. Consolidation (task group 1) decides each open entry; entrie
 - **Target:** container-lifecycle
 - **Context:** Applied: `TestContainerConformance` reuses `lifecycleEngines`; duplicate comment dropped; module README "Lifecycle" sections reduced to a pointer to the root section. Skipped: reusing the harness `start()` in `TestLifecycleParity` (it only logs a non-nil `Run` error, the row asserts it); merging the per-package `lifecycle_example_test.go` files (Go examples are per package and stay self-contained for godoc).
 - **Evidence:** `make check` exit 0.
+- **Suggested action:** none.
+
+### Review findings (2026-11-23)
+- **Status:** open
+- **Target:** container-lifecycle (group 5)
+- **Context:** `/code-review high` on `feat/container-lifecycle`: (important) `serve` starts `serveOn` before writing `server.started` and closing `Ready`, and supervision now stops the server on that goroutine, so an immediate serve failure may log `server.failed`/`server.stopping`/`server.stopped` before `server.started` and close `Ready` after the server closed (`internal/engine/lifecycle.go` `serve`); (nits) stale blocking-`Start` docs in the `Server` type doc, `WithListener`, `WithShutdownTimeout`, `Config.ShutdownTimeout`, `ErrShutdownHook`, `LOGGING.md`, `otelsetup`; README `runManually` ignores a serve failure; `HealthCheck` godoc says not started until `Start` returns; gin `Start` godoc not re-wrapped. `/opsx:verify`: warning, design D1 describes a separate supervisor goroutine; warning, task 2.9's verify command matches no test (fixed in tasks.md); suggestions, gin/fiber test copies and two fiber hook rows. The security review excluded the concurrency changes by its rules; the code review reported only the ordering race among them, so task 5.1 reviews the concurrent paths explicitly.
+- **Evidence:** unverified: review claims; task 5.1 reproduces the ordering claim with `TestLifecycleRecords_ImmediateServeFailure` before any fix.
+- **Suggested action:** group 5 tasks 5.1-5.7.
+
+### Security review (2026-11-23)
+- **Status:** closed: no findings
+- **Target:** container-lifecycle
+- **Context:** `/security-review` (run twice on the same commits) found nothing at confidence 8 or above: new errors reach only Go callers, `HealthCheck` is not an HTTP endpoint, `server.failed` logs an internal serve error and no request data, no auth/crypto/injection surface was added. Concurrency was excluded by the review's rules (see "Review findings").
+- **Evidence:** review report, no findings.
+- **Suggested action:** none.
+
+### Triage of the review findings (task 5.1, 2026-11-23)
+- **Status:** closed: decided (fixes in tasks 5.2-5.5)
+- **Target:** container-lifecycle
+- **Context:** (1) Records order on an immediate serve failure: confirmed. (2) Concurrent paths reviewed line by line, no defect found: `Shutdown` while starting interrupts through `stepCtx` and `serve` re-checks `stateStopping` under the lock; supervision vs `Shutdown`/`Run` context end: `stop` claims under the lock (`stateRunning` only), the loser waits on `l.stopped` (pinned by `TestServeFailure_ShutdownDuringStop`, `TestRun_CancelDuringShutdown`); `Wait`/`HealthCheck` read `servedErr`/`hookErr` written under the lock or before `l.stopped` closes. (3) README `runManually` ignores a serve failure: confirmed by reading (it blocks on `<-ctx.Done()` only). (4) `HealthCheck` godoc "before Start returned": confirmed by reading (`serve` sets `stateRunning` before `Start` returns). (5) Stale docs and gin wrap: confirmed by reading. Security review: no findings. Verify warnings: design D1 and task 2.9 fixed in planning.
+- **Evidence:** `TestLifecycleRecords_ImmediateServeFailure` (`container_test.go`), `go test -race -count=1000 -cpu=1,2,4,8 -run TestLifecycleRecords_ImmediateServeFailure .`: FAIL 3/4000, e.g. `records = [server.failed server.stopping server.stopped server.started], want [server.started server.failed server.stopping server.stopped]`; `-count=200` at default CPUs passed, so the race needs scheduling pressure.
+- **Suggested action:** task 5.2: write `server.started` and close `Ready` before starting `serveOn`.
+
+### Group 5 outcome (2026-11-23)
+- **Status:** closed: done
+- **Target:** container-lifecycle
+- **Context:** 5.2 `serve` writes `server.started` and closes `Ready` before starting `serveOn`. 5.3 stale blocking-`Start` docs fixed (`Server` type, `WithListener`, `WithShutdownTimeout`, `Config.ShutdownTimeout`, `ErrShutdownHook`, `LOGGING.md`, `otelsetup` `ShutdownHook`, `HealthCheck`, gin `Start` wrap). 5.4 README `runManually` waits on its context and `Wait`; its test `TestReadme_RunManually_ServeFailure` was written together with the fix (no separate RED run; the old snippet blocked on its context only). 5.5 engine-neutral gin/fiber rows moved into `TestLifecycleParity` (plus `HealthCheck(nil)`); fiber hook row "Start fails because a route check returns an error" added (it was missing; passed at once, behaviour existed). `/simplify` applied: `bounded` instead of a nested goroutine, `messages()` reused, `errListener` beside `faultListener`, godoc rewrapped, README says to prefer `Run`. Skipped: describing the stop paths once instead of in three godocs, and tabling the fiber hook subtests (shapes differ).
+- **Evidence:** `go test -race -count=1000 -cpu=1,2,4,8 -run TestLifecycleRecords_ImmediateServeFailure .` PASS after the fix (FAIL 3/4000 before); `make check` exit 0; `make cover` internal 99.8%, `serve`/`serveOn`/`superviseRun`/`stop` 100%.
 - **Suggested action:** none.

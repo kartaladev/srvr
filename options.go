@@ -56,14 +56,13 @@ func WithMaxHeaderBytes(n int) Option {
 //
 // The server calls ln's Accept and Close under recover. A panic in Accept,
 // which net/http calls on a goroutine of its own where it would end the
-// process, stops serving: Start writes server.failed, stops the server in
-// order (BeforeDrain hooks, drain, AfterDrain hooks) and returns an error
-// wrapping ErrConfig naming Listener. The server calls ln's Close once and
-// ignores its error or panic on every path, including
+// process, stops serving: the server writes server.failed, stops in order
+// (BeforeDrain hooks, drain, AfterDrain hooks), and Wait (or Run) returns
+// an error wrapping ErrConfig naming Listener. The server calls ln's Close
+// once and ignores its error or panic on every path, including
 // http.Server.Shutdown's own close: the stop completes, its result is the
 // one a successful Close gives, and the drain is never reported as forced
-// because of it. Accepted connections are
-// used as ln returns them.
+// because of it. Accepted connections are used as ln returns them.
 func WithListener(ln net.Listener) Option {
 	return func(s *engine.Settings) {
 		if errchain.IsNil(ln) {
@@ -132,8 +131,9 @@ func WithMaxRequestBodyBytes(n int64) Option {
 	return func(s *engine.Settings) { s.MaxRequestBodyBytes = n }
 }
 
-// WithShutdownTimeout bounds draining in-flight requests when Start's
-// context ends (default 15s; see [Config] for the reason). It must not be
+// WithShutdownTimeout bounds draining in-flight requests on every stop
+// path: Run's context ending, Shutdown (also bounded by its context) and a
+// serve failure (default 15s; see [Config] for the reason). It must not be
 // negative.
 func WithShutdownTimeout(d time.Duration) Option {
 	return func(s *engine.Settings) { s.ShutdownTimeout = d }

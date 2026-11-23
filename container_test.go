@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -554,6 +555,11 @@ func (l *faultListener) Accept() (net.Conn, error) {
 
 var errAccept = errors.New("accept failed permanently")
 
+// errListener fails every Accept with errAccept from the first call.
+type errListener struct{ net.Listener }
+
+func (errListener) Accept() (net.Conn, error) { return nil, errAccept }
+
 // TestServeFailure_AfterStart covers server-lifecycle / Scenario: Listener
 // fails while serving, net/http rows, and the permanent-Accept-error row of
 // Scenario: Wait after Start.
@@ -700,5 +706,32 @@ func TestRun_CancelDuringShutdown(t *testing.T) {
 	mustNil(t, receive(t, done, "Run did not return"))
 	if b, a := c.before.Load(), c.after.Load(); b != 1 || a != 1 {
 		t.Fatalf("hooks ran before=%d after=%d, want 1 and 1", b, a)
+	}
+}
+
+// TestLifecycleRecords_ImmediateServeFailure covers server-lifecycle /
+// Scenario: Records order when serving fails at once.
+func TestLifecycleRecords_ImmediateServeFailure(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"server.started", "server.failed", "server.stopping", "server.stopped"}
+
+	out := &logBuffer{}
+	srv, err := srvr.New(srvr.WithListener(errListener{listen(t)}), srvr.WithLogOutput(out))
+	mustNil(t, err)
+	mustNil(t, startBounded(t.Context(), t, srv))
+
+	if err := receive(t, waitAsync(srv), "Wait did not return"); !errors.Is(err, errAccept) {
+		t.Fatalf("Wait = %v, want the accept error", err)
+	}
+	select {
+	case <-srv.Ready():
+	default:
+		t.Fatal("Ready is not closed after the server closed")
+	}
+
+	got := slices.DeleteFunc(messages(out.records(t)), func(m string) bool { return !slices.Contains(want, m) })
+	if !slices.Equal(got, want) {
+		t.Fatalf("records = %v, want %v", got, want)
 	}
 }

@@ -121,6 +121,17 @@ When serving fails or ends on its own after `Start` returned (no `Shutdown` and 
 | `fiber` | returns `net.ErrClosed` although the listener was not closed | `srvr.ErrServerClosed` (serving ended without a stop) |
 | `net/http` | returns `net.ErrClosed` although the listener was not closed | `net.ErrClosed` |
 
+#### Scenario: Records order when serving fails at once
+- **Given** engine `net/http` serving on a passed listener whose first `Accept` returns a permanent error `E`
+- **When** `Start` returns and the server stops itself
+- **Then** the records appear in the order `<order>`
+- **And** `Ready()` closed before the server was closed
+
+##### Examples:
+| order |
+|-------|
+| `server.started`, `server.failed`, `server.stopping`, `server.stopped` |
+
 #### Scenario: Shutdown during the stop a serve failure began
 - **Given** engine `net/http` serving after `Start` with a `BeforeDrain` hook that blocks for `100ms`, and the passed listener's `Accept` has just returned a permanent error `E`
 - **When** `Shutdown` is called with a `1s` context while that hook runs
@@ -133,7 +144,7 @@ When serving fails or ends on its own after `Start` returned (no `Shutdown` and 
 | `nil` | an error matching `E` | `1` |
 
 ### Requirement: Health is observable
-`HealthCheck(ctx)` SHALL return `nil` while the server is serving and an error otherwise, without blocking and without sending anything to clients. The error SHALL match `srvr.ErrServerNotStarted` before `Start`, `srvr.ErrServerClosed` while stopping or after the stop, and SHALL also wrap the serve failure when there was one.
+`HealthCheck(ctx)` SHALL return `nil` while the server is serving and an error otherwise, without blocking and without sending anything to clients. The error SHALL match `srvr.ErrServerNotStarted` until serving begins (the listener is bound), `srvr.ErrServerClosed` while stopping or after the stop, and SHALL also wrap the serve failure when there was one.
 
 #### Scenario: Health across the lifecycle
 - **Given** engine `<engine>` whose server `<state>`

@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/kartaladev/srvr"
 	"github.com/kartaladev/srvr/fibersrvr"
+	"github.com/kartaladev/srvr/internal/engine"
 )
 
 // TestFiberLifecycle covers engine-support / Scenario: Lifecycle misuse on
@@ -267,6 +268,23 @@ func TestFiberShutdownHooks(t *testing.T) {
 
 		if err := srv.Start(ctx); err == nil {
 			t.Fatal("Start succeeded on a used address")
+		}
+
+		if got := rec.recorded(); !slices.Equal(got, after) {
+			t.Fatalf("hooks = %v, want %v", got, after)
+		}
+	})
+
+	t.Run("Start fails because a route check returns an error", func(t *testing.T) {
+		t.Parallel()
+
+		rec := &hookRecorder{}
+		srv, _ := newServer(t, append(rec.options(), srvr.WithRouteCheck(func(context.Context, engine.Routes) error {
+			return errors.New("route check failed")
+		}))...)
+
+		if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrRouteConfig) {
+			t.Fatalf("Start = %v, want ErrRouteConfig", err)
 		}
 
 		if got := rec.recorded(); !slices.Equal(got, after) {

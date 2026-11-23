@@ -19,10 +19,12 @@ const engineName = "net/http"
 // Server is an HTTP server on the net/http engine.
 //
 // Create it with [New], add routes with [Server.Register] and run it with
-// [Server.Start], which blocks until its context ends or [Server.Shutdown]
-// is called. Every error a handler returns is rendered as an RFC 9457
-// problem by github.com/kartaladev/prblm; an unrecognised error becomes a
-// 500 problem that carries none of the error's text.
+// [Server.Run], which blocks until its context ends or [Server.Shutdown] is
+// called, or start it with [Server.Start], which returns once serving (for
+// lifecycle containers and manual control). Every error a handler returns
+// is rendered as an RFC 9457 problem by github.com/kartaladev/prblm; an
+// unrecognised error becomes a 500 problem that carries none of the error's
+// text.
 //
 // A Server is single-use: it starts at most once and, once stopped, stays
 // stopped. Its methods are safe for concurrent use.
@@ -147,12 +149,13 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.lc.Shutdown(ctx)
 func (s *Server) Wait() error { return s.lc.Wait() }
 
 // HealthCheck returns nil while the server is serving and an error
-// otherwise: one matching [ErrServerNotStarted] before Start returned
-// (never started, or still starting), or [ErrServerClosed] once the stop
-// began, also wrapping the serve failure when serving failed on its own. A
-// nil ctx returns an error wrapping [ErrConfig]. It reads the server's
-// state only: it never blocks beyond a lock, never calls ctx's methods, and
-// sends nothing to clients (it is a Go method, not an HTTP endpoint), so
+// otherwise: one matching [ErrServerNotStarted] until serving begins (never
+// started, or still configuring, checking routes or binding; serving begins
+// just before Start returns), or [ErrServerClosed] once the stop began,
+// also wrapping the serve failure when serving failed on its own. A nil ctx
+// returns an error wrapping [ErrConfig]. It reads the server's state only:
+// it never blocks beyond a lock, never calls ctx's methods, and sends
+// nothing to clients (it is a Go method, not an HTTP endpoint), so
 // lifecycle containers can call it safely; its error text goes only to the
 // caller.
 func (s *Server) HealthCheck(ctx context.Context) error { return s.lc.HealthCheck(ctx) }

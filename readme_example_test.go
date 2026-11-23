@@ -51,7 +51,14 @@ func runManually(ctx context.Context, srv *srvr.Server) error {
 		return err
 	}
 
-	<-ctx.Done()
+	served := make(chan error, 1)
+	go func() { served <- srv.Wait() }() // ends when the server stops on its own too
+
+	select {
+	case err := <-served: // serving failed: the server already stopped in order
+		return err
+	case <-ctx.Done():
+	}
 
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
@@ -60,7 +67,23 @@ func runManually(ctx context.Context, srv *srvr.Server) error {
 		return err
 	}
 
-	return srv.Wait() // the serve failure joined with failing shutdown hooks, or nil
+	return <-served // the serve failure joined with failing shutdown hooks, or nil
+}
+
+// TestReadme_RunManually_ServeFailure: runManually returns the serve
+// failure without waiting for its context.
+func TestReadme_RunManually_ServeFailure(t *testing.T) {
+	t.Parallel()
+
+	srv, err := srvr.New(srvr.WithListener(errListener{listen(t)}), srvr.WithLogOutput(io.Discard))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = bounded(t, "runManually did not return on the serve failure", func() error { return runManually(t.Context(), srv) })
+	if !errors.Is(err, errAccept) {
+		t.Fatalf("runManually = %v, want the accept error", err)
+	}
 }
 
 // TestReadme_RunManually runs runManually until its context is cancelled.

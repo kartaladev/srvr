@@ -250,9 +250,10 @@ func (s *Server) Addr() string { return s.lc.Addr() }
 
 // Start configures the routes, runs the route checks, binds the listener,
 // closes [Server.Ready] and returns nil while the server keeps serving; ctx
-// bounds startup only. It follows srvr.Server.Start in every other respect. A configurer that panics,
-// registers conflicting routes (gin panics) or registers a route with a
-// nil handler fails Start with an error wrapping srvr.ErrRouteConfig.
+// bounds startup only. It follows srvr.Server.Start in every other
+// respect. A configurer that panics, registers conflicting routes (gin
+// panics) or registers a route with a nil handler fails Start with an
+// error wrapping srvr.ErrRouteConfig.
 func (s *Server) Start(ctx context.Context) error { return s.lc.Start(ctx, s.prepare) }
 
 // Run starts the server as [Server.Start] does and serves until ctx is

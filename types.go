@@ -113,8 +113,8 @@ var (
 	// a broken route configuration: a nil configurer, an invalid or
 	// conflicting pattern, or a configurer that panics.
 	ErrRouteConfig = errchain.ErrRouteConfig
-	// ErrShutdownHook is wrapped by the error Start or Shutdown returns
-	// when a shutdown hook failed: it returned an error, panicked or
+	// ErrShutdownHook is wrapped by the error Start, Run, Wait or Shutdown
+	// returns when a shutdown hook failed: it returned an error, panicked or
 	// outlived its budget.
 	ErrShutdownHook = errchain.ErrShutdownHook
 )

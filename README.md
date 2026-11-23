@@ -68,7 +68,7 @@ configuration loader can fill. srvr never reads environment variables or files i
 ## Running under a lifecycle container
 
 `Run(ctx)` is the one call for a plain `main`: it serves until `ctx` is done, `Shutdown` is called or
-serving fails, then drains and returns. For manual control, `Start(ctx)` returns once the server is
+serving fails, then drains and returns; prefer it. For manual control (what `Run` does inside), `Start(ctx)` returns once the server is
 serving, `Wait()` reports how serving ended and `HealthCheck(ctx)` says whether it still serves:
 
 ```go
@@ -77,7 +77,14 @@ func runManually(ctx context.Context, srv *srvr.Server) error {
 		return err
 	}
 
-	<-ctx.Done()
+	served := make(chan error, 1)
+	go func() { served <- srv.Wait() }() // ends when the server stops on its own too
+
+	select {
+	case err := <-served: // serving failed: the server already stopped in order
+		return err
+	case <-ctx.Done():
+	}
 
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
@@ -86,7 +93,7 @@ func runManually(ctx context.Context, srv *srvr.Server) error {
 		return err
 	}
 
-	return srv.Wait() // the serve failure joined with failing shutdown hooks, or nil
+	return <-served // the serve failure joined with failing shutdown hooks, or nil
 }
 ```
 

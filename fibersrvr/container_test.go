@@ -16,16 +16,6 @@ import (
 // containerWait bounds every wait on the server under test.
 const containerWait = 10 * time.Second
 
-// pingServer is newServer with the route GET /ping answering 200.
-func pingServer(t *testing.T, opts ...srvr.Option) *fibersrvr.Server {
-	t.Helper()
-
-	srv, _ := newServer(t, opts...)
-	mustNil(t, srv.Register(routes(func(r fiber.Router) { r.Get("/ping", ok) })))
-
-	return srv
-}
-
 // within returns fn's result, failing t when fn does not return within d.
 func within[T any](t *testing.T, d time.Duration, msg string, fn func() T) T {
 	t.Helper()
@@ -63,46 +53,6 @@ func startReturned(ctx context.Context, t *testing.T, srv *fibersrvr.Server) str
 	registerClient(t, srv.Addr()) // its cleanup runs before the one above
 
 	return "http://" + srv.Addr()
-}
-
-// TestStart_ReturnsWhileServing covers server-lifecycle / Scenario: Start
-// returns while serving, fiber rows.
-func TestStart_ReturnsWhileServing(t *testing.T) {
-	t.Parallel()
-
-	for _, cancelStart := range []bool{false, true} {
-		name := "nothing"
-		if cancelStart {
-			name = "the Start context is cancelled"
-		}
-
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			ctx, cancel := context.WithCancel(context.Background()) //nolint:usetesting // the server must outlive the context under test
-			defer cancel()
-
-			srv := pingServer(t)
-			base := startReturned(ctx, t, srv)
-
-			if cancelStart {
-				cancel()
-			}
-
-			if got := get(t, base+"/ping").status; got != http.StatusOK {
-				t.Fatalf("GET /ping = %d, want 200", got)
-			}
-
-			select {
-			case <-srv.Ready():
-			default:
-				t.Fatal("Ready is not closed")
-			}
-			if err := srv.HealthCheck(t.Context()); err != nil {
-				t.Fatalf("HealthCheck = %v, want nil", err)
-			}
-		})
-	}
 }
 
 // TestRun_StopByContext covers server-lifecycle / Scenario: Run and stop by
@@ -158,22 +108,6 @@ func TestRun_StopByContext(t *testing.T) {
 		t.Fatalf("in-flight status = %d, want 200", got)
 	}
 	http.DefaultClient.CloseIdleConnections()
-}
-
-// TestWait_AfterStart covers server-lifecycle / Scenario: Wait after Start,
-// fiber row: Shutdown returns nil.
-func TestWait_AfterStart(t *testing.T) {
-	t.Parallel()
-
-	srv := pingServer(t)
-	if err := within(t, containerWait, "Start did not return", func() error { return srv.Start(t.Context()) }); err != nil {
-		t.Fatalf("Start = %v", err)
-	}
-	mustNil(t, srv.Shutdown(t.Context()))
-
-	if err := within(t, containerWait, "Wait did not return", srv.Wait); err != nil {
-		t.Fatalf("Wait = %v, want nil", err)
-	}
 }
 
 // faultListener delegates to a real listener until fail is called; then
@@ -257,49 +191,6 @@ func TestServeFailure_AfterStart(t *testing.T) {
 			}
 			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerClosed) {
 				t.Fatalf("later Start = %v, want ErrServerClosed", err)
-			}
-		})
-	}
-}
-
-// TestHealthCheck covers server-lifecycle / Scenario: Health across the
-// lifecycle, fiber rows, and the HealthCheck rows of engine-support /
-// Scenario: Lifecycle misuse on every engine.
-func TestHealthCheck(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		state string
-		ctx   func(t *testing.T) context.Context
-		want  error // nil: HealthCheck returns nil
-	}{
-		{state: "was never started", want: srvr.ErrServerNotStarted},
-		{state: "is serving after Start"},
-		{state: "has stopped", want: srvr.ErrServerClosed},
-		{state: "is running, HealthCheck(nil)", ctx: func(*testing.T) context.Context { return nil }, want: srvr.ErrConfig},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.state, func(t *testing.T) {
-			t.Parallel()
-
-			srv := pingServer(t)
-			switch tt.state {
-			case "is serving after Start", "is running, HealthCheck(nil)":
-				startReturned(t.Context(), t, srv)
-			case "has stopped":
-				mustNil(t, srv.Start(t.Context()))
-				mustNil(t, srv.Shutdown(t.Context()))
-			}
-
-			ctx := t.Context()
-			if tt.ctx != nil {
-				ctx = tt.ctx(t)
-			}
-
-			err := within(t, 10*time.Millisecond, "HealthCheck did not return within 10ms", func() error { return srv.HealthCheck(ctx) })
-			if tt.want == nil && err != nil || tt.want != nil && !errors.Is(err, tt.want) {
-				t.Fatalf("HealthCheck = %v, want %v", err, tt.want)
 			}
 		})
 	}

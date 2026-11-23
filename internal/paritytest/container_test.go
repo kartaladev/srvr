@@ -158,6 +158,9 @@ func TestLifecycleParity(t *testing.T) {
 			registerClient(t, srv.Addr())
 			getOK(t, "http://"+srv.Addr())
 			must(t, srv.HealthCheck(t.Context()))
+			if err := srv.HealthCheck(nil); !errors.Is(err, srvr.ErrConfig) { //nolint:staticcheck // a nil context is the row under test
+				t.Fatalf("HealthCheck(nil) = %v, want ErrConfig", err)
+			}
 			if err := srv.Start(t.Context()); !errors.Is(err, srvr.ErrServerStarted) {
 				t.Fatalf("second Start = %v, want ErrServerStarted", err)
 			}

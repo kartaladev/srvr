@@ -366,10 +366,13 @@ func (l *Lifecycle[C]) serve(ctx context.Context, ln net.Listener, addr string, 
 	l.addr = addr
 	l.mu.Unlock()
 
-	go l.serveOn(context.WithoutCancel(ctx), r)
-
+	// Started and ready before serving begins: serveOn may stop the server
+	// at once when serving fails, and no record of that stop may precede
+	// server.started, nor Ready close after the server closed.
 	l.core.logEvent(ctx, slog.LevelInfo, eventStarted, slog.String(keyServerAddress, addr))
 	close(l.ready)
+
+	go l.serveOn(context.WithoutCancel(ctx), r)
 
 	return r
 }

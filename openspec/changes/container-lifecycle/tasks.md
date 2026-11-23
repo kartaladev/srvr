@@ -43,7 +43,7 @@
   - RED: run each module's tests and list the ones that now fail or hang because `Start` returns, compared with the 1.6 baseline; this list is the RED evidence
   - GREEN: replace those calls with `Run` (or `Start` + `Shutdown` where the test drives the stop)
   - REFACTOR: none beyond renames; /simplify
-- [x] 2.9 Goroutine leaks (test-quality MODIFIED / Scenario: Lifecycle leaves no goroutine behind, `Start`, `Run`, `Wait` and serve-failure rows on all engines); verify `go test -race -run TestLeaks ./...` passes in core, `ginsrvr`, `fibersrvr`
+- [x] 2.9 Goroutine leaks (test-quality MODIFIED / Scenario: Lifecycle leaves no goroutine behind, `Start`, `Run`, `Wait` and serve-failure rows on all engines); verify `go test -race -run 'TestLifecycle_Goroutines|TestServeGoroutine|TestLeakCheck' ./...` passes in core, `ginsrvr`, `fibersrvr`
   - RED: add the rows; the never-stopped rows must report srvr's serve goroutine
   - GREEN: fix any supervisor leak found (it must end with `stop`)
   - REFACTOR: name the supervisor goroutine function so reports name it; /simplify
@@ -78,12 +78,22 @@
 - [x] 4.5 End-to-end verification locally: `make check`, `make cover`, `govulncheck`, `openspec validate container-lifecycle --strict`, gopls diagnostics clean; `CHANGELOG.md` `[Unreleased]` complete
 - [x] 4.6 Run `/simplify`, apply what holds up, re-run the tests, then commit `docs: document running srvr under lifecycle containers`; verify with `git log -1 --stat`
 
-## 5. Slice: release v0.5.0
+## 5. Slice: review follow-ups (code review, security review, verify)
 
-- [ ] 5.1 Precondition: this change is reviewed and merged to `main`, and no `scrty-integration` code has been merged since (only its planning files may be on `main`); verify `git log origin/main --oneline -1` contains the merge and `git diff v0.4.0..origin/main --stat -- security/` lists nothing
-- [ ] 5.2 Prepare: move `CHANGELOG.md` `[Unreleased]` under a `v0.5.0` heading (date placeholder), run `make check` and `make cover` on `main`, dry-run the `RELEASING.md` steps without tagging; verify every step passes
-- [ ] 5.3 STOP for the owner: present the proposed version (`v0.5.0`: breaking `Start` semantics, new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
-- [ ] 5.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page with the migration note; verify every module resolves through the proxy at `v0.5.0` and a scratch consumer builds `Run` and `Start`+`Wait` on each engine; record the result in `notes.md`
+- [x] 5.1 Triage before any fix: for every defect claim from `/code-review high`, write a test that fails because of it and run it; for the "records out of order on an immediate serve failure" claim write `TestLifecycleRecords_ImmediateServeFailure` (a `WithListener` listener whose first `Accept` returns a permanent error; assert `server.started` precedes `server.failed` and `Ready()` closed before the server closed) and run it with `-race -count=200`; if it never fails, record the claim as unconfirmed and keep the test as a guard; check the README `runManually` and `HealthCheck` wording claims against the code; review the concurrent paths line by line (`Start`/`Shutdown`/`Run` racing, `Shutdown` during the supervision stop, concurrent `Wait`), which the security review excluded and the code review did not report on, and add a failing test for any defect found; record the security review (no findings) and the verify report; verify every finding has a decision in `notes.md`
+- [x] 5.2 Records order when serving fails at once (server-lifecycle / Scenario: Records order when serving fails at once): `serve` writes `server.started` and closes `Ready` before it starts `serveOn` (design D1); verify the 5.1 test passes with `-race -count=200`
+- [x] 5.3 Docs follow the `Start`/`Run`/`Wait` contract: `Server` type doc (`server.go`), `WithListener`, `WithShutdownTimeout`, `Config.ShutdownTimeout`, `ErrShutdownHook`, `LOGGING.md` `server.failed`, `otelsetup` stop paths; `HealthCheck` godoc says not started until serving begins (design D5); gin `Start` godoc re-wrapped; verify `go vet ./...` and `make lint` pass
+- [x] 5.4 README `runManually` waits on its context and on `Wait`, so a serve failure ends it; `readme_example_test.go` row: a serve failure returns the error; verify `go test -run Readme ./...` passes
+- [x] 5.5 Parity follow-ups: move the engine-neutral rows of `ginsrvr`/`fibersrvr` `container_test.go` (Start returns while serving, Wait after Start, `TestHealthCheck`) into `internal/paritytest` and delete the copies; confirm the fiber hook rows "Shutdown with a 50ms deadline while a request needs 5s" and "Start fails because a route check returns an error" have tests, adding them if not; verify `make test` passes
+- [x] 5.6 Verify the slice: `make check`, `make cover`, `openspec validate container-lifecycle --strict`, gopls diagnostics clean on changed files
+- [x] 5.7 Run `/simplify` on the slice, re-run the tests, then commit `fix(core): order lifecycle records on an immediate serve failure, align docs`; verify with `git log -1 --stat`
+
+## 6. Slice: release v0.5.0
+
+- [ ] 6.1 Precondition: this change is reviewed and merged to `main`, and no `scrty-integration` code has been merged since (only its planning files may be on `main`); verify `git log origin/main --oneline -1` contains the merge and `git diff v0.4.0..origin/main --stat -- security/` lists nothing
+- [ ] 6.2 Prepare: move `CHANGELOG.md` `[Unreleased]` under a `v0.5.0` heading (date placeholder), run `make check` and `make cover` on `main`, dry-run the `RELEASING.md` steps without tagging; verify every step passes
+- [ ] 6.3 STOP for the owner: present the proposed version (`v0.5.0`: breaking `Start` semantics, new `Run`, `Wait`, `HealthCheck`, `ErrServerNotStarted`), the changelog section and the dry-run results; wait for explicit confirmation of the version and of pushing tags; record the decision in `notes.md`; do not continue without it
+- [ ] 6.4 Release in `RELEASING.md` order (core, then `ginsrvr`, `fibersrvr`, `otelsrvr`, `otelsetup`), restore development `replace` lines, publish the GitHub Release page with the migration note; verify every module resolves through the proxy at `v0.5.0` and a scratch consumer builds `Run` and `Start`+`Wait` on each engine; record the result in `notes.md`
 
 ## Workflow follow-up
 
